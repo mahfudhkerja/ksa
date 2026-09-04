@@ -90,7 +90,7 @@ from pathlib import Path
 
 import gspread
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from google.oauth2.service_account import Credentials
 
@@ -120,6 +120,25 @@ RUN_ALL_PATH = BASE_DIR / "run_all.py"
 
 app = Flask(__name__)
 CORS(app)  # izinkan dipanggil dari frontend berbeda origin (mis. Figma / GitHub Pages)
+
+
+# --------------------------------------------------------------------------
+# SERVE FRONTEND (index.html) -- tanpa ini, buka domain Render langsung
+# bakal muncul "Not Found" 404 karena app.py aslinya cuma nyediain
+# route /api/... saja (index.html sebelumnya dibuka manual dari komputer,
+# bukan lewat server, jadi ini nggak ketahuan sampai di-deploy ke Render).
+# --------------------------------------------------------------------------
+@app.route("/")
+def serve_index():
+    return send_from_directory(BASE_DIR, "index.html")
+
+
+@app.route("/<path:filename>")
+def serve_static_asset(filename):
+    """Buat file pendukung frontend lain (css/js/gambar) kalau ada, yang
+    ditaruh sejajar index.html dan direferensikan pakai path relatif."""
+    return send_from_directory(BASE_DIR, filename)
+
 
 import os as _os_diag  # noqa: E402  (cuma buat print PID di bawah, nggak ganggu import 'os' yang di atas)
 print(f"=== SERVER STARTED (PID={_os_diag.getpid()}) — kalau baris ini muncul LAGI di tengah-tengah kamu testing, artinya server abis restart otomatis (cache ke-reset) ===", flush=True)
