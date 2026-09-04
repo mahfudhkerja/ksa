@@ -853,8 +853,14 @@
   </div>
 
 <script>
-  const API_BASE = "http://localhost:5000"; // ganti kalau backend sudah online
-  document.getElementById("apiBaseLabel").innerText = API_BASE;
+  // Kosong ("") berarti fetch("${API_BASE}/api/...") otomatis manggil ke
+  // domain yang sama tempat halaman ini dibuka -- jadi otomatis pas dites
+  // di komputer sendiri (backend jalan bareng index.html di localhost)
+  // MAUPUN pas sudah online di Render (backend & frontend satu domain,
+  // krn app.py yang nyajiin index.html ini juga). Nggak perlu diganti-ganti
+  // manual lagi tiap pindah dari lokal ke online.
+  const API_BASE = "";
+  document.getElementById("apiBaseLabel").innerText = window.location.origin;
 
   let currentUser = null;
   let dataValidasi = [], dataUpdateStock = [], dataStockBahan = [];
