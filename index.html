@@ -264,7 +264,7 @@
     font-family:'JetBrains Mono',monospace; max-height:260px; overflow-y:auto; white-space:pre-wrap; word-break:break-word;
   }
 
-  #sheetModalOverlay, #gudangFileModalOverlay, #gudangSheetModalOverlay{position:fixed; inset:0; background:rgba(15,25,45,.45); backdrop-filter:blur(2px); z-index:998; display:none; align-items:center; justify-content:center; animation: fadeIn .2s;}
+  #sheetModalOverlay, #gudangSheetModalOverlay{position:fixed; inset:0; background:rgba(15,25,45,.45); backdrop-filter:blur(2px); z-index:998; display:none; align-items:center; justify-content:center; animation: fadeIn .2s;}
   .sheet-modal-box{width:420px; max-height:80vh; display:flex; flex-direction:column;}
   .sheet-modal-list{margin-top:14px; overflow-y:auto; flex:1; border:1px solid var(--line); border-radius:10px; padding:6px;}
   .sheet-check-row{display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; color:var(--ink);}
@@ -495,19 +495,11 @@
     </div>
   </div>
 
-  <!-- DATA GUDANG — MODAL 1: PILIH FILE DI FOLDER -->
-  <div id="gudangFileModalOverlay">
-    <div class="confirm-box sheet-modal-box">
-      <h4>Pilih File — Data Gudang</h4>
-      <p style="font-size:12.5px; color:var(--ink-soft); margin-top:6px;">Pilih salah satu file Excel/WPS di folder yang diisi.</p>
-      <div id="gudangFileModalList" class="sheet-modal-list"></div>
-      <div class="confirm-actions">
-        <button class="btn-cancel" onclick="closeGudangFileModal()">Batal</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- DATA GUDANG — MODAL 2: PILIH SHEET DI FILE -->
+  <!-- DATA GUDANG — MODAL: PILIH SHEET DARI FILE YANG DIUPLOAD
+       (dulu ada 2 modal: pilih file di folder lokal -> pilih sheet.
+       Sekarang cuma 1 modal ini, karena "pilih file" diganti jadi upload
+       langsung lewat <input type="file"> di kartunya, bukan browse folder
+       lokal -- lihat gudangCardUploadFile().) -->
   <div id="gudangSheetModalOverlay">
     <div class="confirm-box sheet-modal-box">
       <h4>Pilih Sheet — Data Gudang</h4>
@@ -678,11 +670,11 @@
                   Sumber file Excel/WPS lokal untuk Gudang BJB & BJL (satu file, dibedakan lewat kolom AREA).
                   Refresh-nya sendiri ada di halaman Data Gudang BJB / BJL, bukan lewat "Refresh Semua" di atas.
                 </p>
-                <div id="gudangCardInfo" style="font-size:11px; color:var(--ink-faint); margin-top:6px;">Belum ada folder/file/sheet dipilih.</div>
+                <div id="gudangCardInfo" style="font-size:11px; color:var(--ink-faint); margin-top:6px;">Belum ada file/sheet dipilih.</div>
 
                 <div class="link-row" style="margin-top:10px;">
-                  <input class="link-input" id="gudangFolderInput" placeholder="Path folder, mis. Z:\Job Order 2022-06-20 23;00;03 (Full)\Firman + Suy\2026\(Sep '26)\3 Sep">
-                  <button class="btn-outline btn-load" onclick="gudangCardBrowseFiles()" id="gudangCardBtnBrowse">📂 Cari File di Folder</button>
+                  <input type="file" id="gudangFileUploadInput" accept=".xlsx,.xls" style="flex:1; font-size:12.5px;">
+                  <button class="btn-outline btn-load" onclick="gudangCardUploadFile()" id="gudangCardBtnUpload">⬆️ Upload &amp; Pilih Sheet</button>
                 </div>
               </div>
             </div>
@@ -1662,10 +1654,10 @@
   }
 
   // ============================================================
-  // DATA GUDANG — folder/file/sheet lokal dipilih SATU KALI lewat kartu
-  // "Data Gudang" di halaman Input Data Produksi (2 modal: pilih file ->
-  // pilih sheet), disimpan ke config.json (source_key "gudang"). Kartu
-  // ini SENGAJA TIDAK ikut tombol "Refresh Semua" di halaman itu.
+  // DATA GUDANG — file diupload lewat kartu "Data Gudang" di halaman
+  // Input Data Produksi (upload file -> pilih sheet dari modal), disimpan
+  // ke config.json (source_key "gudang"). Kartu ini SENGAJA TIDAK ikut
+  // tombol "Refresh Semua" di halaman itu.
   // Eksekusi refresh (tarik data & tulis ke tab "API") ada di halaman
   // Data Gudang BJB & BJL, lewat tombol Refresh masing2 -- keduanya
   // memanggil endpoint yang sama (/api/gudang/refresh), karena satu
@@ -1680,22 +1672,22 @@
   }
 
   function gudangSourceInfoLine(src){
-    if(!src.folder || !src.filename || !src.sheet_name) return "Folder/file/sheet belum dipilih (atur lewat kartu \"Data Gudang\" di Input Data Produksi).";
-    return `Sumber saat ini: <b>${src.filename}</b> — sheet <b>${src.sheet_name}</b><br><span style="color:var(--ink-faint); font-size:10.5px;">${src.folder}</span>`;
+    if(!src.filename || !src.sheet_name) return "File/sheet belum dipilih (upload lewat kartu \"Data Gudang\" di Input Data Produksi).";
+    const label = src.original_filename || src.filename;
+    return `Sumber saat ini: <b>${label}</b> — sheet <b>${src.sheet_name}</b>` +
+      (src.uploaded_at ? `<br><span style="color:var(--ink-faint); font-size:10.5px;">Diupload: ${src.uploaded_at}</span>` : "");
   }
 
   // ---- Kartu "Data Gudang" di halaman Input Data Produksi ----
   async function loadGudangCardInfo(){
     const pill = document.getElementById("gudangCardPill");
     const info = document.getElementById("gudangCardInfo");
-    const folderInput = document.getElementById("gudangFolderInput");
     if(!pill) return; // halaman belum dirender
     try{
       const res = await fetch(`${API_BASE}/api/gudang/sources`);
       const data = await res.json();
       const src = data["gudang"] || {};
-      if(src.folder) folderInput.value = src.folder;
-      if(src.folder && src.filename && src.sheet_name){
+      if(src.filename && src.sheet_name){
         pill.className = "status-pill on"; pill.innerText = "🟢 Terpilih";
       } else {
         pill.className = "status-pill off"; pill.innerText = "⚪ Belum dipilih";
@@ -1706,66 +1698,42 @@
     }
   }
 
-  async function gudangCardBrowseFiles(){
-    const folder = (document.getElementById("gudangFolderInput").value || "").trim();
-    if(!folder){ toast("Isi path folder dulu", "error"); return; }
+  // Upload file yang dipilih user LANGSUNG ke server (bukan baca dari path
+  // folder lokal lagi) -- server simpan file itu di disknya sendiri lalu
+  // balikin daftar sheet di dalamnya. Ini yang bikin fitur ini tetap jalan
+  // walau app-nya sudah di-deploy online (server tidak pernah perlu tahu
+  // atau mengintip isi harddisk komputer user).
+  async function gudangCardUploadFile(){
+    const input = document.getElementById("gudangFileUploadInput");
+    const file = input.files && input.files[0];
+    if(!file){ toast("Pilih file Excel/WPS dulu", "error"); return; }
     gudangCardPickedFile = null;
 
-    const btn = document.getElementById("gudangCardBtnBrowse");
-    btn.disabled = true; const original = btn.innerText; btn.innerText = "Mencari...";
-    const listEl = document.getElementById("gudangFileModalList");
-    listEl.innerHTML = `<div class="skeleton" style="height:40px;"></div>`;
-    document.getElementById("gudangFileModalOverlay").style.display = "flex";
+    const btn = document.getElementById("gudangCardBtnUpload");
+    btn.disabled = true; const original = btn.innerText; btn.innerText = "Mengunggah...";
     try{
-      const res = await fetch(`${API_BASE}/api/gudang/browse-files`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ folder })
-      });
+      const formData = new FormData();
+      formData.append("file", file);
+      // JANGAN set header Content-Type manual -- browser wajib yang isi
+      // sendiri (termasuk boundary multipart-nya). Kalau dipaksa isi manual,
+      // upload-nya gagal kebaca di sisi server.
+      const res = await fetch(`${API_BASE}/api/gudang/upload`, { method:"POST", body: formData });
       const data = await res.json();
-      if(!data.success){ listEl.innerHTML = `<div class="empty">${data.message || "Gagal membaca folder"}</div>`; return; }
-      if(data.files.length === 0){ listEl.innerHTML = `<div class="empty">Tidak ada file .xlsx di folder ini.</div>`; return; }
+      if(!data.success){ toast(data.message || "Gagal upload file", "error"); return; }
+      if(!data.sheets || data.sheets.length === 0){ toast("File ini tidak punya sheet.", "error"); return; }
 
-      listEl.innerHTML = `<div class="gudang-pick-list">` + data.files.map(f => `
-        <div class="gudang-pick-item" data-file="${f.name}" onclick="gudangCardSelectFile(this.dataset.file)">
-          <span>📄 ${f.name}</span>
-          <span class="meta">${f.modified}</span>
-        </div>
-      `).join("") + `</div>`;
-    } catch(e){
-      listEl.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
-    } finally {
-      btn.disabled = false; btn.innerText = original;
-    }
-  }
-
-  function closeGudangFileModal(){
-    document.getElementById("gudangFileModalOverlay").style.display = "none";
-  }
-
-  async function gudangCardSelectFile(filename){
-    gudangCardPickedFile = filename;
-    closeGudangFileModal();
-
-    const listEl = document.getElementById("gudangSheetModalList");
-    listEl.innerHTML = `<div class="skeleton" style="height:40px;"></div>`;
-    document.getElementById("gudangSheetModalOverlay").style.display = "flex";
-    try{
-      const folder = (document.getElementById("gudangFolderInput").value || "").trim();
-      const res = await fetch(`${API_BASE}/api/gudang/browse-sheets`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ folder, filename })
-      });
-      const data = await res.json();
-      if(!data.success){ listEl.innerHTML = `<div class="empty">${data.message || "Gagal membuka file"}</div>`; return; }
-      if(data.sheets.length === 0){ listEl.innerHTML = `<div class="empty">File ini tidak punya sheet.</div>`; return; }
-
+      gudangCardPickedFile = data.filename;
+      const listEl = document.getElementById("gudangSheetModalList");
       listEl.innerHTML = `<div class="gudang-pick-list">` + data.sheets.map(s => `
         <div class="gudang-pick-item" data-sheet="${s}" onclick="gudangCardSelectSheet(this.dataset.sheet)">
           <span>📑 ${s}</span>
         </div>
       `).join("") + `</div>`;
+      document.getElementById("gudangSheetModalOverlay").style.display = "flex";
     } catch(e){
-      listEl.innerHTML = `<div class="empty">Error: ${e.message}</div>`;
+      toast("Error: " + e.message, "error");
+    } finally {
+      btn.disabled = false; btn.innerText = original;
     }
   }
 
@@ -1774,17 +1742,17 @@
   }
 
   async function gudangCardSelectSheet(sheet){
-    const folder = (document.getElementById("gudangFolderInput").value || "").trim();
     const filename = gudangCardPickedFile;
     try{
       const res = await fetch(`${API_BASE}/api/gudang/save-selection`, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ folder, filename, sheet })
+        body: JSON.stringify({ filename, sheet })
       });
       const data = await res.json();
       if(data.success){
         closeGudangSheetModal();
         toast(`Sumber Data Gudang disimpan: ${filename} — ${sheet}`, "success");
+        document.getElementById("gudangFileUploadInput").value = "";
         loadGudangCardInfo();
       } else {
         toast(data.message || "Gagal menyimpan pilihan", "error");

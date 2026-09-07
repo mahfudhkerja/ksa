@@ -744,11 +744,11 @@ def produksi_run_status():
 
 
 # --------------------------------------------------------------------------
-# 6b. DATA GUDANG — folder/file/sheet lokal DIPILIH di kartu "Data Gudang"
-# pada halaman Input Data Produksi (browse-files, browse-sheets,
-# save-selection), tapi DIEKSEKUSI (refresh) dari halaman Data Gudang
-# BJB/BJL, TIDAK ikut run_all.py / tombol "Refresh Semua". Lihat
-# import_engine.py bagian "VARIAN 4".
+# 6b. DATA GUDANG — file DIUPLOAD & sheet DIPILIH di kartu "Data Gudang"
+# pada halaman Input Data Produksi (upload, save-selection), tapi
+# DIEKSEKUSI (refresh) dari halaman Data Gudang BJB/BJL, TIDAK ikut
+# run_all.py / tombol "Refresh Semua". Lihat import_engine.py bagian
+# "VARIAN 4".
 # --------------------------------------------------------------------------
 
 @app.route("/api/gudang/sources", methods=["GET"])
@@ -762,45 +762,36 @@ def gudang_sources():
     return jsonify({key: sources.get(key, {}) for key in import_engine.GUDANG_SOURCES})
 
 
-@app.route("/api/gudang/browse-files", methods=["POST"])
-def gudang_browse_files():
-    """Body: {folder}. List file .xlsx di folder lokal/jaringan itu,
-    diurutkan dari yang paling baru diubah. Dipanggil dari kartu "Data
-    Gudang" di halaman Input Data Produksi (modal pilih file)."""
-    body = request.get_json(force=True) or {}
-    folder = str(body.get("folder", "")).strip()
+@app.route("/api/gudang/upload", methods=["POST"])
+def gudang_upload():
+    """Multipart/form-data, field 'file'. Ganti dari cara lama (browse
+    folder lokal di komputer user) -- server sekarang TIDAK PERNAH baca
+    filesystem komputer user (tidak bisa, apalagi setelah di-deploy
+    online), jadi browser yang kirim file-nya langsung lewat upload, baru
+    server simpan & baca dari disknya sendiri. Dipanggil dari kartu "Data
+    Gudang" di halaman Input Data Produksi begitu user pilih file lewat
+    <input type="file">."""
+    file_storage = request.files.get("file")
+    if file_storage is None or not file_storage.filename:
+        return jsonify({"success": False, "message": "Tidak ada file yang dikirim."}), 400
     try:
-        files = import_engine.list_gudang_files(folder)
+        sheets = import_engine.save_gudang_upload(file_storage, file_storage.filename)
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
-    return jsonify({"success": True, "files": files})
-
-
-@app.route("/api/gudang/browse-sheets", methods=["POST"])
-def gudang_browse_sheets():
-    """Body: {folder, filename}. Buka file yang dipilih, list nama sheet.
-    Dipanggil dari kartu "Data Gudang" (modal pilih sheet)."""
-    body = request.get_json(force=True) or {}
-    folder = str(body.get("folder", "")).strip()
-    filename = str(body.get("filename", "")).strip()
-    try:
-        sheets = import_engine.list_gudang_sheets(folder, filename)
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 400
-    return jsonify({"success": True, "sheets": sheets})
+    return jsonify({"success": True, "filename": f"current{Path(file_storage.filename).suffix.lower() or '.xlsx'}", "sheets": sheets})
 
 
 @app.route("/api/gudang/save-selection", methods=["POST"])
 def gudang_save_selection():
-    """Body: {folder, filename, sheet}. Dipanggil setelah user selesai
-    pilih sheet di kartu "Data Gudang" (Input Data Produksi). HANYA
-    menyimpan pilihan ke config.json -- TIDAK menjalankan import."""
+    """Body: {filename, sheet}. Dipanggil setelah user selesai pilih
+    sheet di kartu "Data Gudang" (Input Data Produksi), setelah file-nya
+    diupload lewat /api/gudang/upload. HANYA menyimpan pilihan sheet ke
+    config.json -- TIDAK menjalankan import."""
     body = request.get_json(force=True) or {}
-    folder = str(body.get("folder", "")).strip()
     filename = str(body.get("filename", "")).strip()
     sheet = str(body.get("sheet", "")).strip()
     try:
-        src = import_engine.save_gudang_selection(folder, filename, sheet)
+        src = import_engine.save_gudang_selection(filename, sheet)
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
     return jsonify({"success": True, "source": src})

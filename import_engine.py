@@ -33,6 +33,15 @@ from requests.exceptions import ConnectionError as RequestsConnectionError, Read
 
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
+
+# Folder tempat file Excel/WPS "Data Gudang" hasil UPLOAD lewat browser
+# disimpan di server. Sengaja BUKAN path folder di komputer user -- dulu
+# fitur ini baca file langsung dari path lokal (mis. Z:\...), yang cuma
+# jalan kalau app.py dijalankan di komputer yang sama dengan foldernya.
+# Begitu di-deploy online (Render dst), server tidak punya akses ke
+# harddisk komputer user, jadi diganti jadi "upload file ke server dulu,
+# baru server yang baca file itu dari disknya sendiri".
+GUDANG_UPLOAD_DIR = BASE_DIR / "gudang_uploads"
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 
 SCOPES = [
@@ -1113,28 +1122,35 @@ def run_excel_import(source_key, target_sheet_name, target_headers, header_keywo
 #   b) pemilihan folder->file->sheet dan EKSEKUSI import-nya terpisah
 #      di dua halaman berbeda di frontend:
 #        - Kartu "Data Gudang" di halaman "Input Data Produksi": HANYA
-#          untuk memilih folder -> file -> sheet, lalu menyimpan
-#          pilihan itu ke config.json (save_gudang_selection()).
+#          untuk UPLOAD file lalu pilih sheet, lalu menyimpan pilihan itu
+#          ke config.json (save_gudang_upload() + save_gudang_selection()).
 #          Kartu ini SENGAJA TIDAK ikut tombol "Refresh Semua" (run_all.py)
 #          di halaman itu.
 #        - Halaman "Data Gudang BJB" & "Data Gudang BJL" (grup "Gudang"
-#          di sidebar): tidak ada input folder lagi di sini, cuma
-#          tombol Refresh sendiri-sendiri yang MENJALANKAN import
-#          (run_gudang_import()) memakai folder/file/sheet yang SUDAH
-#          disimpan lewat kartu di atas. Klik Refresh di salah satu
-#          halaman ini menjalankan proses yang sama persis (satu
-#          sumber, satu tujuan) -- keduanya cuma dua pintu masuk ke
-#          tombol Refresh yang sama.
+#          di sidebar): tidak ada input apa pun di sini, cuma tombol
+#          Refresh sendiri-sendiri yang MENJALANKAN import
+#          (run_gudang_import()) memakai file/sheet yang SUDAH disimpan
+#          lewat kartu di atas. Klik Refresh di salah satu halaman ini
+#          menjalankan proses yang sama persis (satu sumber, satu
+#          tujuan) -- keduanya cuma dua pintu masuk ke tombol Refresh
+#          yang sama.
+#
+# Kenapa upload, bukan baca folder lokal (versi lama)? Karena app.py bisa
+# di-deploy online (mis. Render) -- begitu itu terjadi, server jalan di
+# komputer LAIN, bukan komputer user, jadi server tidak akan pernah bisa
+# baca path folder di laptop user (mis. "C:\Users\...\Downloads\..."
+# atau "Z:\...") sama sekali. Solusinya: file-nya yang dikirim (upload)
+# dari browser ke server, baru server baca dari disknya sendiri.
 #
 # Alur lengkap (lihat endpoint /api/gudang/* di app.py):
-#   1. Di kartu "Data Gudang": user isi path folder lokal/jaringan
-#      (mis. Z:\...\3 Sep) -> "Cari File" -> list_gudang_files() ->
-#      daftar .xlsx di folder itu (muncul di modal pilih file).
-#   2. User pilih 1 file -> list_gudang_sheets() -> daftar nama
-#      sheet/tab di file itu (muncul di modal pilih sheet).
-#   3. User pilih 1 sheet -> save_gudang_selection() menyimpan
-#      folder+filename+sheet_name ke config.json (source_key "gudang").
-#   4. Di halaman Data Gudang BJB *atau* BJL, user klik Refresh ->
+#   1. Di kartu "Data Gudang": user pilih file lewat <input type="file">
+#      -> klik "Upload & Pilih Sheet" -> file dikirim ke server lewat
+#      /api/gudang/upload -> save_gudang_upload() SIMPAN file itu di
+#      server (GUDANG_UPLOAD_DIR) lalu balikin daftar nama sheet/tab di
+#      dalamnya (muncul di modal pilih sheet).
+#   2. User pilih 1 sheet -> save_gudang_selection() menyimpan
+#      filename+sheet_name ke config.json (source_key "gudang").
+#   3. Di halaman Data Gudang BJB *atau* BJL, user klik Refresh ->
 #      run_gudang_import() -- baca semua value (bukan formula) dari
 #      sheet yang tersimpan itu (calamine, lebih toleran ke file hasil
 #      WPS dibanding openpyxl), lalu TIMPA tab "API" (GUDANG_TARGET_SHEET)
@@ -1214,85 +1230,90 @@ def _sanitize_cell_gudang(cell):
     return cell
 
 
-def save_gudang_selection(folder, filename, sheet_name):
+def save_gudang_upload(file_storage, original_filename):
+    """Dipanggil dari endpoint /api/gudang/upload. Terima file yang
+    dikirim browser (werkzeug FileStorage, dari request.files), SIMPAN ke
+    GUDANG_UPLOAD_DIR di server (bukan baca dari path lokal user lagi),
+    lalu balikin daftar nama sheet di dalamnya supaya user bisa langsung
+    pilih sheet tanpa upload ulang.
+
+    Nama file di server SENGAJA dibuat tetap ("current" + ekstensi asli),
+    bukan nama asli file -- supaya tiap kali user upload ulang (misal file
+    minggu ini menggantikan minggu lalu), file lama otomatis tertimpa dan
+    tidak menumpuk di disk server."""
+    if file_storage is None:
+        raise ValueError("Tidak ada file yang diupload.")
+
+    original_filename = (original_filename or "").strip()
+    ext = Path(original_filename).suffix.lower() or ".xlsx"
+    if ext not in (".xlsx", ".xls"):
+        raise ValueError("Format file harus .xlsx atau .xls.")
+
+    GUDANG_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    saved_filename = f"current{ext}"
+    filepath = GUDANG_UPLOAD_DIR / saved_filename
+    file_storage.save(str(filepath))
+
+    CalamineWorkbook = _get_calamine()
+    wb = CalamineWorkbook.from_path(str(filepath))
+    sheet_names = list(wb.sheet_names)
+
+    update_source(
+        GUDANG_SOURCE_KEY,
+        filename=saved_filename,
+        original_filename=original_filename,
+        sheet_name=None,  # direset -- user harus pilih ulang sheet dari file baru ini
+        uploaded_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+    return sheet_names
+
+
+def save_gudang_selection(filename, sheet_name):
     """Dipanggil dari kartu "Data Gudang" di halaman Input Data Produksi
-    setelah user selesai pilih folder -> file -> sheet lewat 2 modal.
-    HANYA menyimpan pilihan ke config.json -- TIDAK menjalankan import.
-    Eksekusi import-nya baru terjadi saat tombol Refresh di halaman Data
-    Gudang BJB/BJL diklik (lihat run_gudang_import())."""
-    folder = (folder or "").strip()
+    setelah user selesai upload file (save_gudang_upload()) lalu pilih
+    sheet dari daftar yang dibalikin. HANYA menyimpan pilihan sheet ke
+    config.json -- TIDAK menjalankan import. Eksekusi import-nya baru
+    terjadi saat tombol Refresh di halaman Data Gudang BJB/BJL diklik
+    (lihat run_gudang_import())."""
     filename = (filename or "").strip()
     sheet_name = (sheet_name or "").strip()
-    if not folder or not filename or not sheet_name:
-        raise ValueError("Folder, file, dan sheet wajib dipilih.")
+    if not filename or not sheet_name:
+        raise ValueError("File dan sheet wajib dipilih.")
+
+    _, src = get_source(GUDANG_SOURCE_KEY)
+    if src.get("filename") != filename:
+        raise ValueError(
+            "File yang dipilih sudah tidak sesuai dengan file yang terakhir "
+            "diupload. Upload ulang filenya."
+        )
 
     return update_source(
         GUDANG_SOURCE_KEY,
-        folder=folder,
-        filename=filename,
         sheet_name=sheet_name,
         last_connected=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
 
 
 def get_gudang_selection():
-    """Baca folder/filename/sheet_name yang sudah tersimpan (hasil
-    save_gudang_selection()). Dipakai run_gudang_import() dan endpoint
-    status di app.py."""
+    """Baca filename/sheet_name yang sudah tersimpan (hasil
+    save_gudang_upload() + save_gudang_selection()). Dipakai
+    run_gudang_import() dan endpoint status di app.py."""
     _, src = get_source(GUDANG_SOURCE_KEY)
     return {
-        "folder": src.get("folder"),
         "filename": src.get("filename"),
         "sheet_name": src.get("sheet_name"),
     }
 
 
-def list_gudang_files(folder):
-    """List semua file .xlsx di folder lokal/jaringan (path Windows, mis.
-    Z:\\...), diurutkan dari yang PALING BARU diubah. File temp lock Excel/
-    WPS (diawali '~$') dilewati."""
-    folder = (folder or "").strip()
-    if not folder:
-        raise ValueError("Path folder wajib diisi.")
-    folder_path = Path(folder)
-    if not folder_path.is_dir():
-        raise NotADirectoryError(f"Folder tidak ditemukan atau tidak bisa diakses: {folder}")
-
-    files = []
-    for f in folder_path.glob("*.xlsx"):
-        if f.name.startswith("~$"):
-            continue
-        try:
-            mtime = f.stat().st_mtime
-        except OSError:
-            continue
-        files.append((f.name, mtime))
-
-    files.sort(key=lambda x: x[1], reverse=True)
-    return [
-        {"name": name, "modified": datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")}
-        for name, mtime in files
-    ]
-
-
-def list_gudang_sheets(folder, filename):
-    """Buka file Excel/WPS lokal yang dipilih user, kembalikan daftar
-    nama sheet/tab di dalamnya."""
+def _read_gudang_excel(filename, sheet_name):
     CalamineWorkbook = _get_calamine()
-    folder = (folder or "").strip()
-    filename = (filename or "").strip()
-    filepath = Path(folder) / filename
+    filepath = GUDANG_UPLOAD_DIR / filename
     if not filepath.is_file():
-        raise FileNotFoundError(f"File '{filename}' tidak ditemukan di folder {folder}.")
-    wb = CalamineWorkbook.from_path(str(filepath))
-    return list(wb.sheet_names)
-
-
-def _read_gudang_excel(folder, filename, sheet_name):
-    CalamineWorkbook = _get_calamine()
-    filepath = Path(folder) / filename
-    if not filepath.is_file():
-        raise FileNotFoundError(f"File '{filename}' tidak ditemukan di folder {folder}.")
+        raise FileNotFoundError(
+            f"File '{filename}' tidak ditemukan di server. Upload ulang lewat "
+            "kartu \"Data Gudang\" di Input Data Produksi."
+        )
     wb = CalamineWorkbook.from_path(str(filepath))
     if sheet_name not in wb.sheet_names:
         raise ValueError(
@@ -1330,15 +1351,15 @@ def run_gudang_import():
     lalu ditimpa (bukan delete+recreate), biar formatting tab yang
     sudah ada di spreadsheet tidak hilang."""
     sel = get_gudang_selection()
-    folder, filename, sheet_name = sel["folder"], sel["filename"], sel["sheet_name"]
-    if not folder or not filename or not sheet_name:
+    filename, sheet_name = sel["filename"], sel["sheet_name"]
+    if not filename or not sheet_name:
         raise ValueError(
-            "Belum ada folder/file/sheet yang dipilih. Pilih dulu lewat kartu "
-            "\"Data Gudang\" di halaman Input Data Produksi."
+            "Belum ada file/sheet yang dipilih. Upload dulu file & pilih sheet "
+            "lewat kartu \"Data Gudang\" di halaman Input Data Produksi."
         )
 
     try:
-        data = _read_gudang_excel(folder, filename, sheet_name)
+        data = _read_gudang_excel(filename, sheet_name)
         data_rata = [_ratakan_kolom_gudang(row, len(GUDANG_HEADER)) for row in data]
 
         client = get_gspread_client()
