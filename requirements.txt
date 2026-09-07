@@ -34,6 +34,7 @@ pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0
 pyparsing==3.3.2
+python-calamine        # <-- ditambahkan (dipakai fitur Data Gudang, baca .xlsx/.xls)
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 requests==2.34.2
