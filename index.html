@@ -865,6 +865,31 @@
   let currentUser = null;
   let dataValidasi = [], dataUpdateStock = [], dataStockBahan = [];
 
+  // ---------------- RESTORE LOGIN DARI localStorage ----------------
+  // Biar refresh halaman nggak otomatis balik ke layar login selama data
+  // login masih tersimpan di browser (baru hilang kalau user logout, atau
+  // localStorage-nya dibersihkan manual/lewat browser).
+  (function restoreSession(){
+    const saved = localStorage.getItem("ksa_currentUser");
+    if(!saved) return;
+    let data;
+    try{ data = JSON.parse(saved); }catch(e){ localStorage.removeItem("ksa_currentUser"); return; }
+    currentUser = data;
+    document.getElementById("loginScreen").style.display = "none";
+    document.getElementById("app").style.display = "block";
+    document.getElementById("user_display").innerText = data.nama;
+    document.getElementById("role_display").innerText = data.role;
+    document.getElementById("nama_dashboard").innerText = data.nama;
+    document.getElementById("role_dashboard").innerText = data.role;
+    document.getElementById("avatarInitial").innerText = (data.nama||"?").trim().charAt(0).toUpperCase();
+    applyRoleAccess(data.role);
+    if(isPageAllowed("dashboard", data.role)){
+      loadDashboardStats();
+    } else {
+      goToFirstAllowedPage(data.role);
+    }
+  })();
+
   // ---------------- AKSES HALAMAN PER ROLE ----------------
   // Value ROLE di sini HARUS PERSIS sama dengan kolom ROLE di sheet "Login"
   // (case-sensitive: "Admin", bukan "admin").
@@ -1017,6 +1042,7 @@
       const data = await res.json();
       if(data.status === "SUKSES"){
         currentUser = data;
+        localStorage.setItem("ksa_currentUser", JSON.stringify(data));
         document.getElementById("loginScreen").style.display = "none";
         document.getElementById("app").style.display = "block";
         document.getElementById("user_display").innerText = data.nama;
@@ -1043,6 +1069,7 @@
 
   function doLogout(){
     currentUser = null;
+    localStorage.removeItem("ksa_currentUser");
     document.getElementById("app").style.display = "none";
     document.getElementById("loginScreen").style.display = "flex";
     document.getElementById("txt_user").value = "";
