@@ -207,6 +207,10 @@
   .btn-outline.spinning .ic-refresh{transform:none;}
   .btn-danger-outline{height:41px; padding:0 16px; border-radius:10px; border:1.5px solid var(--warn); background:white; color:var(--warn); font-weight:700; font-size:12.5px; cursor:pointer; transition: all .15s var(--ease);}
   .btn-danger-outline:hover{background:var(--warn-bg); transform:translateY(-1px);}
+  .us-filter-group{display:inline-flex; gap:6px; flex-wrap:wrap;}
+  .us-filter-chip{height:33px; padding:0 14px; border-radius:99px; border:1.5px solid var(--line); background:white; color:var(--ink-soft); font-weight:700; font-size:12px; cursor:pointer; transition: all .15s var(--ease);}
+  .us-filter-chip:hover{border-color:var(--blue-200); color:var(--blue-dark);}
+  .us-filter-chip.active{background:var(--blue); border-color:var(--blue); color:white;}
 
   .empty{text-align:center; padding:44px 10px; color:var(--ink-soft); font-size:13px;}
   .empty .ic{font-size:30px; display:block; margin-bottom:10px; opacity:.5;}
@@ -723,9 +727,17 @@
                 <button class="btn-danger-outline" onclick="document.getElementById('txtCariUpdateStock').value='';renderUpdateStock()">✖ Reset</button>
                 <button class="btn-outline" id="btnRefreshUpdateStock" onclick="loadUpdateStock(true)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
+              <div class="toolbar" style="margin-top:-6px">
+                <div class="us-filter-group" id="usFilterGroup">
+                  <button type="button" class="us-filter-chip active" data-filter="all" onclick="setUpdateStockFilter('all')">Semua</button>
+                  <button type="button" class="us-filter-chip" data-filter="pending" onclick="setUpdateStockFilter('pending')">Belum Kirim</button>
+                  <button type="button" class="us-filter-chip" data-filter="acc" onclick="setUpdateStockFilter('acc')">Sudah ACC</button>
+                </div>
+                <button class="btn-mini acc" id="btnBulkAccUpdateStock" style="display:none; padding:11px 16px; font-size:12.5px;" onclick="bulkAccUpdateStock()">ACC Terpilih (<span id="usSelectedCount">0</span>)</button>
+              </div>
               <div class="table-wrap">
               <table id="tblUpdateStockTable">
-                <thead><tr><th>JO</th><th>Nama</th><th>Order</th><th>Meter Order</th><th>Meter Validasi</th><th>Lapisan Order</th><th>Lapisan Validasi</th><th>Keterangan</th><th>ACC</th></tr></thead>
+                <thead><tr><th style="width:34px"><input type="checkbox" id="chkAllUpdateStock" onchange="toggleSelectAllUpdateStock(this.checked)"></th><th>JO</th><th>Nama</th><th>Order</th><th>Meter Order</th><th>Meter Validasi</th><th>Lapisan Order</th><th>Lapisan Validasi</th><th>Keterangan</th><th>ACC</th></tr></thead>
                 <tbody id="tblUpdateStock"></tbody>
               </table>
               </div>
@@ -1356,7 +1368,7 @@
     const tbody = document.getElementById("tblUpdateStock");
     const btn = document.getElementById("btnRefreshUpdateStock");
     if(spin && btn) btn.classList.add("spinning");
-    tbody.innerHTML = skeletonRows(8);
+    tbody.innerHTML = skeletonRows(10);
     try{
       // Klik Refresh di halaman ini juga menjalankan import "Update Stock"
       // (blok kolom PL/PET/CPPM dst -> kolom B-K di spreadsheet Monitor
@@ -1381,17 +1393,43 @@
       renderUpdateStock();
       if(spin) toast("Data update stock diperbarui", "success");
     } catch(e){
-      tbody.innerHTML = emptyState(8, "Gagal memuat data.", "⚠️");
+      tbody.innerHTML = emptyState(10, "Gagal memuat data.", "⚠️");
     } finally { if(btn) btn.classList.remove("spinning"); }
   }
+  // Filter (Semua / Belum Kirim / Sudah ACC) -- murni dari field `acc`/`isLocked`
+  // yang sudah ada di data, tidak nambah kolom baru di sheet ataupun tabel data.
+  let updateStockFilter = "all";
+  // JO yang lagi dicentang untuk ACC bulk. Pakai Set supaya tetap kesimpen
+  // walau tabel di-render ulang (search/filter ganti).
+  let selectedUpdateStockJO = new Set();
+
+  function setUpdateStockFilter(mode){
+    updateStockFilter = mode;
+    document.querySelectorAll("#usFilterGroup .us-filter-chip").forEach(btn=>{
+      btn.classList.toggle("active", btn.dataset.filter === mode);
+    });
+    renderUpdateStock();
+  }
+
   function renderUpdateStock(){
     const keyword = (document.getElementById("txtCariUpdateStock").value || "").toLowerCase();
     let rows = dataUpdateStock.filter(r => String(r.jo||"").toLowerCase().includes(keyword) || String(r.nama||"").toLowerCase().includes(keyword));
-    if(rows.length === 0){ document.getElementById("tblUpdateStock").innerHTML = emptyState(9, "Tidak ada data"); return; }
+    if(updateStockFilter === "pending") rows = rows.filter(r => !r.isLocked);
+    else if(updateStockFilter === "acc") rows = rows.filter(r => r.isLocked);
+    // JO yang udah nggak kelihatan (ke-filter/ke-cari keluar) dibuang dari seleksi,
+    // biar tombol "ACC Terpilih" nggak diem-diem masih bawa baris yang nggak keliatan.
+    const visibleJo = new Set(rows.filter(r=>!r.isLocked).map(r=>String(r.jo||"")));
+    selectedUpdateStockJO.forEach(jo => { if(!visibleJo.has(jo)) selectedUpdateStockJO.delete(jo); });
+
+    if(rows.length === 0){ document.getElementById("tblUpdateStock").innerHTML = emptyState(10, "Tidak ada data"); updateBulkAccUI(); return; }
     let html = "";
     rows.forEach((r,i)=>{
-      const accCell = r.isLocked ? `<span class="check-acc">✓</span>` : `<button class="btn-mini acc" onclick='kirimAcc(${JSON.stringify(r)})'>ACC &amp; Kirim</button>`;
+      const jo = String(r.jo||"");
+      const jsonRow = JSON.stringify(r).replace(/'/g, "&#39;");
+      const accCell = r.isLocked ? `<span class="check-acc">✓</span>` : `<button class="btn-mini acc" onclick='kirimAcc(${jsonRow})'>ACC &amp; Kirim</button>`;
+      const checkboxCell = r.isLocked ? "" : `<input type="checkbox" class="chkUpdateStockRow" data-jo="${jo.replace(/"/g,'&quot;')}" onchange="toggleSelectUpdateStock('${jo.replace(/'/g,"\\'")}', this.checked)" ${selectedUpdateStockJO.has(jo) ? "checked" : ""}>`;
       html += `<tr class="row-in" style="animation-delay:${Math.min(i*22,300)}ms">
+        <td style="text-align:center">${checkboxCell}</td>
         <td>${r.jo||""}</td><td>${r.nama||""}</td><td>${r.order||""}</td>
         <td>${r.meterOrder||""}</td><td>${r.meterValidasi||""}</td>
         <td>${r.lapisanOrder||""}</td><td>${r.lapisanValidasi||""}</td>
@@ -1400,24 +1438,83 @@
       </tr>`;
     });
     document.getElementById("tblUpdateStock").innerHTML = html;
+    updateBulkAccUI();
+  }
+
+  function toggleSelectUpdateStock(jo, checked){
+    if(checked) selectedUpdateStockJO.add(jo); else selectedUpdateStockJO.delete(jo);
+    updateBulkAccUI();
+  }
+
+  function toggleSelectAllUpdateStock(checked){
+    document.querySelectorAll("#tblUpdateStock .chkUpdateStockRow").forEach(chk=>{
+      chk.checked = checked;
+      if(checked) selectedUpdateStockJO.add(chk.dataset.jo); else selectedUpdateStockJO.delete(chk.dataset.jo);
+    });
+    updateBulkAccUI();
+  }
+
+  function updateBulkAccUI(){
+    const count = selectedUpdateStockJO.size;
+    const btn = document.getElementById("btnBulkAccUpdateStock");
+    document.getElementById("usSelectedCount").textContent = count;
+    btn.style.display = count > 0 ? "inline-flex" : "none";
+    const chkAll = document.getElementById("chkAllUpdateStock");
+    const rowChecks = document.querySelectorAll("#tblUpdateStock .chkUpdateStockRow");
+    chkAll.checked = rowChecks.length > 0 && Array.from(rowChecks).every(c => c.checked);
+  }
+
+  // Kirim 1 baris ke endpoint ACC yang sudah ada -- dipakai baik dari tombol
+  // ACC per-baris (kirimAcc) maupun dari proses bulk (bulkAccUpdateStock),
+  // supaya keduanya lewat jalur backend yang sama persis, tidak dobel logic.
+  async function sendAccRequest(row){
+    const res = await fetch(`${API_BASE}/api/update-stock/acc`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({...row, user: currentUser ? currentUser.nama : "Tidak diketahui"})
+    });
+    return res.json();
   }
 
   async function kirimAcc(row){
     const ok = await askConfirm("ACC & Kirim Data", `Kirim data JO ${row.jo} ke Stock Bahan Baku? Data akan terkunci setelah ini.`);
     if(!ok) return;
     try{
-      const res = await fetch(`${API_BASE}/api/update-stock/acc`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({...row, user: currentUser ? currentUser.nama : "Tidak diketahui"})
-      });
-      const result = await res.json();
+      const result = await sendAccRequest(row);
       if(result.success){
         toast(`JO ${row.jo} berhasil di-ACC`, "success");
+        selectedUpdateStockJO.delete(String(row.jo||""));
         loadUpdateStock(); loadStockBahan();
       } else {
         toast("Gagal: " + (result.message || "unknown error"), "error");
       }
     } catch(e){ toast("Error: " + e.message, "error"); }
+  }
+
+  async function bulkAccUpdateStock(){
+    const rows = dataUpdateStock.filter(r => !r.isLocked && selectedUpdateStockJO.has(String(r.jo||"")));
+    if(rows.length === 0) return;
+    const ok = await askConfirm("ACC & Kirim Data", `Kirim ${rows.length} JO terpilih ke Stock Bahan Baku sekaligus? Semua baris terpilih akan terkunci setelah ini.`);
+    if(!ok) return;
+
+    const btn = document.getElementById("btnBulkAccUpdateStock");
+    btn.disabled = true;
+    let ok_count = 0, fail = [];
+    for(const row of rows){
+      try{
+        const result = await sendAccRequest(row);
+        if(result.success){ ok_count++; selectedUpdateStockJO.delete(String(row.jo||"")); }
+        else fail.push(row.jo);
+      } catch(e){ fail.push(row.jo); }
+      // Jeda kecil antar request supaya tidak numpuk kena limit Google Sheets
+      // API (baca komentar di app.py soal 429 "requests per minute").
+      await new Promise(r=>setTimeout(r, 400));
+    }
+    btn.disabled = false;
+
+    if(fail.length === 0) toast(`${ok_count} JO berhasil di-ACC`, "success");
+    else toast(`${ok_count} berhasil, gagal: ${fail.join(", ")}`, "error");
+
+    loadUpdateStock(); loadStockBahan();
   }
 
   // ---------------- STOCK BAHAN ----------------
