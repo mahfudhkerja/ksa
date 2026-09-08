@@ -110,19 +110,21 @@ def _produk_tokens(value):
 def _produk_tokens_match(query_compact, row_compact):
     """True kalau nama produk yang dicari user dianggap "sama produk"
     dengan nama produk di satu baris sheet -- LONGGAR (menoleransi nama
-    yang lebih pendek/lebih panjang), karena nama di laporan printing/dry/
-    slitting/bag sering nggak ditulis lengkap/konsisten satu sama lain.
+    yang lebih pendek/lebih panjang, DAN kode/angka tambahan di DEPAN
+    atau di TENGAH, bukan cuma di belakang), karena nama di
+    laporan/sheet gudang sering diawali kode angka batch (mis.
+    '2013100106 ROL AHH RCE 4G (D4) V9') yang tidak selalu diketik user.
 
-    Aturan: cocok kalau versi "padat" (tanpa spasi/tanda baca) salah satu
-    adalah AWALAN dari yang lain -- jadi user cari "RCE 56G" bisa nemu
-    baris "RCE 56G D3" (varian lebih spesifik), dan sebaliknya user cari
-    "RCE 56G D3" tetap nemu baris yang cuma nulis "RCE 56G" (nama lebih
-    pendek). Dengan begini kode varian di akhir seperti D3/D5/LAM dst
-    tetap dibedakan dengan tegas -- bukan cuma "mirip"."""
+    Aturan: cocok kalau versi "padat" (tanpa spasi/tanda baca) salah
+    satu MENGANDUNG yang lain di posisi manapun (bukan cuma di awal) --
+    jadi user cari "ROL AHH RCE 4G (D4) V9" tetap nemu baris yang
+    ditulis "2013100106 ROL AHH RCE 4G (D4) V9". Kode varian di akhir
+    seperti D3/D5 tetap dibedakan tegas karena "RCE56GD3" dan "RCE56GD5"
+    bukan substring satu sama lain."""
     q, r = query_compact, row_compact
     if not q or not r:
         return False
-    return q.startswith(r) or r.startswith(q)
+    return q in r or r in q
 
 
 def _compute_slitting_summary(raw_rows):
@@ -1024,8 +1026,16 @@ SYSTEM_PROMPT = (
     "untuk ini, karena sumber datanya beda (VAL_1 + BJB_KATEGORI + "
     "BJL_KATEGORI, bukan sheet proses seperti Printing/Dry/dll).\n"
     "8a. Kalau user sebut NAMA PRODUK: panggil `search_produk_gudang` "
-    "dulu. Kalau hasilnya lebih dari 1 nama, WAJIB tampilkan daftarnya "
-    "dan minta konfirmasi SEBELUM panggil `query_stok_gudang`.\n"
+    "dulu. PENTING -- nama produk di data gudang SERING diawali kode "
+    "angka panjang yang memang bagian dari nama itu sendiri (mis. "
+    "'2016000095 ROL ROLLS RCE 5.5G (D3)'), BUKAN nomor JO. Kalau user "
+    "ketik string yang diawali angka lalu diikuti huruf/nama produk "
+    "(bukan format JO yang jelas seperti 'JO/23/...' atau cuma angka "
+    "polos pendek), coba dulu SELURUH string itu apa adanya sebagai "
+    "'keyword' ke `search_produk_gudang` -- jangan buru-buru memisah "
+    "angka di depan sebagai nomor JO. Kalau hasilnya lebih dari 1 nama, "
+    "WAJIB tampilkan daftarnya dan minta konfirmasi SEBELUM panggil "
+    "`query_stok_gudang`.\n"
     "8b. Kalau user sebut NOMOR JO: langsung panggil `query_stok_gudang` "
     "dengan 'jo'. Kalau hasilnya field 'ambigu'=true (nomor JO itu dipakai "
     "produk berbeda-beda), WAJIB tampilkan daftar 'kandidat_produk' dan "
