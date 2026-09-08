@@ -207,6 +207,15 @@
   .btn-outline.spinning .ic-refresh{transform:none;}
   .btn-danger-outline{height:41px; padding:0 16px; border-radius:10px; border:1.5px solid var(--warn); background:white; color:var(--warn); font-weight:700; font-size:12.5px; cursor:pointer; transition: all .15s var(--ease);}
   .btn-danger-outline:hover{background:var(--warn-bg); transform:translateY(-1px);}
+  .upload-drop{border:1.5px dashed var(--blue-200); border-radius:12px; padding:16px 14px; text-align:center; cursor:pointer; transition:all .15s var(--ease); background:var(--blue-50);}
+  .upload-drop:hover{border-color:var(--blue-light); background:var(--blue-100);}
+  .upload-drop:focus-visible{outline:none; border-color:var(--blue); box-shadow:0 0 0 4px var(--blue-50);}
+  .upload-drop.dragover{border-color:var(--blue); background:var(--blue-100); transform:scale(1.01);}
+  .upload-drop.uploading{cursor:wait; opacity:.75;}
+  .upload-drop-icon{font-size:19px; line-height:1; margin-bottom:5px;}
+  .upload-drop-text{font-size:12.5px; font-weight:700; color:var(--blue-dark);}
+  .upload-drop-text b{text-decoration:underline; text-underline-offset:2px;}
+  .upload-drop-sub{font-size:10.5px; color:var(--ink-faint); margin-top:3px;}
   .us-filter-group{display:inline-flex; gap:6px; flex-wrap:wrap;}
   .us-filter-chip{height:33px; padding:0 14px; border-radius:99px; border:1.5px solid var(--line); background:white; color:var(--ink-soft); font-weight:700; font-size:12px; cursor:pointer; transition: all .15s var(--ease);}
   .us-filter-chip:hover{border-color:var(--blue-200); color:var(--blue-dark);}
@@ -660,10 +669,13 @@
               <!-- kartu tiap source dirender lewat JS, lihat renderProduksiCards() -->
             </div>
 
-            <!-- Kartu "Data Gudang" -- hardcoded (bukan dari renderProduksiCards()),
-                 karena alurnya beda (folder lokal + 2 modal, bukan link+checklist
-                 sheet) dan SENGAJA TIDAK ikut tombol "Refresh Semua" di atas.
-                 Eksekusi refresh-nya sendiri ada di halaman Data Gudang BJB/BJL. -->
+            <!-- Kartu "Data Gudang" & "Update Stock" -- hardcoded (bukan dari
+                 renderProduksiCards()), karena sumbernya upload file langsung
+                 (bukan link+checklist sheet generik). Data Gudang SENGAJA TIDAK
+                 ikut tombol "Refresh Semua" di atas -- eksekusi refresh-nya
+                 sendiri ada di halaman Data Gudang BJB/BJL. Update Stock TETAP
+                 ikut "Refresh Semua" seperti sebelumnya, cuma cara mengisi
+                 sumbernya yang berubah dari link jadi upload file. -->
             <div class="produksi-grid" style="margin-top:16px;">
               <div class="card produksi-card" style="margin-bottom:0;">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
@@ -676,10 +688,35 @@
                 </p>
                 <div id="gudangCardInfo" style="font-size:11px; color:var(--ink-faint); margin-top:6px;">Belum ada file/sheet dipilih.</div>
 
-                <div class="link-row" style="margin-top:10px;">
-                  <input type="file" id="gudangFileUploadInput" accept=".xlsx,.xls" style="flex:1; font-size:12.5px;">
-                  <button class="btn-outline btn-load" onclick="gudangCardUploadFile()" id="gudangCardBtnUpload">⬆️ Upload &amp; Pilih Sheet</button>
+                <div class="upload-drop" id="gudangDropZone" tabindex="0" role="button" aria-label="Upload file Excel Data Gudang" style="margin-top:10px;">
+                  <input type="file" id="gudangFileUploadInput" accept=".xlsx,.xls" hidden>
+                  <div class="upload-drop-icon">📤</div>
+                  <div class="upload-drop-text" id="gudangDropZoneText"><b>Pilih file</b> atau tarik &amp; lepas ke sini</div>
+                  <div class="upload-drop-sub" id="gudangDropZoneSub">.xlsx / .xls</div>
                 </div>
+              </div>
+
+              <div class="card produksi-card" style="margin-bottom:0;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                  <h3>📦 Update Stock</h3>
+                  <div class="status-pill off" id="updateStockCardPill">⚪ Belum dipilih</div>
+                </div>
+                <p class="desc" style="font-size:11.5px; color:var(--ink-soft); margin-top:4px;">
+                  Sumber file Excel blok PL/PET/CPPM dst untuk Monitor Bahan Baku. Ikut tombol "Refresh Semua" di atas.
+                </p>
+                <div id="updateStockCardInfo" style="font-size:11px; color:var(--ink-faint); margin-top:6px;">Belum ada file dipilih.</div>
+
+                <div class="upload-drop" id="updateStockDropZone" tabindex="0" role="button" aria-label="Upload file Excel Update Stock" style="margin-top:10px;">
+                  <input type="file" id="updateStockFileUploadInput" accept=".xlsx,.xls" hidden>
+                  <div class="upload-drop-icon">📤</div>
+                  <div class="upload-drop-text" id="updateStockDropZoneText"><b>Pilih file</b> atau tarik &amp; lepas ke sini</div>
+                  <div class="upload-drop-sub" id="updateStockDropZoneSub">.xlsx / .xls</div>
+                </div>
+
+                <div style="margin-top:10px;">
+                  <button class="btn-outline btn-sheet" onclick="openSheetModal('update_stock')">📋 Pilih Sheet</button>
+                </div>
+                <div class="sheet-summary" id="updateStockSheetSummary" style="margin-top:8px;">Belum ada sheet dicentang</div>
               </div>
             </div>
           </div>
@@ -1082,7 +1119,7 @@
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
     const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", fstlWaste:"FSTL — Lampiran Waste", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
-    if(page === "produksi"){ loadProduksiSources(); loadGudangCardInfo(); }
+    if(page === "produksi"){ loadProduksiSources(); loadGudangCardInfo(); loadUpdateStockSourceCard(); }
     if(page === "validasi") loadValidasi();
     if(page === "rekap"){ loadPIC(); loadRekap(); }
     if(page === "updateStock") loadUpdateStock();
@@ -1653,13 +1690,17 @@
 
   async function openSheetModal(key){
     activeSheetModalKey = key;
-    const src = produksiSources[key];
+    // "update_stock" SENGAJA tidak ada di produksiSources (dikecualikan di
+    // app.py, punya kartu upload-file sendiri) -- state-nya disimpan di
+    // updateStockSource, bukan produksiSources.
+    const src = key === "update_stock" ? updateStockSource : produksiSources[key];
     document.getElementById("sheetModalTitle").innerText = `Pilih Sheet — ${src.label}`;
     const listEl = document.getElementById("sheetModalList");
 
     let names = detectedSheetsCache[key];
     if(!names){
-      listEl.innerHTML = `<div class="empty" style="padding:20px 8px;">Klik "Load" dulu untuk mendeteksi sheet dari link spreadsheet.</div>`;
+      const hint = key === "update_stock" ? "Upload file dulu" : `Klik "Load" dulu untuk mendeteksi sheet dari link spreadsheet`;
+      listEl.innerHTML = `<div class="empty" style="padding:20px 8px;">${hint}.</div>`;
       document.getElementById("sheetModalOverlay").style.display = "flex";
       return;
     }
@@ -1690,9 +1731,15 @@
       });
       const data = await res.json();
       if(data.success){
-        produksiSources[key].sheets = checked;
-        renderProduksiCards();
-        toast(`Sheet untuk "${produksiSources[key].label}" disimpan (${checked.length} dipilih)`, "success");
+        if(key === "update_stock"){
+          updateStockSource.sheets = checked;
+          renderUpdateStockSourceCard();
+          toast(`Sheet untuk "${updateStockSource.label}" disimpan (${checked.length} dipilih)`, "success");
+        } else {
+          produksiSources[key].sheets = checked;
+          renderProduksiCards();
+          toast(`Sheet untuk "${produksiSources[key].label}" disimpan (${checked.length} dipilih)`, "success");
+        }
         closeSheetModal();
       } else {
         toast(data.message || "Gagal menyimpan pilihan sheet", "error");
@@ -1795,19 +1842,48 @@
     }
   }
 
-  // Upload file yang dipilih user LANGSUNG ke server (bukan baca dari path
-  // folder lokal lagi) -- server simpan file itu di disknya sendiri lalu
-  // balikin daftar sheet di dalamnya. Ini yang bikin fitur ini tetap jalan
-  // walau app-nya sudah di-deploy online (server tidak pernah perlu tahu
-  // atau mengintip isi harddisk komputer user).
-  async function gudangCardUploadFile(){
-    const input = document.getElementById("gudangFileUploadInput");
-    const file = input.files && input.files[0];
-    if(!file){ toast("Pilih file Excel/WPS dulu", "error"); return; }
-    gudangCardPickedFile = null;
+  // ---- Dropzone generik: klik ATAU drag & drop file, langsung panggil
+  // onFile(file) begitu ada file terpilih -- dipakai bareng oleh kartu
+  // Data Gudang & Update Stock, supaya keduanya konsisten & tidak perlu
+  // tombol "Upload" terpisah lagi (drop file = langsung jalan). ----
+  function setupUploadDropzone(dropId, inputId, onFile){
+    const drop = document.getElementById(dropId);
+    const input = document.getElementById(inputId);
+    if(!drop || !input) return;
+    drop.addEventListener("click", () => input.click());
+    drop.addEventListener("keydown", e => {
+      if(e.key === "Enter" || e.key === " "){ e.preventDefault(); input.click(); }
+    });
+    input.addEventListener("change", () => {
+      if(input.files && input.files[0]) onFile(input.files[0]);
+      input.value = ""; // biar milih file yang sama persis lagi tetap trigger "change"
+    });
+    ["dragenter","dragover"].forEach(evt => drop.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation(); drop.classList.add("dragover");
+    }));
+    ["dragleave","drop"].forEach(evt => drop.addEventListener(evt, e => {
+      e.preventDefault(); e.stopPropagation(); drop.classList.remove("dragover");
+    }));
+    drop.addEventListener("drop", e => {
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if(file) onFile(file);
+    });
+  }
 
-    const btn = document.getElementById("gudangCardBtnUpload");
-    btn.disabled = true; const original = btn.innerText; btn.innerText = "Mengunggah...";
+  // Upload file yang dipilih/di-drop user LANGSUNG ke server (bukan baca
+  // dari path folder lokal lagi) -- server simpan file itu di disknya
+  // sendiri lalu balikin daftar sheet di dalamnya. Ini yang bikin fitur
+  // ini tetap jalan walau app-nya sudah di-deploy online (server tidak
+  // pernah perlu tahu atau mengintip isi harddisk komputer user).
+  async function gudangCardUploadFile(file){
+    gudangCardPickedFile = null;
+    const drop = document.getElementById("gudangDropZone");
+    const text = document.getElementById("gudangDropZoneText");
+    const sub = document.getElementById("gudangDropZoneSub");
+    const originalSub = sub.innerText;
+    drop.classList.add("uploading");
+    text.innerHTML = `<b>${file.name}</b>`;
+    sub.innerText = "Mengunggah...";
     try{
       const formData = new FormData();
       formData.append("file", file);
@@ -1830,7 +1906,9 @@
     } catch(e){
       toast("Error: " + e.message, "error");
     } finally {
-      btn.disabled = false; btn.innerText = original;
+      drop.classList.remove("uploading");
+      text.innerHTML = `<b>Pilih file</b> atau tarik &amp; lepas ke sini`;
+      sub.innerText = originalSub;
     }
   }
 
@@ -1849,7 +1927,6 @@
       if(data.success){
         closeGudangSheetModal();
         toast(`Sumber Data Gudang disimpan: ${filename} — ${sheet}`, "success");
-        document.getElementById("gudangFileUploadInput").value = "";
         loadGudangCardInfo();
       } else {
         toast(data.message || "Gagal menyimpan pilihan", "error");
@@ -1858,6 +1935,86 @@
       toast("Error: " + e.message, "error");
     }
   }
+
+  // ============================================================
+  // UPDATE STOCK (mode file) — kartu "Update Stock" di halaman Input
+  // Data Produksi, mirip Data Gudang di atas (upload Excel langsung),
+  // bedanya sheet yang dipilih BISA LEBIH DARI SATU, jadi dipilih lewat
+  // modal "Pilih Sheet" GENERIK yang sama dipakai source link lain
+  // (openSheetModal/saveSheetSelection di bawah, source_key
+  // "update_stock" -- lihat cabang khusus untuk key ini di situ karena
+  // source ini SENGAJA tidak ada di produksiSources, lihat komentar
+  // produksi_sources() di app.py).
+  // ============================================================
+  let updateStockSource = { label: "Update Stock", sheets: [] }; // cache dari /api/update-stock-source
+
+  function updateStockSourceInfoLine(src){
+    if(!src.filename) return "Belum ada file diupload.";
+    const label = src.original_filename || src.filename;
+    return `Sumber saat ini: <b>${label}</b>` +
+      (src.uploaded_at ? `<br><span style="color:var(--ink-faint); font-size:10.5px;">Diupload: ${src.uploaded_at}</span>` : "");
+  }
+
+  async function loadUpdateStockSourceCard(){
+    const pill = document.getElementById("updateStockCardPill");
+    if(!pill) return; // halaman belum dirender
+    try{
+      const res = await fetch(`${API_BASE}/api/update-stock-source`);
+      updateStockSource = await res.json();
+      updateStockSource.label = "Update Stock";
+      renderUpdateStockSourceCard();
+    } catch(e){
+      document.getElementById("updateStockCardInfo").innerText = "Gagal memuat status.";
+    }
+  }
+
+  function renderUpdateStockSourceCard(){
+    const src = updateStockSource;
+    const pill = document.getElementById("updateStockCardPill");
+    const info = document.getElementById("updateStockCardInfo");
+    const sheetCount = (src.sheets || []).length;
+    pill.className = sheetCount ? "status-pill on" : "status-pill off";
+    pill.innerText = sheetCount ? "🟢 Terpilih" : "⚪ Belum dipilih";
+    const lastImportLine = src.last_import
+      ? `Terakhir import: ${src.last_import} — ${src.last_status === "OK" ? `✅ ${src.last_rows ?? 0} baris` : `⚠️ ${src.last_error || "gagal"}`}`
+      : `Belum pernah di-import`;
+    info.innerHTML = updateStockSourceInfoLine(src) + `<br>${lastImportLine}`;
+    const sheetSummary = sheetCount ? `<b>${sheetCount}</b> sheet dicentang: ${src.sheets.join(", ")}` : `Belum ada sheet dicentang`;
+    document.getElementById("updateStockSheetSummary").innerHTML = sheetSummary;
+  }
+
+  async function updateStockCardUploadFile(file){
+    const drop = document.getElementById("updateStockDropZone");
+    const text = document.getElementById("updateStockDropZoneText");
+    const sub = document.getElementById("updateStockDropZoneSub");
+    const originalSub = sub.innerText;
+    drop.classList.add("uploading");
+    text.innerHTML = `<b>${file.name}</b>`;
+    sub.innerText = "Mengunggah...";
+    try{
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_BASE}/api/update-stock-source/upload`, { method:"POST", body: formData });
+      const data = await res.json();
+      if(!data.success){ toast(data.message || "Gagal upload file", "error"); return; }
+      if(!data.sheets || data.sheets.length === 0){ toast("File ini tidak punya sheet.", "error"); return; }
+
+      detectedSheetsCache["update_stock"] = data.sheets;
+      updateStockSource.sheets = []; // direset di server juga -- user pilih ulang dari file baru ini
+      await loadUpdateStockSourceCard();
+      toast(`File terupload — ${data.sheets.length} sheet terdeteksi`, "success");
+      openSheetModal("update_stock"); // langsung buka checklist biar user cepat pilih
+    } catch(e){
+      toast("Error: " + e.message, "error");
+    } finally {
+      drop.classList.remove("uploading");
+      text.innerHTML = `<b>Pilih file</b> atau tarik &amp; lepas ke sini`;
+      sub.innerText = originalSub;
+    }
+  }
+
+  setupUploadDropzone("gudangDropZone", "gudangFileUploadInput", gudangCardUploadFile);
+  setupUploadDropzone("updateStockDropZone", "updateStockFileUploadInput", updateStockCardUploadFile);
 
   // ---- Halaman Data Gudang BJB / BJL (tampilan + tombol Refresh saja) ----
   async function loadGudangStatus(pageKey){

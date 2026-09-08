@@ -590,12 +590,13 @@ def get_stock_bahan():
 def produksi_sources():
     """Daftar semua source (Printing 2..5, RW, SL, SF, Dry 1..5) beserta
     status koneksi & sheet yang sudah dicentang — dipakai untuk render kartu
-    generik (link + checklist sheet). Source "gudang" SENGAJA DIKECUALIKAN
-    di sini karena alurnya beda (folder lokal + 2 modal) dan punya kartu
-    hardcoded sendiri di frontend (lihat index.html, kartu "Data Gudang")."""
+    generik (link + checklist sheet). Source "gudang" dan "update_stock"
+    SENGAJA DIKECUALIKAN di sini karena alurnya beda (upload file, bukan
+    link) dan punya kartu hardcoded sendiri di frontend (lihat index.html,
+    kartu "Data Gudang" & "Update Stock")."""
     cfg = import_engine.load_config()
     sources = cfg.get("sources", {})
-    sources = {k: v for k, v in sources.items() if k not in import_engine.GUDANG_SOURCES}
+    sources = {k: v for k, v in sources.items() if k not in import_engine.GUDANG_SOURCES and k != "update_stock"}
     return jsonify(sources)
 
 
@@ -811,6 +812,45 @@ def gudang_refresh():
         return jsonify({"success": False, "message": str(e)}), 400
 
     return jsonify({"success": True, "rows_written": rows_written})
+
+
+# --------------------------------------------------------------------------
+# 6c. UPDATE STOCK — SUMBER FILE (upload Excel langsung di kartu "Update
+# Stock" pada halaman Input Data Produksi, ALTERNATIF dari cara lama
+# paste link spreadsheet). Alurnya mirip Data Gudang di atas, bedanya
+# sheet yang dicentang bisa lebih dari satu -- makanya SETELAH upload,
+# pemilihan sheet-nya lewat modal "Pilih Sheet" GENERIK yang sama dengan
+# source link lain (endpoint /api/produksi/sheets, TIDAK butuh endpoint
+# "save-selection" terpisah seperti Data Gudang).
+# --------------------------------------------------------------------------
+
+@app.route("/api/update-stock-source", methods=["GET"])
+def update_stock_source():
+    """Status & pilihan file/sheet yang tersimpan untuk source
+    'update_stock' -- dipakai kartu "Update Stock" (mode upload file) di
+    halaman Input Data Produksi. Dipisah dari /api/produksi/sources
+    karena source ini dikecualikan dari daftar situ (lihat komentar di
+    produksi_sources())."""
+    cfg = import_engine.load_config()
+    return jsonify(cfg.get("sources", {}).get("update_stock", {}))
+
+
+@app.route("/api/update-stock-source/upload", methods=["POST"])
+def update_stock_source_upload():
+    """Multipart/form-data, field 'file'. Sama alurnya seperti
+    /api/gudang/upload, tapi untuk source 'update_stock' -- file
+    disimpan ke server lalu dibalikin daftar nama sheet di dalamnya,
+    supaya user bisa langsung centang sheet mana yang mau dipakai lewat
+    modal "Pilih Sheet" (checkbox multi-select, sama dengan source link
+    lain)."""
+    file_storage = request.files.get("file")
+    if file_storage is None or not file_storage.filename:
+        return jsonify({"success": False, "message": "Tidak ada file yang dikirim."}), 400
+    try:
+        sheets = import_engine.save_update_stock_upload(file_storage, file_storage.filename)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+    return jsonify({"success": True, "sheets": sheets})
 
 
 # --------------------------------------------------------------------------

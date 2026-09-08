@@ -42,6 +42,14 @@ CONFIG_PATH = BASE_DIR / "config.json"
 # harddisk komputer user, jadi diganti jadi "upload file ke server dulu,
 # baru server yang baca file itu dari disknya sendiri".
 GUDANG_UPLOAD_DIR = BASE_DIR / "gudang_uploads"
+
+# Folder tempat file Excel hasil UPLOAD untuk source "update_stock" (kartu
+# "Update Stock" di Input Data Produksi, mode file -- lihat
+# save_update_stock_upload() & run_update_stock_import() di bawah).
+# Sama prinsipnya dengan GUDANG_UPLOAD_DIR di atas, folder terpisah supaya
+# file Gudang & Update Stock tidak saling menimpa.
+UPDATE_STOCK_UPLOAD_DIR = BASE_DIR / "update_stock_uploads"
+
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 
 SCOPES = [
@@ -558,7 +566,16 @@ def run_update_stock_import(source_key="update_stock"):
     _extract_stacked_blocks), tumpuk semua hasilnya, lalu tulis ke
     kolom B..K sheet tujuan (src["target_id"] / src["target_sheet"] di
     config.json) -- TANPA menghapus sheet tujuan & TANPA menyentuh
-    kolom A (rumus manual di sana biarkan apa adanya)."""
+    kolom A (rumus manual di sana biarkan apa adanya).
+
+    Sheet-nya sendiri bisa dibaca dari DUA jenis sumber, tergantung
+    src["input_mode"]:
+      - "file" (baru, lewat kartu "Update Stock" -> upload Excel
+        langsung, mirip Data Gudang) -- baca dari file yang tersimpan
+        di UPDATE_STOCK_UPLOAD_DIR lewat _read_update_stock_excel_sheet().
+      - "link" / tidak diisi (lama, dipertahankan untuk kompatibilitas
+        kalau ada yang masih pakai cara lama) -- baca dari spreadsheet
+        src["source_id"] lewat gspread, seperti sebelumnya."""
     cfg, src = get_source(source_key)
 
     target_id = src.get("target_id")
@@ -567,23 +584,39 @@ def run_update_stock_import(source_key="update_stock"):
         raise ValueError("config.json: sources.update_stock.target_id belum diisi (ID spreadsheet tujuan Monitor Bahan Baku).")
     if not target_sheet_name:
         raise ValueError("config.json: sources.update_stock.target_sheet belum diisi (nama tab tujuan di spreadsheet Monitor Bahan Baku).")
-    if not src.get("source_id"):
-        raise ValueError("Source 'update_stock' belum terhubung ke spreadsheet manapun (klik Load dulu di halaman Input Data Produksi).")
 
-    client = get_gspread_client()
-    source_sp = client.open_by_key(src["source_id"])
-
+    input_mode = src.get("input_mode", "link")
     combined = []
-    for sheet_name in src.get("sheets", []):
-        try:
-            ws = source_sp.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            print(f"   ⚠️ Sheet '{sheet_name}' tidak ditemukan di sumber, dilewati.")
-            continue
-        rows = _with_retry(ws.get_all_values, label=f"baca {sheet_name}")
-        blocks = _extract_stacked_blocks(rows)
-        print(f"   Sheet '{sheet_name}': {len(blocks)} baris (semua blok digabung).")
-        combined.extend(blocks)
+
+    if input_mode == "file":
+        filename = src.get("filename")
+        if not filename:
+            raise ValueError("Source 'update_stock' belum ada file yang diupload (klik kartu \"Update Stock\" di halaman Input Data Produksi dulu).")
+        for sheet_name in src.get("sheets", []):
+            try:
+                rows = _read_update_stock_excel_sheet(filename, sheet_name)
+            except ValueError as e:
+                print(f"   ⚠️ {e}")
+                continue
+            blocks = _extract_stacked_blocks(rows)
+            print(f"   Sheet '{sheet_name}': {len(blocks)} baris (semua blok digabung).")
+            combined.extend(blocks)
+        client = get_gspread_client()  # tetap dibutuhkan buat nulis ke target di bawah
+    else:
+        if not src.get("source_id"):
+            raise ValueError("Source 'update_stock' belum terhubung ke spreadsheet manapun (klik Load dulu di halaman Input Data Produksi).")
+        client = get_gspread_client()
+        source_sp = client.open_by_key(src["source_id"])
+        for sheet_name in src.get("sheets", []):
+            try:
+                ws = source_sp.worksheet(sheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                print(f"   ⚠️ Sheet '{sheet_name}' tidak ditemukan di sumber, dilewati.")
+                continue
+            rows = _with_retry(ws.get_all_values, label=f"baca {sheet_name}")
+            blocks = _extract_stacked_blocks(rows)
+            print(f"   Sheet '{sheet_name}': {len(blocks)} baris (semua blok digabung).")
+            combined.extend(blocks)
 
     target_sp = client.open_by_key(target_id)
     try:
@@ -1382,6 +1415,99 @@ def run_gudang_import():
     except Exception as e:
         set_import_result(GUDANG_SOURCE_KEY, "ERROR", rows_written=None, error=str(e))
         raise
+
+
+# ============================================================
+# UPDATE STOCK — SUMBER FILE (upload Excel langsung), ALTERNATIF dari
+# sumber link spreadsheet lama yang dipakai run_update_stock_import()
+# di atas. Polanya sengaja dibuat MIRIP Data Gudang (VARIAN 4 di atas):
+# upload file lewat browser -> server simpan ke UPDATE_STOCK_UPLOAD_DIR
+# -> deteksi nama sheet -> user centang sheet mana yang mau dipakai.
+#
+# Beda dari Data Gudang: sheet yang dicentang BISA LEBIH DARI SATU
+# (kartu "Update Stock" makai modal "Pilih Sheet" generik yang sama
+# dengan source link lain, checkbox multi-select -- lihat
+# openSheetModal()/saveSheetSelection() & endpoint /api/produksi/sheets
+# di app.py), makanya field-nya "sheets" (list), BUKAN "sheet_name"
+# (single) seperti Data Gudang.
+# ============================================================
+
+def save_update_stock_upload(file_storage, original_filename):
+    """Dipanggil dari endpoint /api/update-stock-source/upload. Terima
+    file yang dikirim browser (werkzeug FileStorage), simpan ke
+    UPDATE_STOCK_UPLOAD_DIR di server (nama file dibuat tetap,
+    "current"+ekstensi asli, supaya upload berikutnya otomatis menimpa
+    file lama -- sama seperti save_gudang_upload()), lalu balikin daftar
+    nama sheet di dalamnya supaya user bisa langsung centang lewat
+    modal "Pilih Sheet", tanpa upload ulang."""
+    if file_storage is None:
+        raise ValueError("Tidak ada file yang diupload.")
+
+    original_filename = (original_filename or "").strip()
+    ext = Path(original_filename).suffix.lower() or ".xlsx"
+    if ext not in (".xlsx", ".xls"):
+        raise ValueError("Format file harus .xlsx atau .xls.")
+
+    UPDATE_STOCK_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    saved_filename = f"current{ext}"
+    filepath = UPDATE_STOCK_UPLOAD_DIR / saved_filename
+    file_storage.save(str(filepath))
+
+    CalamineWorkbook = _get_calamine()
+    wb = CalamineWorkbook.from_path(str(filepath))
+    sheet_names = list(wb.sheet_names)
+
+    update_source(
+        "update_stock",
+        input_mode="file",
+        filename=saved_filename,
+        original_filename=original_filename,
+        source_id=None,  # bukan lagi mode link, kosongkan biar status lama tidak menyesatkan
+        source_name=original_filename,
+        sheets=[],  # direset -- user harus centang ulang dari file baru ini
+        uploaded_at=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+    return sheet_names
+
+
+def _stringify_excel_cell(cell):
+    """Ubah 1 sel hasil python_calamine jadi teks dengan format yang
+    SAMA seperti kalau dibaca dari Google Sheets (worksheet.get_all_values()
+    selalu balikin string), supaya pindah dari sumber link ke sumber file
+    upload TIDAK mengubah isi data yang ditulis ke tujuan: angka bulat
+    ditulis tanpa ".0" (mis. "27", bukan "27.0"), sel kosong jadi string
+    kosong. _extract_stacked_blocks() sendiri juga bungkus tiap sel
+    dengan str(...), jadi di sini cukup pastikan hasil str()-nya sudah
+    benar duluan."""
+    cell = _sanitize_cell_gudang(cell)
+    if cell is None:
+        return ""
+    if isinstance(cell, float) and cell.is_integer():
+        return str(int(cell))
+    return str(cell)
+
+
+def _read_update_stock_excel_sheet(filename, sheet_name):
+    """Baca satu sheet dari file yang diupload lewat save_update_stock_upload(),
+    balikin list-of-list string per baris -- format yang sama seperti
+    worksheet.get_all_values() dari gspread, supaya bisa langsung dilempar
+    ke _extract_stacked_blocks() tanpa perlu perlakuan berbeda dari mode
+    link lama."""
+    CalamineWorkbook = _get_calamine()
+    filepath = UPDATE_STOCK_UPLOAD_DIR / filename
+    if not filepath.is_file():
+        raise FileNotFoundError(
+            f"File '{filename}' tidak ditemukan di server. Upload ulang lewat "
+            "kartu \"Update Stock\" di halaman Input Data Produksi."
+        )
+    wb = CalamineWorkbook.from_path(str(filepath))
+    if sheet_name not in wb.sheet_names:
+        raise ValueError(
+            f"Sheet '{sheet_name}' tidak ditemukan di file ini. Sheet yang tersedia: {wb.sheet_names}"
+        )
+    ws = wb.get_sheet_by_name(sheet_name)
+    return [[_stringify_excel_cell(c) for c in row] for row in ws.to_python()]
 
 
 # ============================================================
