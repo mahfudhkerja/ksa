@@ -178,6 +178,28 @@ GUDANG_CREDENTIALS_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "credent
 GUDANG_KATEGORI_SHEETS = {"BJB": "BJB_KATEGORI", "BJL": "BJL_KATEGORI"}
 ROLL_PANJANG_STANDAR = {500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000}
 
+# Satu-satunya nilai KATEGORI yang boleh ditampilkan dari BJB_KATEGORI /
+# BJL_KATEGORI. Baris dengan KATEGORI kosong / selain 4 nilai ini (mis.
+# sisa data lama yang belum diklasifikasi) DIBUANG dari hasil -- baik
+# dari tabel yang ditampilkan maupun dari perhitungan total stok.
+KATEGORI_ALLOWED = {"BAIK", "BISA_REWORK", "BISA_REWIND", "PERLU_REVIEW"}
+
+
+def _normalize_kategori(value):
+    """'Bisa Rework', 'BISA-REWORK', 'bisa_rework' semuanya jadi
+    'BISA_REWORK' supaya bisa dicocokkan ke KATEGORI_ALLOWED walau
+    penulisan di sheet tidak konsisten (spasi/underscore/strip)."""
+    if value is None:
+        return ""
+    s = str(value).strip().upper()
+    return re.sub(r"[\s\-]+", "_", s)
+
+
+def _filter_kategori_rows(rows):
+    """Buang baris yang KATEGORI-nya bukan salah satu dari
+    KATEGORI_ALLOWED (BAIK, BISA_REWORK, BISA_REWIND, PERLU_REVIEW)."""
+    return [r for r in rows if _normalize_kategori(_col(r, "KATEGORI")) in KATEGORI_ALLOWED]
+
 _gudang_spreadsheet = None
 
 
@@ -478,10 +500,11 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
         except Exception as exc:
             kategori_out[label] = {"ditemukan": False, "error": str(exc)}
             continue
+        rows = _filter_kategori_rows(rows)
         if not rows:
             kategori_out[label] = {
                 "ditemukan": False,
-                "pesan": f"Tidak menemukan nama produk '{produk}' di {label}.",
+                "pesan": f"Tidak menemukan baris dengan KATEGORI valid (BAIK/BISA_REWORK/BISA_REWIND/PERLU_REVIEW) untuk produk '{produk}' di {label}.",
             }
             continue
         ringkasan = _ringkas_kategori_rows(rows)
@@ -511,12 +534,29 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "JUMLAH_MASUK_REWIND, KETERANGAN dari validasi.baris -- kalau "
             "validasi.ditemukan false, tulis 'Tidak ditemukan di VAL_1'>\n"
             "Total Stok : <validasi.total_stok>\n\n"
-            "Barang Jadi Baru (BJB):\n<tabel dari bjb.baris kalau "
-            "bjb.ditemukan true, kalau false tulis persis bjb.pesan>\n"
+            "Barang Jadi Baru (BJB):\n"
+            "<tabel dari bjb.baris kalau bjb.ditemukan true, kalau false "
+            "tulis persis bjb.pesan -- PENTING: bjb.baris berasal dari "
+            "sheet BJB_KATEGORI (BUKAN sheet 'BJB' biasa), jadi kolom "
+            "tabelnya HARUS PERSIS mengikuti kolom asli sheet itu, dengan "
+            "urutan ini: CUSTOMER, UKURAN_PRODUK, PRODUK, SISA_STOCK_AKHIR, "
+            "BERAT_ROLL, JO_DAN_STATUS, KETERANGAN, JO, STATUS, KATEGORI -- "
+            "JANGAN pakai nama kolom dari blok Validasi (AREA/NAMA_PRODUK/"
+            "JUMLAH/JUMLAH_MASUK_REWIND) untuk tabel ini. bjb.baris SUDAH "
+            "difilter -- hanya berisi baris dengan KATEGORI salah satu "
+            "dari: BAIK, BISA_REWORK, BISA_REWIND, PERLU_REVIEW, jadi "
+            "tampilkan SEMUA baris yang ada apa adanya, jangan filter "
+            "ulang atau buang kategori manapun dari 4 itu>\n"
             "Total Stok Utuh : <bjb.total_stok_utuh>\n"
             "Perlu Review : <bjb.perlu_review>\n\n"
-            "Barang Jadi Lama (BJL): sama persis seperti blok BJB di atas, "
-            "pakai data dari 'bjl'."
+            "Barang Jadi Lama (BJL): sama persis seperti blok BJB di atas "
+            "(kolom tabel sama, dari sheet BJL_KATEGORI), pakai data dari "
+            "'bjl'.\n\n"
+            "Catatan tampilan: kalau tabel BJB/BJL terlalu lebar untuk "
+            "muat di jendela chat, kecilkan ukuran font tabel itu (mis. "
+            "bungkus dengan tag HTML <small>...</small> atau atribut "
+            "font-size kecil) supaya semua kolom tetap tertampil, JANGAN "
+            "memotong atau menghilangkan kolom/baris demi muat."
         ),
     }
 
