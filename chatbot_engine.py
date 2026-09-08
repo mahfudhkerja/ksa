@@ -176,7 +176,6 @@ def _compute_slitting_summary(raw_rows):
 GUDANG_SPREADSHEET_ID = "1-ZyKSwXLzZaA6uNYRcpJNQZWX_ssYzvX45Z51xERipI"
 GUDANG_CREDENTIALS_FILE = os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "credentials.json")
 GUDANG_KATEGORI_SHEETS = {"BJB": "BJB_KATEGORI", "BJL": "BJL_KATEGORI"}
-ROLL_PANJANG_STANDAR = {500, 750, 1000, 1250, 1500, 2000, 2500, 3000, 4000}
 
 # Satu-satunya nilai KATEGORI yang boleh ditampilkan dari BJB_KATEGORI /
 # BJL_KATEGORI. Baris dengan KATEGORI kosong / selain 4 nilai ini (mis.
@@ -274,28 +273,35 @@ def _extract_panjang_roll(ukuran_produk):
         return None
 
 
-def _is_panjang_standar(panjang):
-    return panjang is not None and any(abs(panjang - std) < 0.01 for std in ROLL_PANJANG_STANDAR)
-
-
 def _ringkas_total_roll(items):
     """items: list (panjang_roll_or_None, qty). Baris tanpa panjang roll
-    (BAG) diabaikan dari total ini. Panjang STANDAR dijumlah jadi satu
-    angka polos 'N Roll'; panjang TIDAK standar dikelompokkan per
-    panjang PERSIS (tidak dibulatkan ke standar terdekat) dan
-    ditambahkan '+ qty@panjang'."""
-    total_standar = 0.0
-    non_standar = {}
+    (BAG) diabaikan dari total ini.
+
+    PENTING: roll dengan panjang BERBEDA bukan satuan yang sama walau
+    sama-sama satuan 'roll' -- 20 roll @500m TIDAK BOLEH dijumlah jadi
+    satu angka polos dengan 10 roll @1500m seakan totalnya '30 Roll'.
+    Jadi qty dikelompokkan per nilai panjang PERSIS (baik yang termasuk
+    ROLL_PANJANG_STANDAR maupun tidak, tidak dibedakan lagi di sini):
+    - Kalau HANYA ADA SATU nilai panjang di antara semua item, tidak ada
+      ambiguitas -- ditampilkan bersih sebagai '<qty> Roll' saja.
+    - Kalau ada LEBIH DARI SATU nilai panjang berbeda, semuanya dipecah
+      eksplisit per panjang: '<qty1>@<panjang1> + <qty2>@<panjang2> + ...'
+      (diurutkan dari panjang terkecil), supaya tidak ada dua panjang
+      berbeda yang diam-diam dibaurkan jadi satu angka."""
+    by_panjang = {}
     for panjang, qty in items:
         if panjang is None or qty is None:
             continue
-        if _is_panjang_standar(panjang):
-            total_standar += qty
-        else:
-            non_standar[panjang] = non_standar.get(panjang, 0.0) + qty
-    parts = [f"{import_engine._format_number(total_standar)} Roll"]
-    for panjang in sorted(non_standar):
-        parts.append(f"{import_engine._format_number(non_standar[panjang])}@{import_engine._format_number(panjang)}")
+        by_panjang[panjang] = by_panjang.get(panjang, 0.0) + qty
+    if not by_panjang:
+        return "0 Roll"
+    if len(by_panjang) == 1:
+        (only_qty,) = by_panjang.values()
+        return f"{import_engine._format_number(only_qty)} Roll"
+    parts = [
+        f"{import_engine._format_number(qty)}@{import_engine._format_number(panjang)}"
+        for panjang, qty in sorted(by_panjang.items())
+    ]
     return " + ".join(parts)
 
 
@@ -313,22 +319,44 @@ def _cari_jo_di_val1(get_sheet_fn, target_jo_suffix):
     return header, matched
 
 
+def _tambah_suffix_roll(combined):
+    """Tambahkan ' Roll' ke bagian angka POLOS dari hasil
+    import_engine._combine_number_terms (mis. '42' -> '42 Roll'), TANPA
+    menyentuh bagian 'N@panjang' yang sudah punya makna sendiri (mis.
+    '42 + 4@500' -> '42 Roll + 4@500', bukan '42 Roll + 4@500 Roll')."""
+    if not combined:
+        return combined
+    return " + ".join(
+        seg if "@" in seg else f"{seg} Roll" for seg in combined.split(" + ")
+    )
+
+
 def _ringkas_val1_rows(rows):
-    """Total Stok VAL_1 = jumlah kolom JUMLAH (angka polos) + gabungan
-    semua isi kolom JUMLAH_MASUK_REWIND (bisa berisi campuran polos &
-    'N@panjang', dihitung pakai import_engine._combine_number_terms --
-    rumus sama persis dengan kolom HASIL SLITTING di sheet Validasi)."""
-    total_jumlah = 0.0
+    """Total Stok VAL_1 = gabungan SEMUA isi kolom JUMLAH + gabungan
+    semua isi kolom JUMLAH_MASUK_REWIND, keduanya dihitung pakai
+    import_engine._combine_number_terms (rumus SAMA PERSIS dengan kolom
+    HASIL SLITTING di sheet Validasi).
+
+    PENTING: kolom JUMLAH TIDAK BOLEH diparse sebagai satu angka polos
+    lewat _parse_flexible_number -- isi selnya kadang SUDAH gabungan
+    dalam satu sel juga (mis. '42+4@500'), dan _parse_flexible_number
+    gagal baca format begitu (baris itu jadi keanggap 0, hilang dari
+    total). Makanya kolom JUMLAH dikumpulkan sebagai teks mentah dulu
+    (sama seperti JUMLAH_MASUK_REWIND) baru digabung lewat
+    _combine_number_terms, supaya '42+4@500' tetap kebaca jadi
+    '42 Roll + 4@500', bukan hilang jadi 0."""
+    jumlah_terms = []
     rewind_terms = []
     for r in rows:
-        v = import_engine._parse_flexible_number(_col(r, "JUMLAH"))
-        if v is not None:
-            total_jumlah += v
+        j = str(_col(r, "JUMLAH") or "").strip()
+        if j and j != "-":
+            jumlah_terms.append(j)
         rw = str(_col(r, "JUMLAH_MASUK_REWIND") or "").strip()
         if rw and rw != "-":
             rewind_terms.append(rw)
 
-    parts = [f"{import_engine._format_number(total_jumlah)} Roll"]
+    combined_jumlah = _tambah_suffix_roll(import_engine._combine_number_terms(jumlah_terms))
+    parts = [combined_jumlah if combined_jumlah else "0 Roll"]
     combined_rewind = import_engine._combine_number_terms(rewind_terms)
     if combined_rewind:
         parts.append(combined_rewind)
@@ -552,11 +580,13 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "Barang Jadi Lama (BJL): sama persis seperti blok BJB di atas "
             "(kolom tabel sama, dari sheet BJL_KATEGORI), pakai data dari "
             "'bjl'.\n\n"
-            "Catatan tampilan: kalau tabel BJB/BJL terlalu lebar untuk "
-            "muat di jendela chat, kecilkan ukuran font tabel itu (mis. "
-            "bungkus dengan tag HTML <small>...</small> atau atribut "
-            "font-size kecil) supaya semua kolom tetap tertampil, JANGAN "
-            "memotong atau menghilangkan kolom/baris demi muat."
+            "Catatan tampilan: JANGAN PERNAH memakai tag HTML apa pun "
+            "(mis. <small>, <b>, <div>) di jawaban -- tampilan chat ini "
+            "HANYA mendukung **bold** dan tabel gaya markdown "
+            "(| kolom | kolom |), tag HTML lain akan tampil sebagai teks "
+            "mentah, bukan diformat. Kalau tabel BJB/BJL lebar, biarkan "
+            "saja apa adanya (tampilan chat sudah otomatis bisa "
+            "di-scroll ke samping), jangan memotong kolom/baris."
         ),
     }
 
@@ -1084,7 +1114,12 @@ SYSTEM_PROMPT = (
     "8c. Hasil `query_stok_gudang` punya field 'catatan_format' -- WAJIB "
     "diikuti PERSIS strukturnya untuk menyusun jawaban akhir (jangan "
     "diringkas/diubah urutannya). Angka Total Stok/Total Stok Utuh/Perlu "
-    "Review dari tool ini sudah final, JANGAN dihitung ulang manual."
+    "Review dari tool ini sudah final, JANGAN dihitung ulang manual.\n"
+    "9. JANGAN PERNAH memakai tag HTML apa pun (mis. <small>, <b>, <br>, "
+    "<div>) di jawaban mana pun -- tampilan chat cuma mendukung "
+    "**bold** dan tabel gaya markdown (| kolom | kolom |); tag HTML lain "
+    "muncul sebagai teks mentah, bukan diformat, dan akan bikin jawaban "
+    "berantakan."
 )
 
 
