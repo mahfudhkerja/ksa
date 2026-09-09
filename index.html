@@ -2040,8 +2040,15 @@
       const res = await fetch(`${API_BASE}/api/gudang/refresh`, { method:"POST" });
       const data = await res.json();
       if(data.success){
-        resultEl.innerHTML = `✅ Berhasil, ${data.rows_written} baris ditulis.`;
-        toast("Refresh berhasil", "success");
+        let msg = `✅ Berhasil, ${data.rows_written} baris ditulis.`;
+        const classErrors = data.classification_errors || [];
+        if(classErrors.length){
+          msg += `<br>⚠️ Klasifikasi BJB/BJL bermasalah: ${classErrors.join(" | ")}`;
+          toast("Refresh berhasil, tapi klasifikasi BJB/BJL bermasalah", "error");
+        } else {
+          toast("Refresh berhasil (data + klasifikasi BJB/BJL)", "success");
+        }
+        resultEl.innerHTML = msg;
       } else {
         resultEl.innerHTML = `⚠️ ${data.message || "Gagal"}`;
         toast(data.message || "Gagal refresh", "error");

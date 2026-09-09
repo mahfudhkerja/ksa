@@ -28,6 +28,8 @@ import pandas as pd
 from google.auth.exceptions import TransportError
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+
+import classify_gudang_sheets  # klasifikasi BJB/BJL, dipanggil dari run_gudang_import()
 from googleapiclient.http import MediaIoBaseDownload
 from requests.exceptions import ConnectionError as RequestsConnectionError, ReadTimeout
 
@@ -1457,16 +1459,49 @@ def _ratakan_kolom_gudang(row, jumlah_kolom):
     return row
 
 
+def _run_gudang_classification(sh):
+    """Jalankan classify_gudang_sheets.classify_sheet() untuk tiap sheet di
+    classify_gudang_sheets.SOURCE_SHEETS (["BJB", "BJL"]), pakai spreadsheet
+    handle `sh` yang SUDAH TERBUKA (bukan buka koneksi/kredensial baru
+    lewat gspread.service_account() seperti di classify_gudang_sheets.main())
+    -- ini valid karena classify_gudang_sheets.SPREADSHEET_ID sama persis
+    dengan GUDANG_TARGET_ID, jadi memang satu spreadsheet yang sama dengan
+    yang barusan ditulis tab "API"-nya.
+
+    Tiap sheet diproses independen: kalau salah satu gagal (mis. sheet
+    "BJB"/"BJL" belum ada), errornya dikumpulkan & dilaporkan, TIDAK
+    menghentikan sheet yang satunya ataupun menggagalkan hasil penulisan
+    tab "API" yang sudah berhasil sebelumnya.
+
+    Return: list string error (kosong kalau semua sheet berhasil)."""
+    errors = []
+    for source_title in classify_gudang_sheets.SOURCE_SHEETS:  # ["BJB", "BJL"]
+        try:
+            classify_gudang_sheets.classify_sheet(sh, source_title)
+        except Exception as e:
+            errors.append(f"Klasifikasi '{source_title}': {e}")
+    return errors
+
+
 def run_gudang_import():
     """Baca sheet yang SUDAH DIPILIH user sebelumnya (lewat kartu "Data
     Gudang" di halaman Input Data Produksi -> save_gudang_selection()),
     lalu TIMPA tab "API" (GUDANG_TARGET_SHEET) di spreadsheet
-    GUDANG_TARGET_ID: baris 1 = GUDANG_HEADER, baris 2 dst = data.
+    GUDANG_TARGET_ID: baris 1 = GUDANG_HEADER, baris 2 dst = data. SESUDAH
+    itu, langsung lanjut jalankan klasifikasi BJB/BJL
+    (_run_gudang_classification() -> classify_gudang_sheets.classify_sheet())
+    supaya sheet "BJB_KATEGORI" / "BJL_KATEGORI" ikut ter-update tiap kali
+    tombol Refresh ini diklik -- tidak perlu jalan manual terpisah lagi.
     Dipanggil dari tombol Refresh di halaman Data Gudang BJB *atau* BJL
     -- keduanya memicu proses yang sama persis.
     Beda dari run_gsheet_import/run_excel_import: sheet tujuan di-CLEAR
     lalu ditimpa (bukan delete+recreate), biar formatting tab yang
-    sudah ada di spreadsheet tidak hilang."""
+    sudah ada di spreadsheet tidak hilang.
+
+    Return: dict {"rows_written": int, "classification_errors": [str, ...]}
+    -- rows_written tetap dianggap sukses walau classification_errors
+    tidak kosong (tab "API" sudah berhasil ditulis; klasifikasi BJB/BJL
+    dianggap langkah tambahan, bukan syarat sukses/gagalnya refresh)."""
     sel = get_gudang_selection()
     filename, sheet_name = sel["filename"], sel["sheet_name"]
     if not filename or not sheet_name:
@@ -1494,8 +1529,13 @@ def run_gudang_import():
         worksheet.update(range_name="A1", values=semua_baris, value_input_option="RAW")
 
         rows_written = len(data_rata)
-        set_import_result(GUDANG_SOURCE_KEY, "OK", rows_written=rows_written, error=None)
-        return rows_written
+
+        # ---- Klasifikasi BJB/BJL (dipanggil otomatis, bagian dari 1x klik Refresh) ----
+        classification_errors = _run_gudang_classification(sh)
+
+        error_msg = " | ".join(classification_errors) if classification_errors else None
+        set_import_result(GUDANG_SOURCE_KEY, "OK", rows_written=rows_written, error=error_msg)
+        return {"rows_written": rows_written, "classification_errors": classification_errors}
     except Exception as e:
         set_import_result(GUDANG_SOURCE_KEY, "ERROR", rows_written=None, error=str(e))
         raise

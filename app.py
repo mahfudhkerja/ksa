@@ -805,13 +805,24 @@ def gudang_refresh():
     dibaca dari config.json (hasil save-selection di kartu "Data Gudang").
     Langsung dijalankan (blocking, cepat karena cuma 1 sheet & 1 tab
     tujuan) -- BEDA dari 'Refresh Semua' di halaman Input Data Produksi
-    yang jalan di background."""
+    yang jalan di background.
+
+    Sekarang run_gudang_import() juga langsung menjalankan klasifikasi
+    BJB/BJL (classify_gudang_sheets.py) sesudah nulis tab "API" -- lihat
+    docstring run_gudang_import(). Kalau klasifikasinya ada yang gagal
+    (mis. sheet "BJB"/"BJL" belum ada), refresh TETAP dianggap sukses
+    (tab "API" sudah kepenuhi) tapi pesan errornya ikut dikirim di
+    'classification_errors' biar user tahu ada bagian yang perlu dicek."""
     try:
-        rows_written = import_engine.run_gudang_import()
+        result = import_engine.run_gudang_import()
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
-    return jsonify({"success": True, "rows_written": rows_written})
+    return jsonify({
+        "success": True,
+        "rows_written": result["rows_written"],
+        "classification_errors": result["classification_errors"],
+    })
 
 
 # --------------------------------------------------------------------------
