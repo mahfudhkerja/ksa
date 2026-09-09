@@ -301,10 +301,48 @@ def detect_sheets(source_id, source_type):
         drive_service = get_drive_service()
         meta = drive_service.files().get(fileId=source_id, fields="name").execute()
         fh = _download_drive_file(source_id)
-        excel_file = pd.ExcelFile(fh)
-        return excel_file.sheet_names, meta.get("name", "")
+        names = _fast_excel_sheet_names(fh)
+        return names, meta.get("name", "")
     else:
         raise ValueError(f"source_type tidak dikenal: {source_type}")
+
+
+def _fast_excel_sheet_names(fh):
+    """Ambil daftar nama sheet dari file .xlsx TANPA membuka/parsing tiap
+    worksheet-nya lewat openpyxl.
+
+    Sebelumnya `pd.ExcelFile(fh)` dipakai cuma untuk ambil nama sheet,
+    padahal itu bikin openpyxl scan XML SETIAP worksheet satu per satu
+    (buat hitung dimensi datanya) -- kerja yang mahal & lambat kalau
+    file-nya besar/banyak sheet, dan ini penyebab WORKER TIMEOUT (lalu
+    worker di-kill) di endpoint /api/produksi/load.
+
+    File .xlsx sebenarnya adalah file ZIP, dan daftar nama sheet-nya ada
+    di dalam xl/workbook.xml -- file kecil yang isinya cuma metadata,
+    TIDAK berisi data sel sama sekali. Jadi baca file itu saja: hasilnya
+    instan berapapun besar/banyak data di tiap sheet.
+    """
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    fh.seek(0)
+    try:
+        with zipfile.ZipFile(fh) as z:
+            xml_bytes = z.read("xl/workbook.xml")
+        root = ET.fromstring(xml_bytes)
+        ns = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        sheets_el = root.find("main:sheets", ns)
+        names = [s.get("name") for s in sheets_el] if sheets_el is not None else []
+        if names:
+            return names
+    except Exception:
+        pass  # bukan .xlsx (zip) valid -- kemungkinan .xls lama, fallback di bawah
+
+    # Fallback untuk format yang bukan .xlsx modern (mis. .xls lama):
+    # tetap pakai cara lama, lebih lambat tapi tetap benar.
+    fh.seek(0)
+    excel_file = pd.ExcelFile(fh)
+    return excel_file.sheet_names
 
 
 # ============================================================
