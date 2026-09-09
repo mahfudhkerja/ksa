@@ -813,11 +813,17 @@ def sync_update_stock_from_jo():
     Kolom ACC PERLU perhatian
     khusus: karena semua baris ditulis ulang dari nol tiap refresh
     (supaya baris JO yang sudah tidak relevan tidak nyangkut), status
-    ACC yang sudah dikunci dibaca dulu SEBELUM clear -- per KODE JO,
-    bukan per posisi baris -- lalu ditempel lagi ke baris JO yang sama
-    setelah data baru ditulis. Ini supaya status "sudah di-ACC" tidak
-    ketuker ke JO lain atau hilang kalau urutan baris JO berubah
-    antar refresh (mis. ada JO baru yang nyempil di tengah)."""
+    ACC yang sudah dikunci dibaca dulu SEBELUM clear -- per KODE JO
+    DIGABUNG "sidik jari" datanya (NAMA/ORDER/METER ORDER/LAPISAN
+    ORDER/KETERANGAN), bukan per posisi baris atau kode JO doang --
+    lalu ditempel lagi ke baris JO yang sama setelah data baru ditulis
+    HANYA KALAU fingerprint-nya masih identik. Ini supaya status
+    "sudah di-ACC" tidak ketuker ke JO lain / hilang kalau urutan
+    baris JO berubah antar refresh, TAPI kalau JO itu ternyata sudah
+    direvisi (kode sama tapi meter/bahan berubah karena baris lama di
+    JO_1 dihapus lalu diganti baris baru), ACC-nya otomatis direset
+    ke kosong supaya wajib di-ACC ulang -- tidak ikut ke-ACC otomatis
+    dari data lama yang sudah tidak berlaku."""
     cfg = load_config()
     target_id = cfg["target_sheet_id"]
     client = get_gspread_client()
@@ -846,50 +852,90 @@ def sync_update_stock_from_jo():
         )
         return 0
 
-    # ---- 2. Baca status ACC LAMA (per kode JO), supaya tidak hilang/ketuker saat rewrite ----
+    # ---- 2. Baca status ACC LAMA + "sidik jari" data LAMA (per kode JO) ----
+    # PENTING: kode JO bisa dipakai ULANG kalau JO itu direvisi (baris lama
+    # di JO_1 dihapus biar tidak dobel, baris baru dgn kode SAMA muncul lagi
+    # tapi datanya beda -- mis. METER ORDER atau LAPISAN/bahan berubah).
+    # Kalau ACC cuma dicocokkan lewat kode JO doang, revisi begini bakal
+    # ke-ACC otomatis padahal belum pernah direview -- makanya di sini kita
+    # simpan juga fingerprint (NAMA, ORDER, METER ORDER, LAPISAN ORDER,
+    # KETERANGAN) dari data LAMA. Nanti pas rewrite, ACC lama HANYA
+    # ditempel lagi kalau fingerprint baru == fingerprint lama (datanya
+    # benar-benar belum berubah). Kalau beda dikit aja -> ACC direset "",
+    # wajib di-ACC ulang.
     existing_rows = _with_retry(ws_update.get_all_values, label="baca UpdateStock (sebelum rewrite)")
     existing_header = existing_rows[0] if existing_rows else []
     try:
         col_acc_idx = existing_header.index("ACC")  # 0-based
     except ValueError:
         col_acc_idx = None
-    acc_lookup = {}
+    # UpdateStock: A=JO(0) B=NAMA(1) C=ORDER(2) D=METER ORDER(3) E=METER VALIDASI(4)
+    #              F=LAPISAN ORDER(5) G=LAPISAN VALIDASI(6) H=KETERANGAN(7)
+    FINGERPRINT_COL_IDXS = (1, 2, 3, 5, 7)  # NAMA, ORDER, METER ORDER, LAPISAN ORDER, KETERANGAN
+    acc_lookup = {}  # jo_code -> (acc_value_lama, fingerprint_lama)
     if col_acc_idx is not None:
         for row in existing_rows[1:]:
             if not row:
                 continue
             jo_val = str(row[0]).strip() if len(row) > 0 else ""
-            if jo_val and len(row) > col_acc_idx:
-                acc_lookup[jo_val] = row[col_acc_idx]
+            if not jo_val:
+                continue
+            acc_val = row[col_acc_idx] if len(row) > col_acc_idx else ""
+            fingerprint_lama = tuple(
+                str(row[idx]).strip() if len(row) > idx else "" for idx in FINGERPRINT_COL_IDXS
+            )
+            acc_lookup[jo_val] = (acc_val, fingerprint_lama)
 
     # ---- 2b. Baca lookup Monitor Bahan Baku (kolom E/G, cocokkan via kode JO) ----
     monitor_lookup = _build_update_stock_monitor_lookup(client)
 
-    # ---- 3. Bangun baris baru kolom A, B, C, D, E, F, G, H (+ ACC dipertahankan per JO) ----
+    # ---- 3. Bangun baris baru kolom A, B, C, D, E, F, G, H (+ ACC dipertahankan
+    #      per JO HANYA kalau datanya belum berubah -- lihat catatan di step 2) ----
     final_a, final_b, final_c, final_d, final_e, final_f, final_g, final_h, final_acc = (
         [], [], [], [], [], [], [], [], [],
     )
+    revisi_ter_reset = []  # buat log: JO yang ACC-nya direset gara-gara datanya berubah
     for row in jo_rows[start_idx:]:
         if len(row) <= max_col_needed:
             continue
         jo_code = str(row[JO_COL_JO]).strip()
         if not jo_code:
             continue
-        final_a.append([jo_code])
-        final_b.append([row[JO_COL_NAMA]])
-        final_c.append([row[JO_COL_ORDER]])
-        final_d.append([row[JO_COL_METER]])  # ditulis apa adanya, "-" tetap ikut
-        matched_monitor_rows = monitor_lookup.get(jo_code, [])
-        final_e.append([_textjoin_monitor_col(matched_monitor_rows, UPDATE_STOCK_MONITOR_COL_E)])
+        nama = row[JO_COL_NAMA]
+        order = row[JO_COL_ORDER]
+        meter = row[JO_COL_METER]  # ditulis apa adanya, "-" tetap ikut
         lapisan_parts = [
             str(row[idx]).strip()
             for idx in (JO_COL_LAPISAN_1, JO_COL_LAPISAN_2, JO_COL_LAPISAN_3)
             if str(row[idx]).strip() not in ("", "-")
         ]
-        final_f.append([", ".join(lapisan_parts)])
+        lapisan_gabung = ", ".join(lapisan_parts)
+        keterangan = row[JO_COL_KETERANGAN]
+
+        final_a.append([jo_code])
+        final_b.append([nama])
+        final_c.append([order])
+        final_d.append([meter])
+        matched_monitor_rows = monitor_lookup.get(jo_code, [])
+        final_e.append([_textjoin_monitor_col(matched_monitor_rows, UPDATE_STOCK_MONITOR_COL_E)])
+        final_f.append([lapisan_gabung])
         final_g.append([_textjoin_monitor_col(matched_monitor_rows, UPDATE_STOCK_MONITOR_COL_A)])
-        final_h.append([row[JO_COL_KETERANGAN]])
-        final_acc.append([acc_lookup.get(jo_code, "")])
+        final_h.append([keterangan])
+
+        fingerprint_baru = (
+            str(nama).strip(), str(order).strip(), str(meter).strip(),
+            lapisan_gabung, str(keterangan).strip(),
+        )
+        acc_val_lama, fingerprint_lama = acc_lookup.get(jo_code, ("", None))
+        if fingerprint_lama is not None and fingerprint_lama == fingerprint_baru:
+            final_acc.append([acc_val_lama])  # data identik -> status ACC dipertahankan
+        else:
+            final_acc.append([""])  # baru pertama kali ATAU sudah direvisi -> wajib ACC ulang
+            if fingerprint_lama is not None and acc_val_lama == "1":
+                revisi_ter_reset.append(jo_code)
+
+    if revisi_ter_reset:
+        print(f"   ⚠️ ACC direset karena data berubah (revisi) untuk JO: {', '.join(revisi_ter_reset)}")
 
     old_last_row = len(existing_rows)
     new_last_row = 1 + len(final_a)
