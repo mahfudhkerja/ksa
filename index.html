@@ -718,6 +718,59 @@
                 </div>
                 <div class="sheet-summary" id="updateStockSheetSummary" style="margin-top:8px;">Belum ada sheet dicentang</div>
               </div>
+
+              <!-- Kartu "Form Serah Terima 2" & "Validasi 2" -- sumber KEDUA/
+                   tambahan (terpisah dari import_form_st.py & import_val.py lama
+                   di halaman Data Validasi). Alurnya PERSIS sama seperti kartu
+                   "Update Stock" di atas (upload file -> centang banyak sheet
+                   lewat modal "Pilih Sheet"), tapi TIDAK ikut "Refresh Semua" --
+                   keduanya dijalankan otomatis bareng import Gudang tiap kali
+                   tombol Refresh di halaman Data Gudang BJB/BJL diklik. -->
+              <div class="card produksi-card" style="margin-bottom:0;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                  <h3>🤝 Form Serah Terima 2</h3>
+                  <div class="status-pill off" id="formSt2CardPill">⚪ Belum dipilih</div>
+                </div>
+                <p class="desc" style="font-size:11.5px; color:var(--ink-soft); margin-top:4px;">
+                  Sumber file Excel blok kedua untuk Form Serah Terima. Ikut jalan otomatis tiap Refresh di halaman Data Gudang BJB/BJL, bukan lewat "Refresh Semua" di atas.
+                </p>
+                <div id="formSt2CardInfo" style="font-size:11px; color:var(--ink-faint); margin-top:6px;">Belum ada file dipilih.</div>
+
+                <div class="upload-drop" id="formSt2DropZone" tabindex="0" role="button" aria-label="Upload file Excel Form Serah Terima 2" style="margin-top:10px;">
+                  <input type="file" id="formSt2FileUploadInput" accept=".xlsx,.xls" hidden>
+                  <div class="upload-drop-icon">📤</div>
+                  <div class="upload-drop-text" id="formSt2DropZoneText"><b>Pilih file</b> atau tarik &amp; lepas ke sini</div>
+                  <div class="upload-drop-sub" id="formSt2DropZoneSub">.xlsx / .xls</div>
+                </div>
+
+                <div style="margin-top:10px;">
+                  <button class="btn-outline btn-sheet" onclick="openSheetModal('form_st_2')">📋 Pilih Sheet</button>
+                </div>
+                <div class="sheet-summary" id="formSt2SheetSummary" style="margin-top:8px;">Belum ada sheet dicentang</div>
+              </div>
+
+              <div class="card produksi-card" style="margin-bottom:0;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                  <h3>✅ Validasi 2</h3>
+                  <div class="status-pill off" id="val2CardPill">⚪ Belum dipilih</div>
+                </div>
+                <p class="desc" style="font-size:11.5px; color:var(--ink-soft); margin-top:4px;">
+                  Sumber file Excel blok kedua untuk Validasi. Ikut jalan otomatis tiap Refresh di halaman Data Gudang BJB/BJL, bukan lewat "Refresh Semua" di atas.
+                </p>
+                <div id="val2CardInfo" style="font-size:11px; color:var(--ink-faint); margin-top:6px;">Belum ada file dipilih.</div>
+
+                <div class="upload-drop" id="val2DropZone" tabindex="0" role="button" aria-label="Upload file Excel Validasi 2" style="margin-top:10px;">
+                  <input type="file" id="val2FileUploadInput" accept=".xlsx,.xls" hidden>
+                  <div class="upload-drop-icon">📤</div>
+                  <div class="upload-drop-text" id="val2DropZoneText"><b>Pilih file</b> atau tarik &amp; lepas ke sini</div>
+                  <div class="upload-drop-sub" id="val2DropZoneSub">.xlsx / .xls</div>
+                </div>
+
+                <div style="margin-top:10px;">
+                  <button class="btn-outline btn-sheet" onclick="openSheetModal('val_2')">📋 Pilih Sheet</button>
+                </div>
+                <div class="sheet-summary" id="val2SheetSummary" style="margin-top:8px;">Belum ada sheet dicentang</div>
+              </div>
             </div>
           </div>
 
@@ -810,8 +863,9 @@
               <h3>🏬 Data Gudang BJB</h3>
               <p class="desc" style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">
                 Menampilkan data Gudang area BJB. Folder/file/sheet sumbernya diatur lewat kartu
-                <b>"Data Gudang"</b> di halaman Input Data Produksi. Refresh di sini terpisah dari
-                "Refresh Semua" di halaman itu.
+                <b>"Data Gudang"</b> di halaman Input Data Produksi. Tombol Refresh di sini menjalankan
+                3 proses sekaligus: Gudang (+ klasifikasi BJB/BJL), <b>Form Serah Terima 2</b>, dan
+                <b>Validasi 2</b> — terpisah dari "Refresh Semua" di halaman itu.
               </p>
               <div id="gudangSourceInfo-gudangBjb" style="font-size:11.5px; color:var(--ink-soft); margin-top:10px;"></div>
               <div id="gudangStatus-gudangBjb" style="font-size:11px; color:var(--ink-faint); margin-top:4px;">Memuat status...</div>
@@ -831,8 +885,9 @@
               <h3>🏬 Data Gudang BJL</h3>
               <p class="desc" style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">
                 Menampilkan data Gudang area BJL. Folder/file/sheet sumbernya diatur lewat kartu
-                <b>"Data Gudang"</b> di halaman Input Data Produksi. Refresh di sini terpisah dari
-                "Refresh Semua" di halaman itu.
+                <b>"Data Gudang"</b> di halaman Input Data Produksi. Tombol Refresh di sini menjalankan
+                3 proses sekaligus: Gudang (+ klasifikasi BJB/BJL), <b>Form Serah Terima 2</b>, dan
+                <b>Validasi 2</b> — terpisah dari "Refresh Semua" di halaman itu.
               </p>
               <div id="gudangSourceInfo-gudangBjl" style="font-size:11.5px; color:var(--ink-soft); margin-top:10px;"></div>
               <div id="gudangStatus-gudangBjl" style="font-size:11px; color:var(--ink-faint); margin-top:4px;">Memuat status...</div>
@@ -1119,7 +1174,7 @@
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
     const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", fstlWaste:"FSTL — Lampiran Waste", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
-    if(page === "produksi"){ loadProduksiSources(); loadGudangCardInfo(); loadUpdateStockSourceCard(); }
+    if(page === "produksi"){ loadProduksiSources(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
     if(page === "validasi") loadValidasi();
     if(page === "rekap"){ loadPIC(); loadRekap(); }
     if(page === "updateStock") loadUpdateStock();
@@ -1688,18 +1743,29 @@
     }
   }
 
+  // "update_stock", "form_st_2" & "val_2" SENGAJA tidak ada di produksiSources
+  // (dikecualikan di app.py, punya kartu upload-file sendiri) -- state-nya
+  // disimpan di variabel terpisah masing2, bukan produksiSources. Dipakai
+  // openSheetModal() & saveSheetSelection() supaya tahu ke variabel mana
+  // harus baca/tulis untuk key ini.
+  const FILE_UPLOAD_SOURCE_KEYS = ["update_stock", "form_st_2", "val_2"];
+  function fileUploadSourceState(key){
+    if(key === "update_stock") return updateStockSource;
+    if(key === "form_st_2") return formSt2Source;
+    if(key === "val_2") return val2Source;
+    return null;
+  }
+
   async function openSheetModal(key){
     activeSheetModalKey = key;
-    // "update_stock" SENGAJA tidak ada di produksiSources (dikecualikan di
-    // app.py, punya kartu upload-file sendiri) -- state-nya disimpan di
-    // updateStockSource, bukan produksiSources.
-    const src = key === "update_stock" ? updateStockSource : produksiSources[key];
+    const isFileUploadSource = FILE_UPLOAD_SOURCE_KEYS.includes(key);
+    const src = isFileUploadSource ? fileUploadSourceState(key) : produksiSources[key];
     document.getElementById("sheetModalTitle").innerText = `Pilih Sheet — ${src.label}`;
     const listEl = document.getElementById("sheetModalList");
 
     let names = detectedSheetsCache[key];
     if(!names){
-      const hint = key === "update_stock" ? "Upload file dulu" : `Klik "Load" dulu untuk mendeteksi sheet dari link spreadsheet`;
+      const hint = isFileUploadSource ? "Upload file dulu" : `Klik "Load" dulu untuk mendeteksi sheet dari link spreadsheet`;
       listEl.innerHTML = `<div class="empty" style="padding:20px 8px;">${hint}.</div>`;
       document.getElementById("sheetModalOverlay").style.display = "flex";
       return;
@@ -1735,6 +1801,14 @@
           updateStockSource.sheets = checked;
           renderUpdateStockSourceCard();
           toast(`Sheet untuk "${updateStockSource.label}" disimpan (${checked.length} dipilih)`, "success");
+        } else if(key === "form_st_2"){
+          formSt2Source.sheets = checked;
+          renderFormSt2SourceCard();
+          toast(`Sheet untuk "${formSt2Source.label}" disimpan (${checked.length} dipilih)`, "success");
+        } else if(key === "val_2"){
+          val2Source.sheets = checked;
+          renderVal2SourceCard();
+          toast(`Sheet untuk "${val2Source.label}" disimpan (${checked.length} dipilih)`, "success");
         } else {
           produksiSources[key].sheets = checked;
           renderProduksiCards();
@@ -2013,8 +2087,139 @@
     }
   }
 
+  // ============================================================
+  // FORM SERAH TERIMA 2 & VALIDASI 2 (mode file) — kartu "Form Serah
+  // Terima 2" & "Validasi 2" di halaman Input Data Produksi. Alurnya
+  // PERSIS sama seperti "Update Stock" di atas (upload Excel -> centang
+  // banyak sheet lewat modal "Pilih Sheet" generik). BEDA: dua kartu ini
+  // TIDAK ikut "Refresh Semua" -- eksekusinya (run_update_stock_import)
+  // dipicu otomatis dari backend tiap kali /api/gudang/refresh dipanggil
+  // (tombol Refresh di halaman Data Gudang BJB/BJL), lihat gudangRefresh()
+  // di bawah.
+  // ============================================================
+  let formSt2Source = { label: "Form Serah Terima 2", sheets: [] }; // cache dari /api/form-st2-source
+  let val2Source = { label: "Validasi 2", sheets: [] };             // cache dari /api/val2-source
+
+  async function loadFormSt2SourceCard(){
+    const pill = document.getElementById("formSt2CardPill");
+    if(!pill) return; // halaman belum dirender
+    try{
+      const res = await fetch(`${API_BASE}/api/form-st2-source`);
+      formSt2Source = await res.json();
+      formSt2Source.label = "Form Serah Terima 2";
+      renderFormSt2SourceCard();
+    } catch(e){
+      document.getElementById("formSt2CardInfo").innerText = "Gagal memuat status.";
+    }
+  }
+
+  function renderFormSt2SourceCard(){
+    const src = formSt2Source;
+    const pill = document.getElementById("formSt2CardPill");
+    const info = document.getElementById("formSt2CardInfo");
+    const sheetCount = (src.sheets || []).length;
+    pill.className = sheetCount ? "status-pill on" : "status-pill off";
+    pill.innerText = sheetCount ? "🟢 Terpilih" : "⚪ Belum dipilih";
+    const lastImportLine = src.last_import
+      ? `Terakhir import: ${src.last_import} — ${src.last_status === "OK" ? `✅ ${src.last_rows ?? 0} baris` : `⚠️ ${src.last_error || "gagal"}`}`
+      : `Belum pernah di-import`;
+    info.innerHTML = updateStockSourceInfoLine(src) + `<br>${lastImportLine}`;
+    const sheetSummary = sheetCount ? `<b>${sheetCount}</b> sheet dicentang: ${src.sheets.join(", ")}` : `Belum ada sheet dicentang`;
+    document.getElementById("formSt2SheetSummary").innerHTML = sheetSummary;
+  }
+
+  async function formSt2CardUploadFile(file){
+    const drop = document.getElementById("formSt2DropZone");
+    const text = document.getElementById("formSt2DropZoneText");
+    const sub = document.getElementById("formSt2DropZoneSub");
+    const originalSub = sub.innerText;
+    drop.classList.add("uploading");
+    text.innerHTML = `<b>${file.name}</b>`;
+    sub.innerText = "Mengunggah...";
+    try{
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_BASE}/api/form-st2-source/upload`, { method:"POST", body: formData });
+      const data = await res.json();
+      if(!data.success){ toast(data.message || "Gagal upload file", "error"); return; }
+      if(!data.sheets || data.sheets.length === 0){ toast("File ini tidak punya sheet.", "error"); return; }
+
+      detectedSheetsCache["form_st_2"] = data.sheets;
+      formSt2Source.sheets = []; // direset di server juga -- user pilih ulang dari file baru ini
+      await loadFormSt2SourceCard();
+      toast(`File terupload — ${data.sheets.length} sheet terdeteksi`, "success");
+      openSheetModal("form_st_2"); // langsung buka checklist biar user cepat pilih
+    } catch(e){
+      toast("Error: " + e.message, "error");
+    } finally {
+      drop.classList.remove("uploading");
+      text.innerHTML = `<b>Pilih file</b> atau tarik &amp; lepas ke sini`;
+      sub.innerText = originalSub;
+    }
+  }
+
+  async function loadVal2SourceCard(){
+    const pill = document.getElementById("val2CardPill");
+    if(!pill) return; // halaman belum dirender
+    try{
+      const res = await fetch(`${API_BASE}/api/val2-source`);
+      val2Source = await res.json();
+      val2Source.label = "Validasi 2";
+      renderVal2SourceCard();
+    } catch(e){
+      document.getElementById("val2CardInfo").innerText = "Gagal memuat status.";
+    }
+  }
+
+  function renderVal2SourceCard(){
+    const src = val2Source;
+    const pill = document.getElementById("val2CardPill");
+    const info = document.getElementById("val2CardInfo");
+    const sheetCount = (src.sheets || []).length;
+    pill.className = sheetCount ? "status-pill on" : "status-pill off";
+    pill.innerText = sheetCount ? "🟢 Terpilih" : "⚪ Belum dipilih";
+    const lastImportLine = src.last_import
+      ? `Terakhir import: ${src.last_import} — ${src.last_status === "OK" ? `✅ ${src.last_rows ?? 0} baris` : `⚠️ ${src.last_error || "gagal"}`}`
+      : `Belum pernah di-import`;
+    info.innerHTML = updateStockSourceInfoLine(src) + `<br>${lastImportLine}`;
+    const sheetSummary = sheetCount ? `<b>${sheetCount}</b> sheet dicentang: ${src.sheets.join(", ")}` : `Belum ada sheet dicentang`;
+    document.getElementById("val2SheetSummary").innerHTML = sheetSummary;
+  }
+
+  async function val2CardUploadFile(file){
+    const drop = document.getElementById("val2DropZone");
+    const text = document.getElementById("val2DropZoneText");
+    const sub = document.getElementById("val2DropZoneSub");
+    const originalSub = sub.innerText;
+    drop.classList.add("uploading");
+    text.innerHTML = `<b>${file.name}</b>`;
+    sub.innerText = "Mengunggah...";
+    try{
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${API_BASE}/api/val2-source/upload`, { method:"POST", body: formData });
+      const data = await res.json();
+      if(!data.success){ toast(data.message || "Gagal upload file", "error"); return; }
+      if(!data.sheets || data.sheets.length === 0){ toast("File ini tidak punya sheet.", "error"); return; }
+
+      detectedSheetsCache["val_2"] = data.sheets;
+      val2Source.sheets = []; // direset di server juga -- user pilih ulang dari file baru ini
+      await loadVal2SourceCard();
+      toast(`File terupload — ${data.sheets.length} sheet terdeteksi`, "success");
+      openSheetModal("val_2"); // langsung buka checklist biar user cepat pilih
+    } catch(e){
+      toast("Error: " + e.message, "error");
+    } finally {
+      drop.classList.remove("uploading");
+      text.innerHTML = `<b>Pilih file</b> atau tarik &amp; lepas ke sini`;
+      sub.innerText = originalSub;
+    }
+  }
+
   setupUploadDropzone("gudangDropZone", "gudangFileUploadInput", gudangCardUploadFile);
   setupUploadDropzone("updateStockDropZone", "updateStockFileUploadInput", updateStockCardUploadFile);
+  setupUploadDropzone("formSt2DropZone", "formSt2FileUploadInput", formSt2CardUploadFile);
+  setupUploadDropzone("val2DropZone", "val2FileUploadInput", val2CardUploadFile);
 
   // ---- Halaman Data Gudang BJB / BJL (tampilan + tombol Refresh saja) ----
   async function loadGudangStatus(pageKey){
@@ -2040,13 +2245,22 @@
       const res = await fetch(`${API_BASE}/api/gudang/refresh`, { method:"POST" });
       const data = await res.json();
       if(data.success){
-        let msg = `✅ Berhasil, ${data.rows_written} baris ditulis.`;
+        let msg = `✅ Gudang: ${data.rows_written} baris ditulis.`;
+        const extraIcons = { form_st_2: "🤝 Form Serah Terima 2", val_2: "✅ Validasi 2" };
+        (data.extra_results || []).forEach(r => {
+          const label = extraIcons[r.source_key] || r.source_key;
+          msg += r.status === "OK"
+            ? `<br>${label}: ${r.rows_written ?? 0} baris.`
+            : `<br>${label}: ⚠️ ${r.status}.`;
+        });
         const classErrors = data.classification_errors || [];
-        if(classErrors.length){
-          msg += `<br>⚠️ Klasifikasi BJB/BJL bermasalah: ${classErrors.join(" | ")}`;
-          toast("Refresh berhasil, tapi klasifikasi BJB/BJL bermasalah", "error");
+        const extraErrors = data.extra_errors || [];
+        const allErrors = [...classErrors, ...extraErrors];
+        if(allErrors.length){
+          msg += `<br>⚠️ ${allErrors.join(" | ")}`;
+          toast("Refresh selesai, ada bagian yang bermasalah — cek log", "error");
         } else {
-          toast("Refresh berhasil (data + klasifikasi BJB/BJL)", "success");
+          toast("Refresh berhasil (Gudang + klasifikasi BJB/BJL + Form Serah Terima 2 + Validasi 2)", "success");
         }
         resultEl.innerHTML = msg;
       } else {

@@ -590,13 +590,17 @@ def get_stock_bahan():
 def produksi_sources():
     """Daftar semua source (Printing 2..5, RW, SL, SF, Dry 1..5) beserta
     status koneksi & sheet yang sudah dicentang — dipakai untuk render kartu
-    generik (link + checklist sheet). Source "gudang" dan "update_stock"
-    SENGAJA DIKECUALIKAN di sini karena alurnya beda (upload file, bukan
-    link) dan punya kartu hardcoded sendiri di frontend (lihat index.html,
-    kartu "Data Gudang" & "Update Stock")."""
+    generik (link + checklist sheet). Source "gudang", "update_stock",
+    "form_st_2", & "val_2" SENGAJA DIKECUALIKAN di sini karena alurnya beda
+    (upload file, bukan link) dan punya kartu hardcoded sendiri di frontend
+    (lihat index.html, kartu "Data Gudang", "Update Stock", "Form Serah
+    Terima 2", "Validasi 2")."""
     cfg = import_engine.load_config()
     sources = cfg.get("sources", {})
-    sources = {k: v for k, v in sources.items() if k not in import_engine.GUDANG_SOURCES and k != "update_stock"}
+    sources = {
+        k: v for k, v in sources.items()
+        if k not in import_engine.GUDANG_SOURCES and k not in import_engine.FILE_UPLOAD_EXTRA_SOURCES
+    }
     return jsonify(sources)
 
 
@@ -798,30 +802,100 @@ def gudang_save_selection():
     return jsonify({"success": True, "source": src})
 
 
+GUDANG_EXTRA_IMPORT_SCRIPTS = [
+    ("form_st_2", "import_form_st_2.py"),
+    ("val_2", "import_val_2.py"),
+]
+
+
 @app.route("/api/gudang/refresh", methods=["POST"])
 def gudang_refresh():
     """Tombol Refresh di halaman Data Gudang BJB *atau* BJL -- keduanya
     memanggil endpoint yang sama ini. Tidak perlu body: folder/file/sheet
-    dibaca dari config.json (hasil save-selection di kartu "Data Gudang").
-    Langsung dijalankan (blocking, cepat karena cuma 1 sheet & 1 tab
-    tujuan) -- BEDA dari 'Refresh Semua' di halaman Input Data Produksi
-    yang jalan di background.
+    dibaca dari config.json (hasil save-selection di kartu "Data Gudang",
+    dan hasil upload di kartu "Form Serah Terima 2" / "Validasi 2").
 
-    Sekarang run_gudang_import() juga langsung menjalankan klasifikasi
-    BJB/BJL (classify_gudang_sheets.py) sesudah nulis tab "API" -- lihat
-    docstring run_gudang_import(). Kalau klasifikasinya ada yang gagal
-    (mis. sheet "BJB"/"BJL" belum ada), refresh TETAP dianggap sukses
-    (tab "API" sudah kepenuhi) tapi pesan errornya ikut dikirim di
-    'classification_errors' biar user tahu ada bagian yang perlu dicek."""
+    SATU klik di sini sekarang menjalankan TIGA proses (kalau salah satu
+    gagal, yang lain TETAP dicoba -- sama polanya dengan
+    refresh_import_validasi() di atas):
+      1. run_gudang_import() -- tulis tab "API" (Monitor Bahan Baku) +
+         klasifikasi BJB/BJL (classify_gudang_sheets.py). Dijalankan
+         LANGSUNG (in-process, bukan subprocess) -- kalau ini gagal,
+         seluruh refresh dianggap gagal (data Gudang BJB/BJL sendiri
+         yang mau ditampilkan tidak ke-update).
+      2. import_form_st_2.py -- kartu "Form Serah Terima 2" -> tab
+         "FORM_ST_2" di spreadsheet Monitor Bahan Baku.
+      3. import_val_2.py -- kartu "Validasi 2" -> tab "VAL_2" di
+         spreadsheet yang sama.
+    (2) & (3) dijalankan sebagai SUBPROCESS terpisah (python
+    import_form_st_2.py / import_val_2.py) -- sama seperti
+    VALIDASI_IMPORT_SCRIPTS di atas -- karena keduanya header-based
+    (TARGET_HEADERS/HEADER_KEYWORDS ada di script masing2, lihat
+    run_local_excel_import() di import_engine.py), bukan generik lewat
+    satu fungsi seperti run_gudang_import()/run_update_stock_import().
+
+    Kalau (1) Gudang gagal, response success=False. Kalau (1) berhasil
+    tapi (2)/(3) ada yang gagal, response TETAP success=True (supaya
+    tampilan Gudang BJB/BJL tetap ke-update) tapi errornya dikirim lewat
+    'extra_errors' & detail per-script di 'extra_results'."""
     try:
         result = import_engine.run_gudang_import()
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+
+    extra_results = []
+    for source_key, script_name in GUDANG_EXTRA_IMPORT_SCRIPTS:
+        script_path = BASE_DIR / script_name
+        if not script_path.exists():
+            extra_results.append({"source_key": source_key, "script": script_name, "status": "NOT FOUND", "rows_written": None, "log": ""})
+            continue
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(script_path)],
+                cwd=str(BASE_DIR),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            )
+            ok = proc.returncode == 0
+        except Exception as e:
+            extra_results.append({"source_key": source_key, "script": script_name, "status": f"FAILED ({e})", "rows_written": None, "log": ""})
+            continue
+
+        # Baca status/rows_written TERBARU dari config.json (ditulis oleh
+        # set_import_result() di dalam run_local_excel_import()) -- lebih
+        # akurat daripada parsing stdout script.
+        try:
+            _, src_after = import_engine.get_source(source_key)
+        except KeyError:
+            src_after = {}
+
+        extra_results.append({
+            "source_key": source_key,
+            "script": script_name,
+            "status": "OK" if ok else f"FAILED (exit {proc.returncode})",
+            "rows_written": src_after.get("last_rows"),
+            "last_error": src_after.get("last_error") if not ok else None,
+            "log": (proc.stdout or "") + (proc.stderr or ""),
+        })
+
+    extra_errors = [
+        f"{r['source_key']}: {r.get('last_error') or r['status']}"
+        for r in extra_results if r["status"] != "OK"
+    ]
+
     return jsonify({
         "success": True,
         "rows_written": result["rows_written"],
         "classification_errors": result["classification_errors"],
+        "extra_results": extra_results,
+        "extra_errors": extra_errors,
     })
 
 
@@ -859,6 +933,66 @@ def update_stock_source_upload():
         return jsonify({"success": False, "message": "Tidak ada file yang dikirim."}), 400
     try:
         sheets = import_engine.save_update_stock_upload(file_storage, file_storage.filename)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+    return jsonify({"success": True, "sheets": sheets})
+
+
+# --------------------------------------------------------------------------
+# 6d. FORM SERAH TERIMA 2 & VALIDASI 2 — SUMBER FILE, alurnya PERSIS sama
+# dengan "Update Stock" di 6c (upload Excel -> centang sheet lewat modal
+# "Pilih Sheet" generik -> run_update_stock_import(source_key) ekstrak
+# blok kolom lebar 10 & tumpuk). BEDA dari Update Stock: dua source ini
+# TIDAK ikut "Refresh Semua" -- keduanya dijalankan otomatis bareng
+# import Gudang tiap kali tombol Refresh di halaman Data Gudang BJB/BJL
+# diklik (lihat gudang_refresh() di 6b, 3 proses sekali klik). Target
+# tulisnya juga BUKAN spreadsheet Monitor Bahan Baku, tapi spreadsheet
+# terpisah (lihat config.json: sources.form_st_2 / sources.val_2 ->
+# target_id "1-ZyKSwXLzZaA6uNYRcpJNQZWX_ssYzvX45Z51xERipI", target_sheet
+# "FORM_ST_2" / "VAL_2").
+# --------------------------------------------------------------------------
+
+@app.route("/api/form-st2-source", methods=["GET"])
+def form_st2_source():
+    """Status & pilihan file/sheet yang tersimpan untuk source 'form_st_2'
+    -- dipakai kartu "Form Serah Terima 2" (mode upload file) di halaman
+    Input Data Produksi."""
+    cfg = import_engine.load_config()
+    return jsonify(cfg.get("sources", {}).get("form_st_2", {}))
+
+
+@app.route("/api/form-st2-source/upload", methods=["POST"])
+def form_st2_source_upload():
+    """Multipart/form-data, field 'file'. Sama alurnya seperti
+    /api/update-stock-source/upload, tapi untuk source 'form_st_2'."""
+    file_storage = request.files.get("file")
+    if file_storage is None or not file_storage.filename:
+        return jsonify({"success": False, "message": "Tidak ada file yang dikirim."}), 400
+    try:
+        sheets = import_engine.save_local_excel_upload("form_st_2", file_storage, file_storage.filename)
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 400
+    return jsonify({"success": True, "sheets": sheets})
+
+
+@app.route("/api/val2-source", methods=["GET"])
+def val2_source():
+    """Status & pilihan file/sheet yang tersimpan untuk source 'val_2'
+    -- dipakai kartu "Validasi 2" (mode upload file) di halaman Input
+    Data Produksi."""
+    cfg = import_engine.load_config()
+    return jsonify(cfg.get("sources", {}).get("val_2", {}))
+
+
+@app.route("/api/val2-source/upload", methods=["POST"])
+def val2_source_upload():
+    """Multipart/form-data, field 'file'. Sama alurnya seperti
+    /api/update-stock-source/upload, tapi untuk source 'val_2'."""
+    file_storage = request.files.get("file")
+    if file_storage is None or not file_storage.filename:
+        return jsonify({"success": False, "message": "Tidak ada file yang dikirim."}), 400
+    try:
+        sheets = import_engine.save_local_excel_upload("val_2", file_storage, file_storage.filename)
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
     return jsonify({"success": True, "sheets": sheets})

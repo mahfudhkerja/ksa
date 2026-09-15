@@ -52,6 +52,33 @@ GUDANG_UPLOAD_DIR = BASE_DIR / "gudang_uploads"
 # file Gudang & Update Stock tidak saling menimpa.
 UPDATE_STOCK_UPLOAD_DIR = BASE_DIR / "update_stock_uploads"
 
+# Sama polanya dengan UPDATE_STOCK_UPLOAD_DIR di atas, tapi untuk dua kartu
+# upload-file baru: "FORM SERAH TERIMA 2" (source_key "form_st_2") & "VALIDASI 2"
+# (source_key "val_2"). Keduanya SUMBER KEDUA/tambahan -- terpisah dari
+# import_form_st.py & import_val.py yang lama (yang jalan lewat
+# /api/validasi/refresh-import), dan dari import_update_stock.py di atas.
+# Folder terpisah supaya file yang diupload lewat ketiga kartu ini (Update
+# Stock, Form Serah Terima 2, Validasi 2) tidak saling menimpa.
+FORM_ST2_UPLOAD_DIR = BASE_DIR / "form_st2_uploads"
+VAL2_UPLOAD_DIR = BASE_DIR / "val2_uploads"
+
+# source_key -> folder upload-nya masing2, dipakai save_local_excel_upload()
+# untuk SEMUA source yang file-nya diupload lokal (bukan link) -- baik yang
+# dibaca lewat blok kolom lebar 10 tanpa header (update_stock, lihat
+# _read_stacked_block_excel_sheet) MAUPUN yang header-based (form_st_2,
+# val_2, lihat run_local_excel_import / VARIAN 5) -- supaya ketiganya bisa
+# pakai fungsi upload yang SAMA tanpa duplikasi kode 3x.
+LOCAL_EXCEL_UPLOAD_DIRS = {
+    "update_stock": UPDATE_STOCK_UPLOAD_DIR,
+    "form_st_2": FORM_ST2_UPLOAD_DIR,
+    "val_2": VAL2_UPLOAD_DIR,
+}
+
+# Dipakai app.py (produksi_sources()) buat mengecualikan ketiga source ini
+# dari daftar kartu generik link+checklist -- sama seperti GUDANG_SOURCES,
+# ketiganya punya kartu upload-file hardcoded sendiri di index.html.
+FILE_UPLOAD_EXTRA_SOURCES = set(LOCAL_EXCEL_UPLOAD_DIRS.keys())
+
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 
 SCOPES = [
@@ -608,6 +635,11 @@ def run_update_stock_import(source_key="update_stock"):
     config.json) -- TANPA menghapus sheet tujuan & TANPA menyentuh
     kolom A (rumus manual di sana biarkan apa adanya).
 
+    HANYA dipakai source "update_stock" (blok kolom lebar 10, TANPA
+    header) -- BEDA dari "form_st_2"/"val_2" yang sumbernya ADA header
+    (sama seperti form_st/val lama), lihat run_local_excel_import()
+    (VARIAN 5) untuk dua source itu.
+
     Sheet-nya sendiri bisa dibaca dari DUA jenis sumber, tergantung
     src["input_mode"]:
       - "file" (baru, lewat kartu "Update Stock" -> upload Excel
@@ -621,20 +653,21 @@ def run_update_stock_import(source_key="update_stock"):
     target_id = src.get("target_id")
     target_sheet_name = src.get("target_sheet")
     if not target_id:
-        raise ValueError("config.json: sources.update_stock.target_id belum diisi (ID spreadsheet tujuan Monitor Bahan Baku).")
+        raise ValueError(f"config.json: sources.{source_key}.target_id belum diisi (ID spreadsheet tujuan).")
     if not target_sheet_name:
-        raise ValueError("config.json: sources.update_stock.target_sheet belum diisi (nama tab tujuan di spreadsheet Monitor Bahan Baku).")
+        raise ValueError(f"config.json: sources.{source_key}.target_sheet belum diisi (nama tab tujuan).")
 
     input_mode = src.get("input_mode", "link")
     combined = []
 
     if input_mode == "file":
         filename = src.get("filename")
+        card_label = LOCAL_EXCEL_CARD_LABELS.get(source_key, source_key)
         if not filename:
-            raise ValueError("Source 'update_stock' belum ada file yang diupload (klik kartu \"Update Stock\" di halaman Input Data Produksi dulu).")
+            raise ValueError(f"Source '{source_key}' belum ada file yang diupload (klik kartu \"{card_label}\" di halaman Input Data Produksi dulu).")
         for sheet_name in src.get("sheets", []):
             try:
-                rows = _read_update_stock_excel_sheet(filename, sheet_name)
+                rows = _read_stacked_block_excel_sheet(source_key, filename, sheet_name)
             except ValueError as e:
                 print(f"   ⚠️ {e}")
                 continue
@@ -664,7 +697,8 @@ def run_update_stock_import(source_key="update_stock"):
     except gspread.exceptions.WorksheetNotFound:
         raise ValueError(f"Tab '{target_sheet_name}' tidak ditemukan di spreadsheet tujuan ({target_id}).")
 
-    existing = _with_retry(target_ws.get_all_values, label="baca sheet tujuan Update Stock")
+    card_label = LOCAL_EXCEL_CARD_LABELS.get(source_key, source_key)
+    existing = _with_retry(target_ws.get_all_values, label=f"baca sheet tujuan {card_label}")
     old_last_row = len(existing)  # termasuk baris 1 (walau baris 1 di sini bukan header, tetap ikut dihitung)
     new_last_row = 1 + len(combined)  # data mulai baris 2
     clear_last_row = max(old_last_row, new_last_row)
@@ -674,12 +708,12 @@ def run_update_stock_import(source_key="update_stock"):
     if clear_last_row >= 2:
         _with_retry(
             target_ws.batch_clear, [f"B2:{end_col}{clear_last_row}"],
-            label="hapus data lama Update Stock (kolom B-K)",
+            label=f"hapus data lama {card_label} (kolom B-K)",
         )
     if combined:
         _with_retry(
             target_ws.update, f"B2:{end_col}{new_last_row}", combined,
-            value_input_option="RAW", label="tulis data Update Stock (kolom B-K)",
+            value_input_option="RAW", label=f"tulis data {card_label} (kolom B-K)",
         )
 
     print(f"   ✅ {len(combined)} baris ditulis ke kolom B-K sheet '{target_sheet_name}' (kolom A tidak disentuh).")
@@ -1542,6 +1576,139 @@ def run_gudang_import():
 
 
 # ============================================================
+# VARIAN 5: IMPORT HEADER-BASED DARI FILE EXCEL UPLOAD LOKAL
+# (form_st_2, val_2 -- kartu "Form Serah Terima 2" & "Validasi 2")
+# ============================================================
+# BEDA dari VARIAN 4 "UPDATE STOCK — SUMBER FILE" di bawah (yang baca blok
+# kolom lebar 10 TANPA header): dua source ini header-nya SAMA PERSIS
+# dengan sumber lama yang dipakai import_form_st.py & import_val.py
+# (lihat TARGET_HEADERS & HEADER_KEYWORDS di kedua file itu) -- cuma
+# sumbernya diganti dari link Google Sheet jadi file Excel yang DIUPLOAD
+# lewat browser (mirip Data Gudang/Update Stock), bukan didownload dari
+# Google Drive seperti VARIAN 2 (import_dry_X.py).
+#
+# Makanya logikanya di sini SENGAJA DISAMAKAN dengan
+# import_excel_from_drive() (VARIAN 2): cari baris header pakai
+# find_header_row(), petakan kolom pakai get_column_mapping(), ambil baris
+# data pakai get_data_rows(), lalu tulis lewat _write_target() yang sama
+# (hapus tab lama -> buat baru -> isi -> rapikan urutan tab) -- BEDANYA
+# cuma file-nya dibaca dari LOCAL_EXCEL_UPLOAD_DIRS (upload lokal, lewat
+# python_calamine) alih-alih di-download dari Google Drive (pandas).
+# ============================================================
+
+def _sanitize_cell_local_excel(cell):
+    """Sama prinsipnya dengan _sanitize_cell_excel (VARIAN 2), disesuaikan
+    dengan tipe data yang dibalikin python_calamine (bukan pandas)."""
+    if cell is None or (isinstance(cell, str) and cell.strip() == ""):
+        return ""
+    if isinstance(cell, (datetime.datetime, datetime.date)):
+        return cell.strftime("%d-%m-%Y")
+    if isinstance(cell, datetime.time):
+        return cell.strftime("%H:%M:%S")
+    if isinstance(cell, datetime.timedelta):
+        total_seconds = int(cell.total_seconds())
+        h, m, s = total_seconds // 3600, (total_seconds % 3600) // 60, total_seconds % 60
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return cell
+
+
+def import_local_excel_upload(source_key, target_id, sheets_to_import, target_sheet_name,
+                               target_headers, header_keywords,
+                               junk_keywords=DEFAULT_JUNK_KEYWORDS, header_min_matches=1):
+    """Versi VARIAN 5 dari import_excel_from_drive() (VARIAN 2) -- baca
+    dari file yang diupload lokal (LOCAL_EXCEL_UPLOAD_DIRS[source_key]),
+    bukan didownload dari Google Drive."""
+    upload_dir = LOCAL_EXCEL_UPLOAD_DIRS.get(source_key)
+    if upload_dir is None:
+        raise ValueError(f"source_key '{source_key}' tidak dikenal untuk upload Excel lokal.")
+
+    _, src = get_source(source_key)
+    filename = src.get("filename")
+    card_label = LOCAL_EXCEL_CARD_LABELS.get(source_key, source_key)
+    if not filename:
+        raise ValueError(f"Source '{source_key}' belum ada file yang diupload (klik kartu \"{card_label}\" di halaman Input Data Produksi dulu).")
+
+    filepath = upload_dir / filename
+    if not filepath.is_file():
+        raise FileNotFoundError(
+            f"File '{filename}' tidak ditemukan di server. Upload ulang lewat "
+            f"kartu \"{card_label}\" di halaman Input Data Produksi."
+        )
+
+    CalamineWorkbook = _get_calamine()
+    wb = CalamineWorkbook.from_path(str(filepath))
+    available_sheets = wb.sheet_names
+
+    client = get_gspread_client()
+    target_sp = _with_retry(client.open_by_key, target_id, label=f"open target {target_id}")
+
+    # Urutkan per bulan (bukan urutan centang user), supaya hasil akhir
+    # di sheet target selalu kronologis JAN -> DES -- sama seperti
+    # import_excel_from_drive() (VARIAN 2).
+    sheets_to_import = sorted(sheets_to_import, key=_sheet_month_sort_key)
+    print("   🗓️ Urutan proses (per bulan): " + ", ".join(sheets_to_import))
+
+    all_rows = [target_headers]
+    for sheet_name in sheets_to_import:
+        if sheet_name not in available_sheets:
+            print(f"⚠️ Sheet '{sheet_name}' tidak ditemukan di file yang diupload, dilewati.")
+            continue
+        print(f"\n🔍 Memproses sheet: {sheet_name}")
+        ws = wb.get_sheet_by_name(sheet_name)
+        rows = ws.to_python()
+        if not rows:
+            print("   Sheet kosong, dilewati.")
+            continue
+        header_idx = find_header_row(rows, header_keywords, min_matches=header_min_matches)
+        if header_idx is None:
+            print("   ❌ Tidak ditemukan baris header, dilewati.")
+            continue
+        header_row = rows[header_idx]
+        print(f"   ✅ Header ditemukan di baris {header_idx+1}")
+        mapping = get_column_mapping(header_row, target_headers)
+        data_rows = get_data_rows(rows, header_idx, junk_keywords=junk_keywords)
+        print(f"   📊 Jumlah baris data valid: {len(data_rows)}")
+        for row in data_rows:
+            all_rows.append(_map_row(row, target_headers, mapping, _sanitize_cell_local_excel))
+
+    print(f"\n📝 Menulis ke sheet tujuan '{target_sheet_name}'...")
+    return _write_target(target_sp, target_sheet_name, all_rows, target_headers)
+
+
+def run_local_excel_import(source_key, target_sheet_name, target_headers, header_keywords,
+                            junk_keywords=DEFAULT_JUNK_KEYWORDS, header_min_matches=1):
+    """Dipanggil dari import_form_st_2.py & import_val_2.py (juga dipanggil
+    langsung dari gudang_refresh() di app.py, bagian dari 1x klik Refresh
+    di halaman Data Gudang BJB/BJL -- lihat komentar di sana).
+
+    BEDA dari run_excel_import (VARIAN 2, source_id = ID file di Google
+    Drive): source di sini TIDAK punya source_id sama sekali, filenya
+    sudah tersimpan LOKAL di server (LOCAL_EXCEL_UPLOAD_DIRS) hasil upload
+    lewat kartu di halaman Input Data Produksi. target_id-nya juga dibaca
+    dari config.json per-source (src['target_id']), BUKAN
+    cfg['target_sheet_id'] (spreadsheet utama) -- form_st_2 & val_2
+    menulis ke spreadsheet Monitor Bahan Baku yang terpisah."""
+    cfg, src = get_source(source_key)
+    sheets = src.get("sheets") or []
+    target_id = src.get("target_id")
+    card_label = LOCAL_EXCEL_CARD_LABELS.get(source_key, source_key)
+    if not target_id:
+        raise ValueError(f"config.json: sources.{source_key}.target_id belum diisi (ID spreadsheet tujuan).")
+    if not sheets:
+        raise RuntimeError(f"'{source_key}': belum ada sheet yang dicentang (klik kartu \"{card_label}\" di halaman Input Data Produksi).")
+    try:
+        rows_written = import_local_excel_upload(
+            source_key, target_id, sheets, target_sheet_name, target_headers, header_keywords,
+            junk_keywords=junk_keywords, header_min_matches=header_min_matches,
+        )
+        set_import_result(source_key, "OK", rows_written=rows_written)
+        return rows_written
+    except Exception as e:
+        set_import_result(source_key, "ERROR", error=str(e))
+        raise
+
+
+# ============================================================
 # UPDATE STOCK — SUMBER FILE (upload Excel langsung), ALTERNATIF dari
 # sumber link spreadsheet lama yang dipakai run_update_stock_import()
 # di atas. Polanya sengaja dibuat MIRIP Data Gudang (VARIAN 4 di atas):
@@ -1556,14 +1723,20 @@ def run_gudang_import():
 # (single) seperti Data Gudang.
 # ============================================================
 
-def save_update_stock_upload(file_storage, original_filename):
-    """Dipanggil dari endpoint /api/update-stock-source/upload. Terima
-    file yang dikirim browser (werkzeug FileStorage), simpan ke
-    UPDATE_STOCK_UPLOAD_DIR di server (nama file dibuat tetap,
+def save_local_excel_upload(source_key, file_storage, original_filename):
+    """Versi GENERIK dari save_update_stock_upload() lama -- dipakai
+    ketiga kartu upload-file "blok kolom lebar 10" (Update Stock, Form
+    Serah Terima 2, Validasi 2). `source_key` harus salah satu key di
+    LOCAL_EXCEL_UPLOAD_DIRS supaya tahu folder mana yang dipakai.
+
+    Terima file yang dikirim browser (werkzeug FileStorage), simpan ke
+    folder upload source ini di server (nama file dibuat tetap,
     "current"+ekstensi asli, supaya upload berikutnya otomatis menimpa
     file lama -- sama seperti save_gudang_upload()), lalu balikin daftar
     nama sheet di dalamnya supaya user bisa langsung centang lewat
     modal "Pilih Sheet", tanpa upload ulang."""
+    if source_key not in LOCAL_EXCEL_UPLOAD_DIRS:
+        raise ValueError(f"source_key '{source_key}' tidak dikenal untuk upload blok kolom.")
     if file_storage is None:
         raise ValueError("Tidak ada file yang diupload.")
 
@@ -1572,9 +1745,10 @@ def save_update_stock_upload(file_storage, original_filename):
     if ext not in (".xlsx", ".xls"):
         raise ValueError("Format file harus .xlsx atau .xls.")
 
-    UPDATE_STOCK_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    upload_dir = LOCAL_EXCEL_UPLOAD_DIRS[source_key]
+    upload_dir.mkdir(parents=True, exist_ok=True)
     saved_filename = f"current{ext}"
-    filepath = UPDATE_STOCK_UPLOAD_DIR / saved_filename
+    filepath = upload_dir / saved_filename
     file_storage.save(str(filepath))
 
     CalamineWorkbook = _get_calamine()
@@ -1582,7 +1756,7 @@ def save_update_stock_upload(file_storage, original_filename):
     sheet_names = list(wb.sheet_names)
 
     update_source(
-        "update_stock",
+        source_key,
         input_mode="file",
         filename=saved_filename,
         original_filename=original_filename,
@@ -1593,6 +1767,12 @@ def save_update_stock_upload(file_storage, original_filename):
     )
 
     return sheet_names
+
+
+def save_update_stock_upload(file_storage, original_filename):
+    """Alias lama, dipertahankan untuk kompatibilitas -- lihat
+    save_local_excel_upload()."""
+    return save_local_excel_upload("update_stock", file_storage, original_filename)
 
 
 def _stringify_excel_cell(cell):
@@ -1612,18 +1792,31 @@ def _stringify_excel_cell(cell):
     return str(cell)
 
 
-def _read_update_stock_excel_sheet(filename, sheet_name):
-    """Baca satu sheet dari file yang diupload lewat save_update_stock_upload(),
+LOCAL_EXCEL_CARD_LABELS = {
+    "update_stock": "Update Stock",
+    "form_st_2": "Form Serah Terima 2",
+    "val_2": "Validasi 2",
+}
+
+
+def _read_stacked_block_excel_sheet(source_key, filename, sheet_name):
+    """Versi GENERIK dari _read_update_stock_excel_sheet() lama. Baca satu
+    sheet dari file yang diupload lewat save_local_excel_upload(source_key, ...),
     balikin list-of-list string per baris -- format yang sama seperti
     worksheet.get_all_values() dari gspread, supaya bisa langsung dilempar
     ke _extract_stacked_blocks() tanpa perlu perlakuan berbeda dari mode
     link lama."""
+    upload_dir = LOCAL_EXCEL_UPLOAD_DIRS.get(source_key)
+    if upload_dir is None:
+        raise ValueError(f"source_key '{source_key}' tidak dikenal untuk upload blok kolom.")
+
     CalamineWorkbook = _get_calamine()
-    filepath = UPDATE_STOCK_UPLOAD_DIR / filename
+    filepath = upload_dir / filename
     if not filepath.is_file():
+        card_label = LOCAL_EXCEL_CARD_LABELS.get(source_key, source_key)
         raise FileNotFoundError(
             f"File '{filename}' tidak ditemukan di server. Upload ulang lewat "
-            "kartu \"Update Stock\" di halaman Input Data Produksi."
+            f"kartu \"{card_label}\" di halaman Input Data Produksi."
         )
     wb = CalamineWorkbook.from_path(str(filepath))
     if sheet_name not in wb.sheet_names:
@@ -1632,6 +1825,12 @@ def _read_update_stock_excel_sheet(filename, sheet_name):
         )
     ws = wb.get_sheet_by_name(sheet_name)
     return [[_stringify_excel_cell(c) for c in row] for row in ws.to_python()]
+
+
+def _read_update_stock_excel_sheet(filename, sheet_name):
+    """Alias lama, dipertahankan untuk kompatibilitas -- lihat
+    _read_stacked_block_excel_sheet()."""
+    return _read_stacked_block_excel_sheet("update_stock", filename, sheet_name)
 
 
 # ============================================================
