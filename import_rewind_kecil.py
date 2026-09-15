@@ -1,6 +1,6 @@
 """
 import_rewind_kecil.py
-Import Rewind Kecil -> sheet target "REWIND".
+Import Rewind Kecil -> sheet target "REWIND_PY_RAW".
 
 Sumber bisa fleksibel:
 - type="gsheet"  : Google Sheets, seperti Printing/RW
@@ -13,13 +13,15 @@ from import_engine import get_source, run_gsheet_import, run_excel_import
 
 
 SOURCE_KEY = "rewind_kecil"
-TARGET_SHEET_NAME = "REWIND"
+TARGET_SHEET_NAME = "REWIND_PY_RAW"
 
 # Tujuan tulis data mentah SENGAJA BUKAN target_sheet_id global di
 # config.json (warehouse utama, dipakai bareng semua source lain) --
-# tab "REWIND" yang dibaca sheet "REWIND_PY" (perhitungan waste, lihat
-# halaman Waste Rewind) ada DI SPREADSHEET INI ("Menghitung Waste"),
-# jadi harus ditulis ke sini supaya REWIND_PY ikut update.
+# tab "REWIND_PY_RAW" yang dibaca buat sinkron kolom SPK/NO_JO ke sheet
+# "REWIND_PY" (perhitungan waste, lihat halaman Waste Rewind) ada DI
+# SPREADSHEET INI ("Menghitung Waste"), jadi harus ditulis ke sini
+# supaya REWIND_PY ikut ke-update lewat _sync_rewind_kecil_spk_jo_into_rewind_py()
+# di app.py.
 TARGET_SPREADSHEET_ID = "1DnXtcMPkRdoadgO7ML7y7M9s4injmMTsKqEQ4BPrJxc"
 
 TARGET_HEADERS = [

@@ -1217,10 +1217,10 @@ def get_waste_rewind():
 # 6e. REWIND KECIL — sinkron SPK & NO_JO unik LANGSUNG KE sheet REWIND_PY
 # --------------------------------------------------------------------------
 # BUKAN tabel/list terpisah -- pasangan (SPK, NO_JO) unik dari sheet MENTAH
-# "REWIND" (hasil import_rewind_kecil.py, spreadsheet SAMA dengan REWIND_PY)
+# "REWIND_PY_RAW" (hasil import_rewind_kecil.py, spreadsheet SAMA dengan REWIND_PY)
 # ditulis LANGSUNG jadi baris baru di REWIND_PY itu sendiri, supaya tetap
 # tampil di SATU tabel yang sama yang sudah dibaca lewat /api/waste-rewind.
-# NO_JO di sini SAMA PERSIS dengan kolom "JO" di sheet REWIND -- tidak ada
+# NO_JO di sini SAMA PERSIS dengan kolom "JO" di sheet REWIND_PY_RAW -- tidak ada
 # kolom "NO_JO" terpisah di sheet sumber, cuma beda label kolom di REWIND_PY.
 #
 # Aturan:
@@ -1236,12 +1236,12 @@ def get_waste_rewind():
 #   4. Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
 #      Waste Rewind), SETELAH import_rewind_kecil.py sukses -- jadi satu
 #      tombol Refresh yang sama yang menjalankan keduanya.
-REWIND_KECIL_RAW_SHEET_NAME = "REWIND"
+REWIND_KECIL_RAW_SHEET_NAME = "REWIND_PY_RAW"
 REWIND_KECIL_START_DATE = date(2026, 8, 1)  # 01/08/2026
 
 
 def _read_rewind_kecil_spk_jo():
-    """Baca sheet mentah REWIND, filter TANGGAL >= REWIND_KECIL_START_DATE,
+    """Baca sheet mentah REWIND_PY_RAW, filter TANGGAL >= REWIND_KECIL_START_DATE,
     balikin list {"spk", "noJo"} unik. Selalu baca langsung dari sheet
     (dipanggil sekali per proses refresh, tidak perlu cache sendiri)."""
     sh = _waste_rewind_spreadsheet()  # spreadsheet sama dgn REWIND_PY, handle dipakai bareng
@@ -1280,7 +1280,7 @@ def _read_rewind_kecil_spk_jo():
 
 def _sync_rewind_kecil_spk_jo_into_rewind_py():
     """Tambahkan (append) baris baru ke REWIND_PY untuk tiap pasangan
-    (SPK, NO_JO) unik dari sheet REWIND yang belum ada baris-nya di
+    (SPK, NO_JO) unik dari sheet REWIND_PY_RAW yang belum ada baris-nya di
     REWIND_PY. Balikin jumlah baris baru yang ditambahkan."""
     unique_pairs = _read_rewind_kecil_spk_jo()
     if not unique_pairs:
