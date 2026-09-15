@@ -613,6 +613,7 @@ def produksi_load():
     body = request.get_json(force=True) or {}
     source_key = str(body.get("source_key", "")).strip()
     link = str(body.get("link", "")).strip()
+    requested_source_type = str(body.get("source_type", "")).strip().lower()
 
     if not source_key:
         return jsonify({"success": False, "message": "source_key wajib diisi"}), 400
@@ -624,18 +625,28 @@ def produksi_load():
     except KeyError as e:
         return jsonify({"success": False, "message": str(e)}), 404
 
+    # Kartu generik boleh memilih sumber GSheet atau Excel (Drive).
+    # Kalau source_type tidak dikirim, pertahankan type yang tersimpan di config.
+    source_type = requested_source_type or str(src.get("type", "gsheet")).strip().lower()
+    if source_type not in ("gsheet", "excel"):
+        return jsonify({
+            "success": False,
+            "message": "source_type harus 'gsheet' atau 'excel'"
+        }), 400
+
     try:
         source_id = import_engine.extract_id_from_link(link)
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
     try:
-        detected_sheets, file_name = import_engine.detect_sheets(source_id, src["type"])
+        detected_sheets, file_name = import_engine.detect_sheets(source_id, source_type)
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal connect ke spreadsheet: {e}"}), 400
 
     updated = import_engine.update_source(
         source_key,
+        type=source_type,
         source_id=source_id,
         source_name=file_name,
         last_connected=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -746,6 +757,100 @@ def produksi_run_all():
 def produksi_run_status():
     with RUN_STATE_LOCK:
         return jsonify(dict(RUN_STATE))
+
+
+
+# --------------------------------------------------------------------------
+# 6a.5 REWIND KECIL — refresh TERPISAH, TIDAK ikut /api/produksi/run-all
+# --------------------------------------------------------------------------
+REWIND_KECIL_SCRIPT = BASE_DIR / "import_rewind_kecil.py"
+REWIND_KECIL_RUN_STATE_LOCK = threading.Lock()
+REWIND_KECIL_RUN_STATE = {
+    "running": False,
+    "log": "",
+    "started_at": None,
+    "finished_at": None,
+    "returncode": None,
+    "rows_written": None,
+    "error": None,
+}
+
+
+def _run_rewind_kecil_worker():
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(REWIND_KECIL_SCRIPT)],
+            cwd=str(BASE_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            bufsize=1,
+        )
+        for line in proc.stdout:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += line
+        proc.wait()
+
+        rows_written = None
+        try:
+            _, src_after = import_engine.get_source("rewind_kecil")
+            rows_written = src_after.get("last_rows")
+            err = src_after.get("last_error")
+        except Exception:
+            err = None
+
+        with REWIND_KECIL_RUN_STATE_LOCK:
+            REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
+            REWIND_KECIL_RUN_STATE["rows_written"] = rows_written
+            REWIND_KECIL_RUN_STATE["error"] = err
+    except Exception as e:
+        with REWIND_KECIL_RUN_STATE_LOCK:
+            REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL MENJALANKAN import_rewind_kecil.py] {e}\n"
+            REWIND_KECIL_RUN_STATE["returncode"] = -1
+            REWIND_KECIL_RUN_STATE["error"] = str(e)
+    finally:
+        with REWIND_KECIL_RUN_STATE_LOCK:
+            REWIND_KECIL_RUN_STATE["running"] = False
+            REWIND_KECIL_RUN_STATE["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@app.route("/api/produksi/rewind-kecil/run", methods=["POST"])
+def produksi_run_rewind_kecil():
+    """Refresh hanya Rewind Kecil. Tidak memanggil run_all.py."""
+    with REWIND_KECIL_RUN_STATE_LOCK:
+        if REWIND_KECIL_RUN_STATE["running"]:
+            return jsonify({
+                "success": False,
+                "message": "Refresh Rewind Kecil sedang berjalan."
+            }), 409
+
+        REWIND_KECIL_RUN_STATE["running"] = True
+        REWIND_KECIL_RUN_STATE["log"] = ""
+        REWIND_KECIL_RUN_STATE["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        REWIND_KECIL_RUN_STATE["finished_at"] = None
+        REWIND_KECIL_RUN_STATE["returncode"] = None
+        REWIND_KECIL_RUN_STATE["rows_written"] = None
+        REWIND_KECIL_RUN_STATE["error"] = None
+
+    thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "success": True,
+        "message": "import_rewind_kecil.py mulai dijalankan."
+    })
+
+
+@app.route("/api/produksi/rewind-kecil/status", methods=["GET"])
+def produksi_status_rewind_kecil():
+    with REWIND_KECIL_RUN_STATE_LOCK:
+        return jsonify(dict(REWIND_KECIL_RUN_STATE))
 
 
 # --------------------------------------------------------------------------
@@ -996,6 +1101,110 @@ def val2_source_upload():
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 400
     return jsonify({"success": True, "sheets": sheets})
+
+
+
+# --------------------------------------------------------------------------
+# 6d. WASTE REWIND — tampilan data dari spreadsheet REWIND_PY
+# --------------------------------------------------------------------------
+WASTE_REWIND_SPREADSHEET_ID = "1DnXtcMPkRdoadgO7ML7y7M9s4injmMTsKqEQ4BPrJxc"
+WASTE_REWIND_SHEET_NAME = "REWIND_PY"
+
+WASTE_REWIND_VISIBLE_HEADERS = [
+    "JO",
+    "SPK",
+    "NO_JO",
+    "Nama_Produk",
+    "Planning_Order",
+    "Planning_Meter",
+    "Bahan_Awal_Printing_(Meter)",
+    "Meter_Hilang_Rewind",
+    "Hasil_Slitting_(Rol)",
+    "Hasil_Slitting_(Meter)",
+    "Waste_Slitting_Meter",
+    "Persentase_Waste_(%)",
+    "Waste_Slitting_After_Rewind_Meter",
+    "Waste_Slitting_After_Rewind_Presentase",
+]
+
+_waste_rewind_spreadsheet_handle = {"sh": None}
+_waste_rewind_spreadsheet_lock = threading.Lock()
+_waste_rewind_cache = {"ts": 0.0, "headers": [], "rows": []}
+_waste_rewind_cache_lock = threading.Lock()
+_WASTE_REWIND_CACHE_TTL = int(os.environ.get("WASTE_REWIND_CACHE_TTL_SECONDS", "60"))
+
+
+def _waste_rewind_spreadsheet():
+    with _waste_rewind_spreadsheet_lock:
+        if _waste_rewind_spreadsheet_handle["sh"] is not None:
+            return _waste_rewind_spreadsheet_handle["sh"]
+
+    client = get_client()
+    sh = client.open_by_key(WASTE_REWIND_SPREADSHEET_ID)
+
+    with _waste_rewind_spreadsheet_lock:
+        _waste_rewind_spreadsheet_handle["sh"] = sh
+    return sh
+
+
+def _read_waste_rewind(force=False):
+    now = time.time()
+    with _waste_rewind_cache_lock:
+        cached = dict(_waste_rewind_cache)
+    if (
+        not force
+        and cached["headers"]
+        and now - cached["ts"] < _WASTE_REWIND_CACHE_TTL
+    ):
+        return cached["headers"], cached["rows"]
+
+    sh = _waste_rewind_spreadsheet()
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+
+    if not values:
+        headers, rows = [], []
+    else:
+        headers = [str(x).strip() for x in values[0]]
+        rows = []
+        for row in values[1:]:
+            padded = list(row) + [""] * max(0, len(headers) - len(row))
+            row_obj = {}
+            for i, header in enumerate(headers):
+                if not header:
+                    continue
+                row_obj[header] = padded[i]
+            if any(str(v).strip() for v in row_obj.values()):
+                rows.append(row_obj)
+
+    with _waste_rewind_cache_lock:
+        _waste_rewind_cache["ts"] = now
+        _waste_rewind_cache["headers"] = headers
+        _waste_rewind_cache["rows"] = rows
+
+    return headers, rows
+
+
+@app.route("/api/waste-rewind", methods=["GET"])
+def get_waste_rewind():
+    """Ambil data REWIND_PY. Main table frontend boleh memakai
+    WASTE_REWIND_VISIBLE_HEADERS, modal memakai seluruh headers."""
+    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
+    try:
+        headers, rows = _read_waste_rewind(force=force)
+        return jsonify({
+            "success": True,
+            "sheet": WASTE_REWIND_SHEET_NAME,
+            "headers": headers,
+            "visible_headers": WASTE_REWIND_VISIBLE_HEADERS,
+            "rows": rows,
+            "count": len(rows),
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Gagal membaca {WASTE_REWIND_SHEET_NAME}: {e}"
+        }), 500
 
 
 # --------------------------------------------------------------------------

@@ -508,6 +508,17 @@
     </div>
   </div>
 
+  <!-- WASTE REWIND — MODAL DETAIL SEMUA KOLOM -->
+  <div id="wrwDetailOverlay" onclick="if(event.target===this)closeWasteRewindDetail()">
+    <div class="wrw-modal">
+      <div class="wrw-modal-head">
+        <div><h3 id="wrwDetailTitle">Detail Waste Rewind</h3><div id="wrwDetailSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+        <button class="wrw-modal-close" onclick="closeWasteRewindDetail()">✕</button>
+      </div>
+      <div class="wrw-detail-grid" id="wrwDetailGrid"></div>
+    </div>
+  </div>
+
   <!-- DATA GUDANG — MODAL: PILIH SHEET DARI FILE YANG DIUPLOAD
        (dulu ada 2 modal: pilih file di folder lokal -> pilih sheet.
        Sekarang cuma 1 modal ini, karena "pilih file" diganti jadi upload
@@ -614,6 +625,7 @@
           <div class="nav-item" onclick="toggleGroup('g-fstl')"><span class="ic">🧾</span> FSTL</div>
           <div class="nav-children" id="g-fstl">
             <div class="nav-child" data-page="fstlWaste" onclick="go('fstlWaste', this)">Lampiran Waste</div>
+            <div class="nav-child" data-page="wasteRewind" onclick="go('wasteRewind', this)">Waste Rewind</div>
           </div>
           <div class="nav-item" data-page="chatbot" onclick="go('chatbot', this)"><span class="ic">💬</span> Tanya JO (Chatbot)</div>
         </div>
@@ -924,6 +936,28 @@
             </div>
           </div>
 
+          <div class="page" id="page-wasteRewind" style="display:none">
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
+                <div>
+                  <h3>♻️ Waste Rewind</h3>
+                  <p class="desc" style="font-size:12.5px;color:var(--ink-soft);margin-top:4px;">Data dari spreadsheet REWIND_PY. Tabel menampilkan kolom utama, tombol Detail menampilkan seluruh kolom.</p>
+                </div>
+              </div>
+              <div class="wrw-toolbar">
+                <div class="wrw-search"><span class="ic">🔍</span><input id="wrwSearch" placeholder="Cari JO / SPK / Produk..." oninput="renderWasteRewind()"></div>
+                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';renderWasteRewind()">✖ Reset</button>
+                <button class="btn-outline" id="wrwRefreshBtn" onclick="loadWasteRewind(true)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
+              </div>
+              <div class="table-wrap">
+                <table class="wrw-table">
+                  <thead><tr id="wrwHead"></tr></thead>
+                  <tbody id="wrwBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           <div class="page" id="page-chatbot" style="display:none">
             <div class="card" style="display:flex; flex-direction:column; height:70vh;">
               <h3 style="margin-bottom:4px;">💬 Tanya JO</h3>
@@ -972,7 +1006,7 @@
   // lupa diatur di sini, dia nggak diam-diam dapat akses penuh.
   const ROLE_PAGE_ACCESS = {
     "Admin": null,
-    "FSTL": ["produksi", "fstlWaste", "chatbot"],
+    "FSTL": ["produksi", "fstlWaste", "wasteRewind", "chatbot"],
   };
 
   function isPageAllowed(page, role){
@@ -1172,7 +1206,7 @@
     document.querySelectorAll(".page").forEach(p=>p.style.display="none");
     const pg = document.getElementById("page-"+page);
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
-    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", fstlWaste:"FSTL — Lampiran Waste", chatbot:"Tanya JO (Chatbot)" };
+    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
     if(page === "produksi"){ loadProduksiSources(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
     if(page === "validasi") loadValidasi();
@@ -1182,6 +1216,7 @@
     if(page === "gudangBjb") loadGudangStatus("gudangBjb");
     if(page === "gudangBjl") loadGudangStatus("gudangBjl");
     if(page === "fstlWaste") fstlLoadList();
+    if(page === "wasteRewind") loadWasteRewind();
     if(page === "chatbot") chatInit();
   }
 
@@ -1688,11 +1723,19 @@
             <input class="link-input" id="link-${key}" placeholder="Paste link spreadsheet / Excel Drive...">
             <button class="btn-outline btn-load" onclick="doLoadSource('${key}')" id="btnLoad-${key}">Load</button>
           </div>
+          ${key === "rewind_kecil" ? `<div class="rwk-type-row">
+            <select class="rwk-type-select" id="sourceType-${key}" title="Jenis sumber">
+              <option value="gsheet" ${(src.type||"gsheet")==="gsheet"?"selected":""}>Google Sheets (gspread)</option>
+              <option value="excel" ${(src.type||"")==="excel"?"selected":""}>Excel / WPS di Google Drive</option>
+            </select>
+            <button class="btn-outline rwk-refresh-btn" id="btnRefreshRewindKecil" onclick="runRewindKecil()">↻ Refresh Rewind Kecil</button>
+          </div>` : ``}
           <div style="display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap;">
             <button class="btn-outline btn-sheet" onclick="openSheetModal('${key}')">📋 Pilih Sheet</button>
           </div>
           <div class="sheet-summary" style="margin-top:8px;">${sheetSummary}</div>
           <div style="font-size:11px; color:var(--ink-faint); margin-top:8px;">${lastImportLine}</div>
+          ${key === "rewind_kecil" ? `<div class="rwk-status" id="rewindKecilStatus">Target: REWIND</div><pre id="rewindKecilLog" class="run-log rwk-log" style="display:none;"></pre>` : ``}
         </div>`;
     });
     grid.innerHTML = html;
@@ -1702,6 +1745,7 @@
     if(key.startsWith("printing")) return "🏭";
     if(key.startsWith("dry")) return "🌬️";
     if(key === "rw") return "🔄";
+    if(key === "rewind_kecil") return "🌀";
     if(key === "sl") return "✂️";
     if(key === "sf") return "📎";
     if(key === "ex") return "🧪";
@@ -1723,7 +1767,7 @@
     try{
       const res = await fetch(`${API_BASE}/api/produksi/load`, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ source_key: key, link })
+        body: JSON.stringify({ source_key: key, link, source_type: key === "rewind_kecil" ? (document.getElementById("sourceType-rewind_kecil")?.value || "gsheet") : undefined })
       });
       const data = await res.json();
       if(data.success){
@@ -1870,6 +1914,97 @@
       }
     } catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
   }
+
+  // ==================== REWIND KECIL — REFRESH TERPISAH ====================
+  let rewindKecilPollTimer = null;
+  async function runRewindKecil(){
+    const btn = document.getElementById("btnRefreshRewindKecil");
+    const status = document.getElementById("rewindKecilStatus");
+    const log = document.getElementById("rewindKecilLog");
+    if(!btn) return;
+    try{
+      const res = await fetch(`${API_BASE}/api/produksi/rewind-kecil/run`, {method:"POST"});
+      const data = await res.json();
+      if(!data.success){ toast(data.message || "Refresh Rewind Kecil gagal dimulai", "error"); return; }
+      btn.disabled = true; btn.classList.add("spinning");
+      if(log){ log.style.display="block"; log.textContent="⏳ Menjalankan import_rewind_kecil.py...\n"; }
+      if(status) status.innerText = "⏳ Refresh Rewind Kecil sedang berjalan...";
+      if(rewindKecilPollTimer) clearInterval(rewindKecilPollTimer);
+      rewindKecilPollTimer = setInterval(pollRewindKecil, 1500);
+      pollRewindKecil();
+    }catch(e){ toast("Error: " + e.message, "error"); }
+  }
+  async function pollRewindKecil(){
+    const btn = document.getElementById("btnRefreshRewindKecil");
+    const status = document.getElementById("rewindKecilStatus");
+    const log = document.getElementById("rewindKecilLog");
+    try{
+      const res = await fetch(`${API_BASE}/api/produksi/rewind-kecil/status`);
+      const st = await res.json();
+      if(log){ log.style.display="block"; log.textContent=st.log||""; log.scrollTop=log.scrollHeight; }
+      if(!st.running){
+        clearInterval(rewindKecilPollTimer); rewindKecilPollTimer=null;
+        if(btn){ btn.disabled=false; btn.classList.remove("spinning"); }
+        const ok = st.returncode === 0;
+        if(status) status.innerText = ok
+          ? `✅ Selesai — ${st.rows_written ?? 0} baris${st.finished_at ? " — "+st.finished_at : ""}`
+          : `⚠️ Gagal${st.error ? ": "+st.error : ""}`;
+        toast(ok ? `Rewind Kecil selesai (${st.rows_written ?? 0} baris)` : "Refresh Rewind Kecil gagal — cek log", ok ? "success" : "error");
+        loadProduksiSources();
+      }
+    }catch(e){}
+  }
+
+  // ==================== WASTE REWIND ====================
+  const wasteRewindVisibleHeaders = [
+    "JO","SPK","NO_JO","Nama_Produk","Planning_Order","Planning_Meter",
+    "Bahan_Awal_Printing_(Meter)","Meter_Hilang_Rewind","Hasil_Slitting_(Rol)",
+    "Hasil_Slitting_(Meter)","Waste_Slitting_Meter","Persentase_Waste_(%)",
+    "Waste_Slitting_After_Rewind_Meter","Waste_Slitting_After_Rewind_Presentase"
+  ];
+  let wasteRewindHeaders = [], wasteRewindRows = [];
+  function escHtml(v){ return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+  async function loadWasteRewind(force=false){
+    const body = document.getElementById("wrwBody");
+    if(!body) return;
+    const btn = document.getElementById("wrwRefreshBtn");
+    if(force && btn) btn.classList.add("spinning");
+    body.innerHTML = skeletonRows(16);
+    try{
+      const res = await fetch(`${API_BASE}/api/waste-rewind${force?"?refresh=1":""}`);
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat Waste Rewind");
+      wasteRewindHeaders = data.headers || [];
+      wasteRewindRows = data.rows || [];
+      renderWasteRewindHead();
+      renderWasteRewind();
+      if(force) toast(`Waste Rewind diperbarui — ${wasteRewindRows.length} baris`, "success");
+    }catch(e){
+      document.getElementById("wrwHead").innerHTML="";
+      body.innerHTML=emptyState(1,"Gagal memuat Waste Rewind: "+e.message,"⚠️");
+    }finally{ if(btn) btn.classList.remove("spinning"); }
+  }
+  function renderWasteRewindHead(){
+    const head=document.getElementById("wrwHead"); if(!head) return;
+    head.innerHTML = wasteRewindVisibleHeaders.map(h=>`<th>${escHtml(h)}</th>`).join("")+`<th>DETAIL</th>`;
+  }
+  function renderWasteRewind(){
+    const body=document.getElementById("wrwBody"); if(!body) return;
+    const kw=(document.getElementById("wrwSearch")?.value||"").toLowerCase();
+    const rows=wasteRewindRows.filter(r=>!kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw)));
+    if(!rows.length){ body.innerHTML=emptyState(wasteRewindVisibleHeaders.length+1,"Tidak ada data Waste Rewind"); return; }
+    body.innerHTML=rows.map((r,i)=>`<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
+      wasteRewindVisibleHeaders.map(h=>`<td>${escHtml(r[h]??"")}</td>`).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`).join("");
+  }
+  function openWasteRewindDetail(idx){
+    const row=wasteRewindRows[idx]; if(!row) return;
+    document.getElementById("wrwDetailTitle").innerText="Detail Waste Rewind";
+    document.getElementById("wrwDetailSub").innerText=`JO: ${row["JO"]||"-"} · Produk: ${row["Nama_Produk"]||"-"}`;
+    document.getElementById("wrwDetailGrid").innerHTML=wasteRewindHeaders.map(h=>`<div class="wrw-detail-item"><div class="lbl">${escHtml(h)}</div><div class="val">${escHtml(row[h]??"")||"-"}</div></div>`).join("");
+    document.getElementById("wrwDetailOverlay").style.display="flex";
+  }
+  function closeWasteRewindDetail(){ document.getElementById("wrwDetailOverlay").style.display="none"; }
+  document.addEventListener("keydown",e=>{if(e.key==="Escape") closeWasteRewindDetail();});
 
   // ============================================================
   // DATA GUDANG — file diupload lewat kartu "Data Gudang" di halaman

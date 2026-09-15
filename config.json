@@ -19,9 +19,9 @@
         "FEB 2026"
       ],
       "last_connected": "2026-09-02 15:28:05",
-      "last_import": "2026-09-04 08:25:53",
+      "last_import": "2026-09-04 13:53:30",
       "last_status": "OK",
-      "last_rows": 3925,
+      "last_rows": 3924,
       "last_error": null
     },
     "printing_3": {
@@ -42,9 +42,9 @@
         "FEBRUARY 2026"
       ],
       "last_connected": "2026-09-02 15:28:45",
-      "last_import": "2026-09-04 08:26:40",
+      "last_import": "2026-09-04 13:54:22",
       "last_status": "OK",
-      "last_rows": 1290,
+      "last_rows": 1294,
       "last_error": null
     },
     "printing_4": {
@@ -65,9 +65,9 @@
         "FEB 2026"
       ],
       "last_connected": "2026-09-02 15:29:23",
-      "last_import": "2026-09-04 08:27:28",
+      "last_import": "2026-09-04 13:55:12",
       "last_status": "OK",
-      "last_rows": 4546,
+      "last_rows": 4550,
       "last_error": null
     },
     "printing_5": {
@@ -88,9 +88,9 @@
         "MARET"
       ],
       "last_connected": "2026-09-02 15:29:50",
-      "last_import": "2026-09-04 08:28:26",
+      "last_import": "2026-09-04 13:56:26",
       "last_status": "OK",
-      "last_rows": 4401,
+      "last_rows": 4402,
       "last_error": null
     },
     "dry_1": {
@@ -111,9 +111,9 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:06:52",
-      "last_import": "2026-09-04 08:33:00",
+      "last_import": "2026-09-04 14:01:22",
       "last_status": "OK",
-      "last_rows": 5713,
+      "last_rows": 5721,
       "last_error": null
     },
     "dry_2": {
@@ -133,7 +133,7 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:12:36",
-      "last_import": "2026-09-04 08:35:25",
+      "last_import": "2026-09-04 14:04:09",
       "last_status": "OK",
       "last_rows": 5223,
       "last_error": null
@@ -156,9 +156,9 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:22:37",
-      "last_import": "2026-09-04 08:37:35",
+      "last_import": "2026-09-04 14:06:13",
       "last_status": "OK",
-      "last_rows": 4955,
+      "last_rows": 4960,
       "last_error": null
     },
     "dry_4": {
@@ -179,7 +179,7 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:24:09",
-      "last_import": "2026-09-04 08:39:19",
+      "last_import": "2026-09-04 14:08:01",
       "last_status": "OK",
       "last_rows": 1914,
       "last_error": null
@@ -202,7 +202,7 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:25:42",
-      "last_import": "2026-09-04 08:40:50",
+      "last_import": "2026-09-04 14:09:39",
       "last_status": "OK",
       "last_rows": 290,
       "last_error": null
@@ -225,7 +225,7 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:30:38",
-      "last_import": "2026-09-04 08:29:19",
+      "last_import": "2026-09-04 13:57:31",
       "last_status": "OK",
       "last_rows": 12209,
       "last_error": null
@@ -248,9 +248,9 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:26:26",
-      "last_import": "2026-09-04 08:42:30",
+      "last_import": "2026-09-04 14:11:32",
       "last_status": "OK",
-      "last_rows": 5845,
+      "last_rows": 5868,
       "last_error": null
     },
     "sf": {
@@ -271,7 +271,7 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:31:02",
-      "last_import": "2026-09-04 08:41:38",
+      "last_import": "2026-09-04 14:10:32",
       "last_status": "OK",
       "last_rows": 3270,
       "last_error": null
@@ -294,9 +294,9 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:31:29",
-      "last_import": "2026-09-04 08:30:55",
+      "last_import": "2026-09-04 13:58:46",
       "last_status": "OK",
-      "last_rows": 21766,
+      "last_rows": 21793,
       "last_error": null
     },
     "bag": {
@@ -317,9 +317,9 @@
         "JAN 2026"
       ],
       "last_connected": "2026-09-02 15:03:08",
-      "last_import": "2026-09-04 08:44:16",
+      "last_import": "2026-09-04 14:13:07",
       "last_status": "OK",
-      "last_rows": 2104,
+      "last_rows": 2110,
       "last_error": null
     },
     "jo": {
@@ -332,9 +332,9 @@
         "JO BARU"
       ],
       "last_connected": "2026-08-23 20:50:02",
-      "last_import": "2026-09-04 08:44:59",
+      "last_import": "2026-09-04 14:13:51",
       "last_status": "OK",
-      "last_rows": 2591,
+      "last_rows": 2675,
       "last_error": null
     },
     "val": {
@@ -437,6 +437,19 @@
       "last_import": "2026-09-04 08:56:46",
       "last_status": "OK",
       "last_rows": 14569,
+      "last_error": null
+    },
+    "rewind_kecil": {
+      "label": "Rewind Kecil",
+      "type": "gsheet",
+      "script": "import_rewind_kecil.py",
+      "source_id": "",
+      "source_name": "",
+      "sheets": [],
+      "last_connected": null,
+      "last_import": null,
+      "last_status": null,
+      "last_rows": 0,
       "last_error": null
     }
   }

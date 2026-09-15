@@ -212,6 +212,7 @@ SOURCE_KEY_TO_MESIN_NAME = {
     "dry_4": "DRY 4",
     "dry_5": "DRY 5",
     "rw": "REWIND BESAR",
+    "rewind_kecil": "REWIND KECIL",
     "ex": "EXTRUSI",
     "sf": "SOLVENT FREE",
     "sl": "SLITTING",
@@ -514,7 +515,7 @@ def _write_target(target_sp, target_sheet_name, all_rows, target_headers):
 # card di halaman Input Data / SCRIPTS_ORDER di run_all.py).
 TARGET_SHEET_ORDER = [
     "PRINTING_2", "PRINTING_3", "PRINTING_4", "PRINTING_5",
-    "RW_1",
+    "RW_1", "REWIND",
     "DRY_1", "DRY_2", "DRY_3", "DRY_4", "DRY_5",
     "EX_1",
     "SF_1",
