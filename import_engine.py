@@ -317,11 +317,43 @@ def _download_drive_file(file_id):
 
 
 # ============================================================
+# DETEKSI OTOMATIS TIPE SOURCE (gsheet vs excel) — dipakai endpoint
+# "Load" supaya user TIDAK PERLU pilih manual lagi (dulu ada dropdown
+# khusus di kartu "Rewind Kecil" karena sumbernya bisa dua-duanya).
+#
+# Google Sheets asli (dibuat langsung dari Sheets, atau "convert" hasil
+# upload) punya mimeType "application/vnd.google-apps.spreadsheet" di
+# Drive API. File Excel/WPS biasa yang cuma DISIMPAN di Drive (belum
+# dikonversi) punya mimeType lain (mis. .xlsx/.xls) -- itu yang perlu
+# didownload dulu baru dibaca lewat pandas (lihat run_excel_import).
+# ============================================================
+
+GOOGLE_SHEETS_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+
+
+def detect_source_type(source_id):
+    """Kembalikan 'gsheet' atau 'excel' berdasarkan mimeType file ini di
+    Google Drive -- tidak perlu tahu isinya, cukup metadata (cepat)."""
+    drive_service = get_drive_service()
+
+    def _get_meta():
+        return drive_service.files().get(fileId=source_id, fields="mimeType").execute()
+
+    meta = _with_retry(_get_meta, label=f"deteksi tipe {source_id}")
+    mime = meta.get("mimeType", "")
+    return "gsheet" if mime == GOOGLE_SHEETS_MIME_TYPE else "excel"
+
+
+# ============================================================
 # DETEKSI NAMA SHEET/TAB — dipakai endpoint "Load"
 # ============================================================
 
-def detect_sheets(source_id, source_type):
-    """Kembalikan (list_nama_sheet, nama_file) untuk sumber tertentu."""
+def detect_sheets(source_id, source_type=None):
+    """Kembalikan (list_nama_sheet, nama_file) untuk sumber tertentu.
+    source_type dideteksi otomatis lewat detect_source_type() kalau
+    tidak dikirim eksplisit oleh pemanggil."""
+    if source_type is None:
+        source_type = detect_source_type(source_id)
     if source_type == "gsheet":
         client = get_gspread_client()
         sp = client.open_by_key(source_id)
@@ -1158,7 +1190,8 @@ def import_sheets_aligned(source_id, target_id, sheets_to_import, target_sheet_n
 
 
 def run_gsheet_import(source_key, target_sheet_name, target_headers, header_keywords,
-                       junk_keywords=DEFAULT_JUNK_KEYWORDS, header_min_matches=1):
+                       junk_keywords=DEFAULT_JUNK_KEYWORDS, header_min_matches=1,
+                       target_id=None):
     """Dipanggil dari tiap import_printing_X.py / import_rw.py / import_sl.py / import_sf.py / import_jo.py / import_lp.py.
 
     junk_keywords: teruskan [] (list kosong) untuk source yang tidak perlu
@@ -1169,11 +1202,19 @@ def run_gsheet_import(source_key, target_sheet_name, target_headers, header_keyw
     header (lihat find_header_row). Default 1 (perilaku lama: cukup 1
     kata kunci cocok) -- naikkan (mis. sejumlah len(header_keywords))
     untuk source yang kata kuncinya cukup umum dan berisiko kebetulan
-    cocok di baris data (bukan baris header beneran)."""
+    cocok di baris data (bukan baris header beneran).
+
+    target_id: override spreadsheet TUJUAN tulis. Kalau None (default),
+    pakai target_sheet_id global di config.json seperti biasa -- tapi
+    beberapa source (mis. "rewind_kecil") sengaja punya spreadsheet
+    tujuan SENDIRI yang beda dari warehouse utama (lihat
+    import_rewind_kecil.py), jadi harus dikirim eksplisit di sini,
+    BUKAN ditaruh di config.json target_sheet_id (yang dipakai bareng
+    oleh semua source lain)."""
     cfg, src = get_source(source_key)
     source_id = src.get("source_id")
     sheets = src.get("sheets") or []
-    target_id = cfg["target_sheet_id"]
+    target_id = target_id or cfg["target_sheet_id"]
     if not source_id:
         raise RuntimeError(f"'{source_key}': belum ada link spreadsheet sumber (isi lewat halaman Input Data).")
     if not sheets:
@@ -1250,12 +1291,14 @@ def import_excel_from_drive(source_id, target_id, sheets_to_import, target_sheet
     return _write_target(target_sp, target_sheet_name, all_rows, target_headers)
 
 
-def run_excel_import(source_key, target_sheet_name, target_headers, header_keywords):
-    """Dipanggil dari tiap import_dry_X.py"""
+def run_excel_import(source_key, target_sheet_name, target_headers, header_keywords, target_id=None):
+    """Dipanggil dari tiap import_dry_X.py. target_id: lihat penjelasan
+    di run_gsheet_import() -- override spreadsheet tujuan kalau source ini
+    punya tujuan sendiri, beda dari target_sheet_id global."""
     cfg, src = get_source(source_key)
     source_id = src.get("source_id")
     sheets = src.get("sheets") or []
-    target_id = cfg["target_sheet_id"]
+    target_id = target_id or cfg["target_sheet_id"]
     if not source_id:
         raise RuntimeError(f"'{source_key}': belum ada link file Excel sumber (isi lewat halaman Input Data).")
     if not sheets:

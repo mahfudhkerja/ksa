@@ -613,7 +613,6 @@ def produksi_load():
     body = request.get_json(force=True) or {}
     source_key = str(body.get("source_key", "")).strip()
     link = str(body.get("link", "")).strip()
-    requested_source_type = str(body.get("source_type", "")).strip().lower()
 
     if not source_key:
         return jsonify({"success": False, "message": "source_key wajib diisi"}), 400
@@ -621,25 +620,20 @@ def produksi_load():
         return jsonify({"success": False, "message": "Link/ID spreadsheet wajib diisi"}), 400
 
     try:
-        _, src = import_engine.get_source(source_key)
+        import_engine.get_source(source_key)
     except KeyError as e:
         return jsonify({"success": False, "message": str(e)}), 404
-
-    # Kartu generik boleh memilih sumber GSheet atau Excel (Drive).
-    # Kalau source_type tidak dikirim, pertahankan type yang tersimpan di config.
-    source_type = requested_source_type or str(src.get("type", "gsheet")).strip().lower()
-    if source_type not in ("gsheet", "excel"):
-        return jsonify({
-            "success": False,
-            "message": "source_type harus 'gsheet' atau 'excel'"
-        }), 400
 
     try:
         source_id = import_engine.extract_id_from_link(link)
     except ValueError as e:
         return jsonify({"success": False, "message": str(e)}), 400
 
+    # Jenis sumber (Google Sheets asli vs file Excel/WPS di Drive) dideteksi
+    # OTOMATIS lewat mimeType-nya di Drive API -- user tidak perlu pilih
+    # manual lagi (dulu ada dropdown khusus di kartu "Rewind Kecil").
     try:
+        source_type = import_engine.detect_source_type(source_id)
         detected_sheets, file_name = import_engine.detect_sheets(source_id, source_type)
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal connect ke spreadsheet: {e}"}), 400
