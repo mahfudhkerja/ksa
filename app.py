@@ -85,7 +85,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
 import gspread
@@ -1198,6 +1198,98 @@ def get_waste_rewind():
         return jsonify({
             "success": False,
             "message": f"Gagal membaca {WASTE_REWIND_SHEET_NAME}: {e}"
+        }), 500
+
+
+# --------------------------------------------------------------------------
+# 6e. REWIND KECIL — daftar SPK & NO_JO unik (list, mirip pola Data Validasi)
+# --------------------------------------------------------------------------
+# Beda dari WASTE_REWIND (REWIND_PY, sheet hasil kalkulasi) di atas:
+# ini baca sheet MENTAH "REWIND" (hasil import_rewind_kecil.py) di
+# spreadsheet YANG SAMA (WASTE_REWIND_SPREADSHEET_ID). NO_JO di sini
+# SENGAJA SAMA PERSIS dengan kolom "JO" di sheet REWIND -- cuma beda
+# label tampilan, TIDAK ADA kolom "NO_JO" terpisah di sheet sumber.
+#
+# Aturan:
+#   1. Hanya baris dengan TANGGAL >= REWIND_KECIL_START_DATE yang ikut.
+#   2. Hasil di-unique-kan per pasangan (SPK, JO) -- satu SPK/JO yang
+#      sama biasanya muncul berkali-kali di raw data (tiap baris shift/
+#      produksi), di list ini cuma tampil 1x.
+#   3. Dihitung ULANG dari nol tiap dipanggil dengan force=True (tombol
+#      Refresh di frontend) -- bukan accumulate, selalu representasi
+#      TERKINI dari sheet REWIND saat itu.
+REWIND_KECIL_RAW_SHEET_NAME = "REWIND"
+REWIND_KECIL_START_DATE = date(2026, 8, 1)  # 01/08/2026
+
+_rewind_kecil_cache = {"ts": 0.0, "rows": []}
+_rewind_kecil_cache_lock = threading.Lock()
+_REWIND_KECIL_CACHE_TTL = int(os.environ.get("REWIND_KECIL_CACHE_TTL_SECONDS", "60"))
+
+
+def _read_rewind_kecil_spk_jo(force=False):
+    now = time.time()
+    with _rewind_kecil_cache_lock:
+        cached = dict(_rewind_kecil_cache)
+    if not force and cached["rows"] and now - cached["ts"] < _REWIND_KECIL_CACHE_TTL:
+        return cached["rows"]
+
+    sh = _waste_rewind_spreadsheet()  # spreadsheet sama dgn REWIND_PY, handle dipakai bareng
+    ws = sh.worksheet(REWIND_KECIL_RAW_SHEET_NAME)
+    values = ws.get_all_values()
+
+    rows = []
+    if values:
+        header = [str(h).strip() for h in values[0]]
+        col_tanggal = import_engine._find_col_index(header, "TANGGAL")
+        col_spk = import_engine._find_col_index(header, "SPK")
+        col_jo = import_engine._find_col_index(header, "JO")
+
+        seen = set()
+        for raw_row in values[1:]:
+            def _cell(idx, _row=raw_row):
+                return str(_row[idx]).strip() if idx is not None and idx < len(_row) else ""
+
+            tgl_parsed = import_engine._parse_date_flexible(_cell(col_tanggal))
+            if tgl_parsed is None or tgl_parsed < REWIND_KECIL_START_DATE:
+                continue
+
+            spk = _cell(col_spk)
+            jo = _cell(col_jo)
+            if not spk and not jo:
+                continue
+
+            key = (spk, jo)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({"spk": spk, "noJo": jo})
+
+    with _rewind_kecil_cache_lock:
+        _rewind_kecil_cache["ts"] = now
+        _rewind_kecil_cache["rows"] = rows
+
+    return rows
+
+
+@app.route("/api/rewind-kecil/spk-jo", methods=["GET"])
+def get_rewind_kecil_spk_jo():
+    """List SPK & NO_JO unik dari sheet REWIND (TANGGAL >= 01/08/2026),
+    dipakai halaman list Rewind Kecil. Tambahkan ?refresh=1 buat hitung
+    ulang langsung dari sheet (skip cache)."""
+    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
+    try:
+        rows = _read_rewind_kecil_spk_jo(force=force)
+        return jsonify({
+            "success": True,
+            "sheet": REWIND_KECIL_RAW_SHEET_NAME,
+            "start_date": REWIND_KECIL_START_DATE.strftime("%d/%m/%Y"),
+            "rows": rows,
+            "count": len(rows),
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Gagal membaca {REWIND_KECIL_RAW_SHEET_NAME}: {e}"
         }), 500
 
 

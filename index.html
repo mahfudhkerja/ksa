@@ -1073,6 +1073,21 @@
                 </table>
               </div>
             </div>
+
+            <div class="card" style="margin-top:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:4px;">
+                <div>
+                  <h3>📋 Daftar SPK / NO_JO Unik</h3>
+                  <p class="desc" style="font-size:12.5px;color:var(--ink-soft);margin-top:4px;">Dari sheet mentah "REWIND" (bukan REWIND_PY), mulai tanggal 01/08/2026, sudah di-unique-kan. Ikut ter-update tiap tombol Refresh di atas dipencet.</p>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="wrw-table">
+                  <thead><tr><th>SPK</th><th>NO_JO</th></tr></thead>
+                  <tbody id="wkSpkJoBody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
 
           <div class="page" id="page-chatbot" style="display:none">
@@ -1333,7 +1348,7 @@
     if(page === "gudangBjb") loadGudangStatus("gudangBjb");
     if(page === "gudangBjl") loadGudangStatus("gudangBjl");
     if(page === "fstlWaste") fstlLoadList();
-    if(page === "wasteRewind") loadWasteRewind();
+    if(page === "wasteRewind"){ loadWasteRewind(); loadRewindKecilSpkJoList(); }
     if(page === "chatbot") chatInit();
   }
 
@@ -2071,6 +2086,7 @@
         if(status) status.innerText = `✅ Data mentah diperbarui (${st.rows_written ?? 0} baris) — memuat tampilan...`;
       }
       await loadWasteRewind(true); // baca ulang REWIND_PY (matikan .spinning-nya loadWasteRewind sendiri)
+      await loadRewindKecilSpkJoList(true); // ikut hitung ulang list SPK/NO_JO unik dari sheet REWIND
       if(ok && status) setTimeout(()=>{ status.style.display="none"; }, 4000);
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
@@ -2126,6 +2142,32 @@
   }
   function closeWasteRewindDetail(){ document.getElementById("wrwDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape") closeWasteRewindDetail();});
+
+  // ---- Daftar SPK / NO_JO unik (sheet mentah "REWIND", TANGGAL >= 01/08/2026) ----
+  // Sengaja TIDAK punya tombol Refresh sendiri -- selalu ikut ter-update
+  // bareng tombol Refresh utama Waste Rewind (lihat pollWasteRewindRefresh()).
+  let rewindKecilSpkJoRows = [];
+  async function loadRewindKecilSpkJoList(force=false){
+    const body = document.getElementById("wkSpkJoBody");
+    if(!body) return;
+    body.innerHTML = skeletonRows(6);
+    try{
+      const res = await fetch(`${API_BASE}/api/rewind-kecil/spk-jo${force?"?refresh=1":""}`);
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat daftar SPK/NO_JO");
+      rewindKecilSpkJoRows = data.rows || [];
+      renderRewindKecilSpkJoList();
+    }catch(e){
+      body.innerHTML = emptyState(2, "Gagal memuat daftar SPK/NO_JO: " + e.message, "⚠️");
+    }
+  }
+  function renderRewindKecilSpkJoList(){
+    const body = document.getElementById("wkSpkJoBody"); if(!body) return;
+    if(!rewindKecilSpkJoRows.length){ body.innerHTML = emptyState(2, "Belum ada data SPK/NO_JO sejak 01/08/2026"); return; }
+    body.innerHTML = rewindKecilSpkJoRows.map((r,i)=>
+      `<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms"><td>${escHtml(r.spk)}</td><td>${escHtml(r.noJo)}</td></tr>`
+    ).join("");
+  }
 
   // ============================================================
   // DATA GUDANG — file diupload lewat kartu "Data Gudang" di halaman
