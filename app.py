@@ -766,6 +766,7 @@ REWIND_KECIL_RUN_STATE = {
     "finished_at": None,
     "returncode": None,
     "rows_written": None,
+    "spk_jo_added": None,
     "error": None,
 }
 
@@ -799,9 +800,19 @@ def _run_rewind_kecil_worker():
         except Exception:
             err = None
 
+        spk_jo_added = None
+        if proc.returncode == 0:
+            try:
+                spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
+            except Exception as sync_err:
+                with REWIND_KECIL_RUN_STATE_LOCK:
+                    REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL SINKRON SPK/NO_JO ke {WASTE_REWIND_SHEET_NAME}] {sync_err}\n"
+                err = err or str(sync_err)
+
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
             REWIND_KECIL_RUN_STATE["rows_written"] = rows_written
+            REWIND_KECIL_RUN_STATE["spk_jo_added"] = spk_jo_added
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -830,6 +841,7 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["finished_at"] = None
         REWIND_KECIL_RUN_STATE["returncode"] = None
         REWIND_KECIL_RUN_STATE["rows_written"] = None
+        REWIND_KECIL_RUN_STATE["spk_jo_added"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
     thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
@@ -1202,37 +1214,36 @@ def get_waste_rewind():
 
 
 # --------------------------------------------------------------------------
-# 6e. REWIND KECIL — daftar SPK & NO_JO unik (list, mirip pola Data Validasi)
+# 6e. REWIND KECIL — sinkron SPK & NO_JO unik LANGSUNG KE sheet REWIND_PY
 # --------------------------------------------------------------------------
-# Beda dari WASTE_REWIND (REWIND_PY, sheet hasil kalkulasi) di atas:
-# ini baca sheet MENTAH "REWIND" (hasil import_rewind_kecil.py) di
-# spreadsheet YANG SAMA (WASTE_REWIND_SPREADSHEET_ID). NO_JO di sini
-# SENGAJA SAMA PERSIS dengan kolom "JO" di sheet REWIND -- cuma beda
-# label tampilan, TIDAK ADA kolom "NO_JO" terpisah di sheet sumber.
+# BUKAN tabel/list terpisah -- pasangan (SPK, NO_JO) unik dari sheet MENTAH
+# "REWIND" (hasil import_rewind_kecil.py, spreadsheet SAMA dengan REWIND_PY)
+# ditulis LANGSUNG jadi baris baru di REWIND_PY itu sendiri, supaya tetap
+# tampil di SATU tabel yang sama yang sudah dibaca lewat /api/waste-rewind.
+# NO_JO di sini SAMA PERSIS dengan kolom "JO" di sheet REWIND -- tidak ada
+# kolom "NO_JO" terpisah di sheet sumber, cuma beda label kolom di REWIND_PY.
 #
 # Aturan:
-#   1. Hanya baris dengan TANGGAL >= REWIND_KECIL_START_DATE yang ikut.
-#   2. Hasil di-unique-kan per pasangan (SPK, JO) -- satu SPK/JO yang
-#      sama biasanya muncul berkali-kali di raw data (tiap baris shift/
-#      produksi), di list ini cuma tampil 1x.
-#   3. Dihitung ULANG dari nol tiap dipanggil dengan force=True (tombol
-#      Refresh di frontend) -- bukan accumulate, selalu representasi
-#      TERKINI dari sheet REWIND saat itu.
+#   1. Hanya baris REWIND dengan TANGGAL >= REWIND_KECIL_START_DATE yang
+#      dipertimbangkan, lalu di-unique-kan per pasangan (SPK, JO).
+#   2. Pasangan yang (SPK, NO_JO)-nya SUDAH ADA sebagai baris di REWIND_PY
+#      TIDAK disentuh sama sekali (data lain di baris itu, termasuk yang
+#      sudah dihitung manual/formula, tidak boleh ketimpa).
+#   3. Pasangan yang BELUM ADA di-APPEND sebagai baris baru, HANYA kolom
+#      SPK & NO_JO yang diisi -- kolom lain dikosongkan (menunggu diisi
+#      manual/formula terpisah, sama seperti baris "xxxxxx"/"xxxxxxxxxx"
+#      contoh yang sudah ada di sheet).
+#   4. Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
+#      Waste Rewind), SETELAH import_rewind_kecil.py sukses -- jadi satu
+#      tombol Refresh yang sama yang menjalankan keduanya.
 REWIND_KECIL_RAW_SHEET_NAME = "REWIND"
 REWIND_KECIL_START_DATE = date(2026, 8, 1)  # 01/08/2026
 
-_rewind_kecil_cache = {"ts": 0.0, "rows": []}
-_rewind_kecil_cache_lock = threading.Lock()
-_REWIND_KECIL_CACHE_TTL = int(os.environ.get("REWIND_KECIL_CACHE_TTL_SECONDS", "60"))
 
-
-def _read_rewind_kecil_spk_jo(force=False):
-    now = time.time()
-    with _rewind_kecil_cache_lock:
-        cached = dict(_rewind_kecil_cache)
-    if not force and cached["rows"] and now - cached["ts"] < _REWIND_KECIL_CACHE_TTL:
-        return cached["rows"]
-
+def _read_rewind_kecil_spk_jo():
+    """Baca sheet mentah REWIND, filter TANGGAL >= REWIND_KECIL_START_DATE,
+    balikin list {"spk", "noJo"} unik. Selalu baca langsung dari sheet
+    (dipanggil sekali per proses refresh, tidak perlu cache sendiri)."""
     sh = _waste_rewind_spreadsheet()  # spreadsheet sama dgn REWIND_PY, handle dipakai bareng
     ws = sh.worksheet(REWIND_KECIL_RAW_SHEET_NAME)
     values = ws.get_all_values()
@@ -1264,33 +1275,55 @@ def _read_rewind_kecil_spk_jo(force=False):
             seen.add(key)
             rows.append({"spk": spk, "noJo": jo})
 
-    with _rewind_kecil_cache_lock:
-        _rewind_kecil_cache["ts"] = now
-        _rewind_kecil_cache["rows"] = rows
-
     return rows
 
 
-@app.route("/api/rewind-kecil/spk-jo", methods=["GET"])
-def get_rewind_kecil_spk_jo():
-    """List SPK & NO_JO unik dari sheet REWIND (TANGGAL >= 01/08/2026),
-    dipakai halaman list Rewind Kecil. Tambahkan ?refresh=1 buat hitung
-    ulang langsung dari sheet (skip cache)."""
-    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
-    try:
-        rows = _read_rewind_kecil_spk_jo(force=force)
-        return jsonify({
-            "success": True,
-            "sheet": REWIND_KECIL_RAW_SHEET_NAME,
-            "start_date": REWIND_KECIL_START_DATE.strftime("%d/%m/%Y"),
-            "rows": rows,
-            "count": len(rows),
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": f"Gagal membaca {REWIND_KECIL_RAW_SHEET_NAME}: {e}"
-        }), 500
+def _sync_rewind_kecil_spk_jo_into_rewind_py():
+    """Tambahkan (append) baris baru ke REWIND_PY untuk tiap pasangan
+    (SPK, NO_JO) unik dari sheet REWIND yang belum ada baris-nya di
+    REWIND_PY. Balikin jumlah baris baru yang ditambahkan."""
+    unique_pairs = _read_rewind_kecil_spk_jo()
+    if not unique_pairs:
+        return 0
+
+    sh = _waste_rewind_spreadsheet()
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    if col_spk is None or col_nojo is None:
+        raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    existing = set()
+    for row in values[1:]:
+        spk = row[col_spk].strip() if col_spk < len(row) else ""
+        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
+        if spk or nojo:
+            existing.add((spk, nojo))
+
+    new_rows = []
+    for pair in unique_pairs:
+        key = (pair["spk"], pair["noJo"])
+        if key in existing:
+            continue
+        existing.add(key)  # jaga2 kalau ada duplikat di unique_pairs sendiri
+        blank_row = [""] * len(header)
+        blank_row[col_spk] = pair["spk"]
+        blank_row[col_nojo] = pair["noJo"]
+        new_rows.append(blank_row)
+
+    if new_rows:
+        ws.append_rows(new_rows, value_input_option="USER_ENTERED")
+        # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
+        # (dipanggil loadWasteRewind(true) sesudah refresh ini) baca baris baru
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+
+    return len(new_rows)
 
 
 # --------------------------------------------------------------------------
