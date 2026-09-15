@@ -260,6 +260,12 @@
   .produksi-card .btn-load{width:100%; justify-content:center; box-sizing:border-box; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
   .produksi-card .btn-sheet{width:100%; justify-content:center; box-sizing:border-box;}
   .produksi-card h3{overflow-wrap:anywhere;}
+  /* Rewind Kecil mengikuti struktur card produksi lainnya */
+  .rwk-type-row{display:flex; flex-direction:column; gap:8px; margin-top:8px;}
+  .rwk-type-select{width:100%; height:41px; border:1.5px solid var(--line); border-radius:10px; padding:0 12px; font-size:12.5px; color:var(--ink); background:#fbfcfe; box-sizing:border-box; cursor:pointer;}
+  .rwk-type-select:focus{outline:none; border-color:var(--blue); background:white; box-shadow:0 0 0 4px var(--blue-50);}
+  .rwk-refresh-btn{width:100%; height:41px; justify-content:center; box-sizing:border-box; white-space:nowrap;}
+  .rwk-status{font-size:11px; color:var(--ink-faint); margin-top:8px;}
   .gudang-pick-list{display:flex; flex-direction:column; gap:6px; max-width:680px;}
   .gudang-pick-item{display:flex; justify-content:space-between; align-items:center; gap:10px; padding:9px 12px; border:1.5px solid var(--line); border-radius:10px; background:#fbfcfe; cursor:pointer; font-size:12.5px; transition:border-color .15s var(--ease), background .15s var(--ease);}
   .gudang-pick-item:hover{border-color:var(--blue); background:var(--blue-50);}
@@ -436,6 +442,119 @@
   .fstl-btn-save{background:linear-gradient(120deg,var(--fv),var(--fp)); color:white; border:none; border-radius:99px; padding:12px 26px; font-weight:800; font-size:12.5px; cursor:pointer; font-family:'Plus Jakarta Sans',sans-serif; box-shadow:0 10px 22px -8px rgba(109,93,251,.6);}
   .fstl-btn-save:hover{transform:translateY(-2px);}
   .fstl-btn-save:active{transform:translateY(0);}
+
+  /* ============================================================
+     WASTE REWIND — tabel compact seperti halaman Update Stock
+     Header wrap + action detail + modal detail lengkap
+     ============================================================ */
+  .wrw-toolbar{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    margin:14px 0 16px;
+  }
+  .wrw-search{
+    flex:1; min-width:230px; max-width:360px; position:relative;
+  }
+  .wrw-search input{
+    width:100%; height:44px; box-sizing:border-box;
+    border:1.5px solid var(--line); border-radius:10px;
+    padding:0 15px 0 40px; background:#fff; color:var(--ink);
+    font-family:inherit; font-size:13px; outline:none;
+    transition:border-color .15s ease, box-shadow .15s ease;
+  }
+  .wrw-search input:focus{
+    border-color:var(--blue-light);
+    box-shadow:0 0 0 4px var(--blue-50);
+  }
+  .wrw-search .ic{
+    position:absolute; left:14px; top:50%; transform:translateY(-50%);
+    font-size:14px; opacity:.65; pointer-events:none;
+  }
+  .wrw-table{
+    width:100%; min-width:1250px; border-collapse:separate; border-spacing:0;
+    font-size:12px; color:var(--ink); table-layout:auto;
+  }
+  .wrw-table thead th{
+    background:#244f80; color:#fff; padding:10px 9px;
+    font-size:11px; font-weight:800; letter-spacing:.01em;
+    text-align:left; vertical-align:middle;
+    white-space:normal; overflow-wrap:anywhere; word-break:break-word;
+    line-height:1.25; height:42px; border:0;
+  }
+  .wrw-table thead th:first-child{border-radius:10px 0 0 0;}
+  .wrw-table thead th:last-child{border-radius:0 10px 0 0; text-align:center;}
+  .wrw-table tbody td{
+    padding:12px 9px; border-bottom:1px solid #edf1f5;
+    vertical-align:top; white-space:normal;
+    overflow-wrap:anywhere; word-break:break-word; line-height:1.35;
+    background:#fff;
+  }
+  .wrw-table tbody tr:hover td{background:#f8fbff;}
+  .wrw-table tbody td:last-child{text-align:center; vertical-align:middle; white-space:nowrap;}
+  .wrw-table th:nth-child(1), .wrw-table td:nth-child(1){min-width:115px;}
+  .wrw-table th:nth-child(2), .wrw-table td:nth-child(2){min-width:85px;}
+  .wrw-table th:nth-child(4), .wrw-table td:nth-child(4){min-width:155px;}
+  .wrw-table th:nth-child(14), .wrw-table td:nth-child(14){min-width:125px;}
+  .wrw-detail-btn{
+    border:1.3px solid #3572b6; background:#fff; color:#1e4573;
+    border-radius:8px; padding:7px 11px; font-family:inherit;
+    font-size:11px; font-weight:800; cursor:pointer; white-space:nowrap;
+    transition:all .15s ease;
+  }
+  .wrw-detail-btn:hover{background:#3572b6; color:#fff; transform:translateY(-1px); box-shadow:0 5px 12px -7px rgba(53,114,182,.8);}
+  .wrw-detail-btn:active{transform:translateY(0);}
+  .wrw-table-wrap, .page .table-wrap:has(.wrw-table){
+    overflow:auto; border:1px solid #e6ebf1; border-radius:11px;
+    background:#fff; max-height:calc(100vh - 285px);
+  }
+  #wrwDetailOverlay{
+    position:fixed; inset:0; z-index:1200; display:none;
+    align-items:center; justify-content:center;
+    padding:22px; background:rgba(15,25,45,.48); backdrop-filter:blur(3px);
+  }
+  .wrw-modal{
+    width:min(900px,96vw); max-height:88vh; overflow:hidden;
+    background:#fff; border-radius:16px; box-shadow:0 25px 70px -20px rgba(10,25,50,.45);
+    display:flex; flex-direction:column; border:1px solid #e7ecf2;
+  }
+  .wrw-modal-head{
+    display:flex; align-items:center; justify-content:space-between; gap:15px;
+    padding:17px 20px; background:#244f80; color:#fff; flex-shrink:0;
+  }
+  .wrw-modal-head h3{font-size:16px; font-weight:800; margin:0;}
+  .wrw-modal-close{
+    width:34px; height:34px; border:1px solid rgba(255,255,255,.35);
+    border-radius:9px; background:rgba(255,255,255,.12); color:#fff;
+    cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center;
+  }
+  .wrw-modal-close:hover{background:rgba(255,255,255,.22);}
+  .wrw-detail-grid{
+    overflow:auto; padding:18px; display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr)); gap:0;
+  }
+  .wrw-detail-item{
+    display:grid; grid-template-columns:minmax(150px,42%) 1fr;
+    min-height:44px; border-bottom:1px solid #edf1f5;
+  }
+  .wrw-detail-item .lbl{
+    padding:10px 11px; background:#f5f8fb; color:#36516d;
+    font-size:10.5px; font-weight:800; line-height:1.3;
+    overflow-wrap:anywhere; word-break:break-word;
+  }
+  .wrw-detail-item .val{
+    padding:10px 11px; font-size:12px; color:var(--ink);
+    line-height:1.4; overflow-wrap:anywhere; word-break:break-word;
+  }
+  @media(max-width:900px){
+    .wrw-table{min-width:1050px;}
+    .wrw-detail-grid{grid-template-columns:1fr;}
+  }
+  @media(max-width:600px){
+    .wrw-search{max-width:none; min-width:100%;}
+    .wrw-toolbar .btn-danger-outline,.wrw-toolbar .btn-outline{flex:1; justify-content:center;}
+    #wrwDetailOverlay{padding:10px;}
+    .wrw-modal{width:100%; max-height:92vh; border-radius:13px;}
+    .wrw-detail-item{grid-template-columns:42% 58%;}
+  }
 
   /* ==========================================================
      RESPONSIVE / MOBILE
@@ -1728,10 +1847,10 @@
               <option value="gsheet" ${(src.type||"gsheet")==="gsheet"?"selected":""}>Google Sheets (gspread)</option>
               <option value="excel" ${(src.type||"")==="excel"?"selected":""}>Excel / WPS di Google Drive</option>
             </select>
-            <button class="btn-outline rwk-refresh-btn" id="btnRefreshRewindKecil" onclick="runRewindKecil()">↻ Refresh Rewind Kecil</button>
           </div>` : ``}
-          <div style="display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+          <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
             <button class="btn-outline btn-sheet" onclick="openSheetModal('${key}')">📋 Pilih Sheet</button>
+            ${key === "rewind_kecil" ? `<button class="btn-outline rwk-refresh-btn" id="btnRefreshRewindKecil" onclick="runRewindKecil()">↻ Refresh Rewind Kecil</button>` : ``}
           </div>
           <div class="sheet-summary" style="margin-top:8px;">${sheetSummary}</div>
           <div style="font-size:11px; color:var(--ink-faint); margin-top:8px;">${lastImportLine}</div>
