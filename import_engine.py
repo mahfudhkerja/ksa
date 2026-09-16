@@ -219,43 +219,135 @@ SOURCE_KEY_TO_MESIN_NAME = {
 }
 
 
-def update_list_mesin_link(source_key, link):
-    """Simpan link yang baru dipaste user (di halaman Input Data) ke sheet
-    'ListMesin' -> kolom B (LINK), pada baris yang kolom A-nya cocok dengan
-    nama mesin untuk source_key ini (lihat SOURCE_KEY_TO_MESIN_NAME).
+def _list_mesin_worksheet():
+    """Buka worksheet 'ListMesin' di spreadsheet target utama (target_sheet_id
+    di config.json). Return None (bukan raise) kalau spreadsheet/sheet-nya
+    belum ada, supaya semua caller di bawah bisa gagal dengan lembut."""
+    cfg = load_config()
+    target_id = cfg.get("target_sheet_id")
+    if not target_id:
+        return None
+    try:
+        client = get_gspread_client()
+        target_sp = client.open_by_key(target_id)
+        return target_sp.worksheet(LIST_MESIN_SHEET_NAME)
+    except Exception:
+        return None
 
-    Dipanggil dari endpoint /api/produksi/load setelah link berhasil
-    terhubung. Kalau nama mesin tidak ada di mapping, atau baris tidak
-    ditemukan di sheet ListMesin, fungsi ini tidak melempar error keras
-    (supaya tidak menggagalkan proses Load utama) — cukup return False.
+
+def _list_mesin_find_row(ws, mesin_name):
+    col_a = ws.col_values(1)  # kolom A, termasuk header
+    for i, val in enumerate(col_a, start=1):
+        if _norm(val) == _norm(mesin_name):
+            return i
+    return None
+
+
+def update_list_mesin_config(source_key, link=None, sheets=None):
+    """Simpan link dan/atau daftar sheet yang dicentang user ke sheet
+    'ListMesin', pada baris yang kolom A-nya cocok dengan nama mesin untuk
+    source_key ini (lihat SOURCE_KEY_TO_MESIN_NAME):
+      - kolom B (LINK)   diisi kalau `link` diberikan (dipanggil dari
+        /api/produksi/load setelah link berhasil terhubung).
+      - kolom C (SHEETS) diisi comma-separated kalau `sheets` diberikan
+        (dipanggil dari /api/produksi/sheets setelah user centang sheet).
+
+    Sheet ini jadi CATATAN CADANGAN yang persisten di Google Sheets --
+    dipakai _recover_source_from_list_mesin() buat memulihkan config.json
+    otomatis kalau hilang (mis. abis restart di hosting yang disknya
+    ephemeral, lihat komentar di save_config()).
+
+    Kalau nama mesin tidak ada di mapping, atau baris/sheet tidak
+    ditemukan, fungsi ini tidak melempar error keras (supaya tidak
+    menggagalkan proses Load/Pilih-Sheet utama) — cukup return False.
     """
     mesin_name = SOURCE_KEY_TO_MESIN_NAME.get(source_key)
     if not mesin_name:
         return False
 
-    cfg = load_config()
-    target_id = cfg.get("target_sheet_id")
-    if not target_id:
+    ws = _list_mesin_worksheet()
+    if ws is None:
         return False
 
-    client = get_gspread_client()
-    target_sp = client.open_by_key(target_id)
-    try:
-        ws = target_sp.worksheet(LIST_MESIN_SHEET_NAME)
-    except gspread.exceptions.WorksheetNotFound:
-        return False
-
-    col_a = ws.col_values(1)  # kolom A, termasuk header
-    row_idx = None
-    for i, val in enumerate(col_a, start=1):
-        if _norm(val) == _norm(mesin_name):
-            row_idx = i
-            break
-
+    row_idx = _list_mesin_find_row(ws, mesin_name)
     if row_idx is None:
         return False
 
-    ws.update_cell(row_idx, 2, link)  # kolom B = LINK
+    if link is not None:
+        ws.update_cell(row_idx, 2, link)  # kolom B = LINK
+    if sheets is not None:
+        ws.update_cell(row_idx, 3, ", ".join(sheets))  # kolom C = SHEETS
+    return True
+
+
+# Nama lama dipertahankan sebagai alias (dipanggil dari app.py) supaya
+# tidak perlu ubah semua caller sekaligus.
+def update_list_mesin_link(source_key, link):
+    return update_list_mesin_config(source_key, link=link)
+
+
+def _recover_source_from_list_mesin(source_key, src):
+    """Kalau source_id atau sheets kosong di config.json (paling sering
+    kejadian abis server restart/redeploy di hosting yang disknya
+    ephemeral -- config.json ke-reset balik ke isi repo git), coba
+    pulihkan otomatis dari sheet 'ListMesin': baca ulang link (kolom B)
+    dan daftar sheet yang dulu pernah dicentang (kolom C, comma-separated)
+    pada baris yang cocok dengan nama mesin source ini, lalu connect ulang
+    & simpan balik ke config.json -- PERSIS proses yang sama seperti kalau
+    user klik Load + centang sheet manual, cuma dijalankan otomatis.
+
+    Return True kalau berhasil memulihkan (config.json sudah terupdate,
+    caller wajib get_source() ulang buat baca versi barunya). Return False
+    kalau tidak ada apa-apa yang bisa dipulihkan -- caller lanjut raise
+    error seperti biasa (RuntimeError "belum ada link/sheet ...")."""
+    if src.get("source_id") and src.get("sheets"):
+        return False  # config masih lengkap, tidak ada yang perlu dipulihkan
+
+    mesin_name = SOURCE_KEY_TO_MESIN_NAME.get(source_key)
+    if not mesin_name:
+        return False
+
+    ws = _list_mesin_worksheet()
+    if ws is None:
+        return False
+
+    row_idx = _list_mesin_find_row(ws, mesin_name)
+    if row_idx is None:
+        return False
+
+    row_vals = ws.row_values(row_idx)
+    link = row_vals[1].strip() if len(row_vals) > 1 else ""
+    sheets_text = row_vals[2].strip() if len(row_vals) > 2 else ""
+    if not link:
+        return False  # tidak ada link yang pernah tersimpan, tidak ada yang bisa dipulihkan
+
+    try:
+        source_id = extract_id_from_link(link)
+        source_type = detect_source_type(source_id)
+        detected_sheets, file_name = detect_sheets(source_id, source_type)
+    except Exception as e:
+        print(f"   ⚠️ Gagal memulihkan '{source_key}' dari ListMesin (link: {link}): {e}")
+        return False
+
+    recovered_sheets = [s.strip() for s in sheets_text.split(",") if s.strip()]
+    if not recovered_sheets:
+        # Belum pernah ada catatan sheet yang dicentang -- lebih baik pakai
+        # SEMUA sheet yang kedetek sekarang daripada gagal total; user
+        # tetap bisa pangkas pilihannya lagi lewat halaman Input Data.
+        recovered_sheets = detected_sheets
+
+    update_source(
+        source_key,
+        type=source_type,
+        source_id=source_id,
+        source_name=file_name,
+        sheets=recovered_sheets,
+        last_connected=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    )
+    # Sinkronkan lagi hasil pemulihan ini ke ListMesin (kolom C ikut keisi
+    # kalau sebelumnya kosong dan kita fallback ke "semua sheet").
+    update_list_mesin_config(source_key, sheets=recovered_sheets)
+    print(f"   ♻️ Config '{source_key}' otomatis dipulihkan dari ListMesin (link: {link}, {len(recovered_sheets)} sheet).")
     return True
 
 
@@ -1214,6 +1306,15 @@ def run_gsheet_import(source_key, target_sheet_name, target_headers, header_keyw
     cfg, src = get_source(source_key)
     source_id = src.get("source_id")
     sheets = src.get("sheets") or []
+    if not source_id or not sheets:
+        # config.json kosong/tidak lengkap -- coba pulihkan otomatis dari
+        # sheet ListMesin (lihat _recover_source_from_list_mesin) sebelum
+        # nyerah. Paling sering kejadian abis server restart/redeploy di
+        # hosting yang disknya ephemeral (config.json ke-reset).
+        if _recover_source_from_list_mesin(source_key, src):
+            cfg, src = get_source(source_key)
+            source_id = src.get("source_id")
+            sheets = src.get("sheets") or []
     target_id = target_id or cfg["target_sheet_id"]
     if not source_id:
         raise RuntimeError(f"'{source_key}': belum ada link spreadsheet sumber (isi lewat halaman Input Data).")
@@ -1298,6 +1399,13 @@ def run_excel_import(source_key, target_sheet_name, target_headers, header_keywo
     cfg, src = get_source(source_key)
     source_id = src.get("source_id")
     sheets = src.get("sheets") or []
+    if not source_id or not sheets:
+        # Sama seperti di run_gsheet_import() -- coba pulihkan otomatis
+        # dari ListMesin dulu sebelum nyerah.
+        if _recover_source_from_list_mesin(source_key, src):
+            cfg, src = get_source(source_key)
+            source_id = src.get("source_id")
+            sheets = src.get("sheets") or []
     target_id = target_id or cfg["target_sheet_id"]
     if not source_id:
         raise RuntimeError(f"'{source_key}': belum ada link file Excel sumber (isi lewat halaman Input Data).")

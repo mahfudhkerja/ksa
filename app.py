@@ -651,7 +651,7 @@ def produksi_load():
     # gagal (mis. sheet ListMesin belum ada / nama mesin tidak match), jangan
     # sampai menggagalkan proses Load utama — cukup diabaikan.
     try:
-        import_engine.update_list_mesin_link(source_key, link)
+        import_engine.update_list_mesin_config(source_key, link=link)
     except Exception:
         pass
 
@@ -682,6 +682,17 @@ def produksi_sheets():
         import_engine.update_source(source_key, sheets=sheets)
     except KeyError as e:
         return jsonify({"success": False, "message": str(e)}), 404
+
+    # Simpan juga daftar sheet yang dicentang ke sheet "ListMesin" (kolom
+    # C), sama alasannya dengan link di produksi_load() -- ini catatan
+    # cadangan yang persisten di Google Sheets, dipakai buat memulihkan
+    # config.json otomatis (_recover_source_from_list_mesin) kalau
+    # sampai hilang (mis. abis server restart di hosting yang disknya
+    # ephemeral). Kalau gagal, jangan sampai menggagalkan proses utama.
+    try:
+        import_engine.update_list_mesin_config(source_key, sheets=sheets)
+    except Exception:
+        pass
 
     return jsonify({"success": True, "sheets": sheets})
 
