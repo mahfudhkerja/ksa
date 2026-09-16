@@ -1309,8 +1309,29 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
     if col_spk is None or col_nojo is None:
         raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
 
+    # Lebar tabel JO/SPK/NO_JO yang "asli" -- dihitung dari kolom A sampai
+    # kolom terakhir yang header-nya masih terisi (berhenti di kolom kosong
+    # pertama). SENGAJA TIDAK pakai len(header) apa adanya / append_rows
+    # bawaan gspread: sheet REWIND_PY ini juga punya kolom bantu lain jauh
+    # di kanan (mis. AF/AG untuk Waste_Slitting) yang masih ada isinya
+    # sampai puluhan baris ke bawah. Kalau ikut kehitung, deteksi "baris
+    # kosong berikutnya" versi Sheets API/gspread jadi salah nganggap baris
+    # kosong ada di bawah kolom AF/AG itu -- bukan tepat di bawah baris
+    # data REWIND_PY yang sebenarnya (baris contoh "xxx"/"xxxx") -- jadi
+    # baris SPK/NO_JO baru nyasar jauh ke bawah dan numpuk sama data lain.
+    main_width = 0
+    for h in header:
+        if not h:
+            break
+        main_width += 1
+    main_width = max(main_width, col_spk + 1, col_nojo + 1)
+
     existing = set()
-    for row in values[1:]:
+    last_used_row = 1  # nomor baris di sheet (1-based), mulai dari baris header
+    for i, row in enumerate(values[1:], start=2):
+        window = row[:main_width]
+        if any(str(c).strip() for c in window):
+            last_used_row = i
         spk = row[col_spk].strip() if col_spk < len(row) else ""
         nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
         if spk or nojo:
@@ -1322,13 +1343,17 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
         if key in existing:
             continue
         existing.add(key)  # jaga2 kalau ada duplikat di unique_pairs sendiri
-        blank_row = [""] * len(header)
+        blank_row = [""] * main_width
         blank_row[col_spk] = pair["spk"]
         blank_row[col_nojo] = pair["noJo"]
         new_rows.append(blank_row)
 
     if new_rows:
-        ws.append_rows(new_rows, value_input_option="USER_ENTERED")
+        start_row = last_used_row + 1
+        end_row = start_row + len(new_rows) - 1
+        start_a1 = gspread.utils.rowcol_to_a1(start_row, 1)
+        end_a1 = gspread.utils.rowcol_to_a1(end_row, main_width)
+        ws.update(f"{start_a1}:{end_a1}", new_rows, value_input_option="USER_ENTERED")
         # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
         # (dipanggil loadWasteRewind(true) sesudah refresh ini) baca baris baru
         with _waste_rewind_cache_lock:
