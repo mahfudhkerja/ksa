@@ -1248,7 +1248,7 @@ def get_waste_rewind():
 #      Waste Rewind), SETELAH import_rewind_kecil.py sukses -- jadi satu
 #      tombol Refresh yang sama yang menjalankan keduanya.
 REWIND_KECIL_RAW_SHEET_NAME = "REWIND_PY_RAW"
-REWIND_KECIL_START_DATE = date(2026, 8, 1)  # 01/08/2026
+REWIND_KECIL_START_DATE = date(2026, 9, 1)  # 01/09/2026
 
 
 def _read_rewind_kecil_spk_jo():
