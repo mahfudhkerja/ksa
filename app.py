@@ -1233,18 +1233,33 @@ def get_waste_rewind():
 # Aturan:
 #   1. Hanya baris REWIND dengan TANGGAL >= REWIND_KECIL_START_DATE yang
 #      dipertimbangkan, lalu di-unique-kan per pasangan (SPK, JO).
+#   1b. Kalau SPK atau JO pada baris itu bukan angka murni (teks seperti
+#       "EX", "RETUR", "xxx"), SELURUH baris itu diabaikan -- bukan cuma
+#       sisi yang teksnya, supaya tidak ada pasangan (SPK, NO_JO) yang
+#       jomplang (satu sisi keambil, sisi lain kosong/tidak match).
 #   2. Pasangan yang (SPK, NO_JO)-nya SUDAH ADA sebagai baris di REWIND_PY
 #      TIDAK disentuh sama sekali (data lain di baris itu, termasuk yang
 #      sudah dihitung manual/formula, tidak boleh ketimpa).
-#   3. Pasangan yang BELUM ADA di-APPEND sebagai baris baru, HANYA kolom
-#      SPK & NO_JO yang diisi -- kolom lain dikosongkan (menunggu diisi
-#      manual/formula terpisah, sama seperti baris "xxxxxx"/"xxxxxxxxxx"
-#      contoh yang sudah ada di sheet).
+#   3. Pasangan yang BELUM ADA di-APPEND sebagai baris baru. Selain kolom
+#      SPK & NO_JO, kolom JO (lengkap), Nama_Produk, Planning_Order,
+#      Planning_Meter & Potongan JUGA ikut diisi otomatis -- dicari lewat
+#      NO_JO dicocokkan ke suffix (angka belakang) kode JO di sheet JO_1
+#      punya spreadsheet FSTL (FSTL_SPREADSHEET_ID, lihat blok "FSTL --
+#      LAMPIRAN WASTE" di bawah), caranya SAMA PERSIS kayak lookup
+#      JO/NAMA/ORDER/METER di halaman Update Stock
+#      (import_engine.sync_update_stock_from_jo()): kolom F JO_1 = kode
+#      JO lengkap, kolom G = NAMA (KEMASAN), header "ORDER" = Planning
+#      Order, header "METER" = Planning Meter, header "POTONGAN" = kolom
+#      Potongan -- lihat _fstl_lookup_jo1_by_suffix_map(). Kalau NO_JO
+#      tidak ketemu di JO_1 (belum ada / suffix tidak match), kolom2 itu
+#      dikosongkan (menunggu diisi manual), sama seperti baris
+#      "xxxxxx"/"xxxxxxxxxx" contoh yang sudah ada di sheet.
 #   4. Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
 #      Waste Rewind), SETELAH import_rewind_kecil.py sukses -- jadi satu
 #      tombol Refresh yang sama yang menjalankan keduanya.
 REWIND_KECIL_RAW_SHEET_NAME = "REWIND_PY_RAW"
 REWIND_KECIL_START_DATE = date(2026, 9, 1)  # 01/09/2026
+_RW_KECIL_NUMERIC_RE = re.compile(r"\d+")  # SPK & NO_JO harus SELURUHNYA angka -- kalau ada huruf (EX, RETUR, xxx, dll) dianggap teks & baris diabaikan
 
 
 def _read_rewind_kecil_spk_jo():
@@ -1276,6 +1291,14 @@ def _read_rewind_kecil_spk_jo():
             if not spk and not jo:
                 continue
 
+            # SPK & NO_JO seharusnya berupa angka. Kalau salah satu berisi
+            # teks (mis. "EX", "RETUR", "xxx"), seluruh baris ini DIABAIKAN
+            # -- bukan cuma sisi yang teks -- supaya tidak ada baris baru di
+            # REWIND_PY yang cuma kolom SPK atau NO_JO-nya saja terisi
+            # (jomplang, pasangannya hilang).
+            if not (_RW_KECIL_NUMERIC_RE.fullmatch(spk) and _RW_KECIL_NUMERIC_RE.fullmatch(jo)):
+                continue
+
             key = (spk, jo)
             if key in seen:
                 continue
@@ -1285,10 +1308,68 @@ def _read_rewind_kecil_spk_jo():
     return rows
 
 
+def _fstl_lookup_jo1_by_suffix_map():
+    """Baca sheet JO_1 di spreadsheet FSTL (FSTL_SPREADSHEET_ID), balikin
+    dict {suffix_key (angka belakang kode JO): {"jo","nama","order",
+    "meter","potongan"}}.
+
+    Dipakai buat auto-isi kolom JO/Nama_Produk/Planning_Order/
+    Planning_Meter/Potongan waktu baris SPK/NO_JO baru di-append ke
+    REWIND_PY -- lihat _sync_rewind_kecil_spk_jo_into_rewind_py().
+
+    Kolom JO (F) & NAMA/KEMASAN (G) dipakai lewat FSTL_JO1_COL_JO /
+    FSTL_JO1_COL_PRODUK (sama seperti fstl_lookup_produk()). Kolom
+    ORDER/METER/POTONGAN dicari lewat NAMA HEADER-nya sendiri (bukan
+    index tetap) pakai _fstl_find_col(), soalnya sengaja disamakan
+    caranya dengan sync_update_stock_from_jo() di import_engine.py
+    (halaman Update Stock) yang juga baca kolom "ORDER"/"METER" dari
+    JO_1, ditambah kolom "POTONGAN".
+
+    Kalau ada beberapa baris JO_1 dengan suffix sama, baris yang
+    PALING BAWAH (jadi paling baru) yang dipakai -- overwrite biasa
+    lewat urutan loop dari atas ke bawah."""
+    try:
+        sh = _fstl_spreadsheet()
+        rows = _fstl_get_sheet_values(sh, FSTL_JO1_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    if not rows:
+        return {}
+
+    header = rows[0]
+    col_jo = FSTL_JO1_COL_JO
+    col_nama = FSTL_JO1_COL_PRODUK
+    col_order = _fstl_find_col(header, "ORDER")
+    col_meter = _fstl_find_col(header, "METER")
+    col_potongan = _fstl_find_col(header, "POTONGAN")
+
+    def _cell(row, idx):
+        return str(row[idx]).strip() if idx is not None and idx < len(row) else ""
+
+    lookup = {}
+    for row in rows[1:]:
+        jo_cell = _cell(row, col_jo)
+        if not jo_cell:
+            continue
+        key = _fstl_suffix_key(jo_cell)
+        if key == "" or key is None:
+            continue
+        lookup[key] = {
+            "jo": jo_cell,
+            "nama": _cell(row, col_nama),
+            "order": _cell(row, col_order),
+            "meter": _cell(row, col_meter),
+            "potongan": _cell(row, col_potongan),
+        }
+    return lookup
+
+
 def _sync_rewind_kecil_spk_jo_into_rewind_py():
     """Tambahkan (append) baris baru ke REWIND_PY untuk tiap pasangan
     (SPK, NO_JO) unik dari sheet REWIND_PY_RAW yang belum ada baris-nya di
-    REWIND_PY. Balikin jumlah baris baru yang ditambahkan."""
+    REWIND_PY -- sekaligus auto-isi kolom JO/Nama_Produk/Planning_Order/
+    Planning_Meter/Potongan dari lookup JO_1 (spreadsheet FSTL). Balikin
+    jumlah baris baru yang ditambahkan."""
     unique_pairs = _read_rewind_kecil_spk_jo()
     if not unique_pairs:
         return 0
@@ -1305,6 +1386,15 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
     if col_spk is None or col_nojo is None:
         raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
 
+    # Kolom tambahan yang diisi otomatis dari lookup JO_1 (boleh None kalau
+    # sheet REWIND_PY suatu saat tidak/berlum punya salah satu kolom ini --
+    # tetap jalan, cuma kolom itu yang dilewati/tidak diisi).
+    col_jo_full = import_engine._find_col_index(header, "JO")
+    col_nama = import_engine._find_col_index(header, "Nama_Produk")
+    col_planning_order = import_engine._find_col_index(header, "Planning_Order")
+    col_planning_meter = import_engine._find_col_index(header, "Planning_Meter")
+    col_potongan = import_engine._find_col_index(header, "Potongan")
+
     # Lebar tabel JO/SPK/NO_JO yang "asli" -- dihitung dari kolom A sampai
     # kolom terakhir yang header-nya masih terisi (berhenti di kolom kosong
     # pertama). SENGAJA TIDAK pakai len(header) apa adanya / append_rows
@@ -1320,7 +1410,14 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
         if not h:
             break
         main_width += 1
-    main_width = max(main_width, col_spk + 1, col_nojo + 1)
+    main_width = max(
+        main_width, col_spk + 1, col_nojo + 1,
+        (col_jo_full + 1) if col_jo_full is not None else 0,
+        (col_nama + 1) if col_nama is not None else 0,
+        (col_planning_order + 1) if col_planning_order is not None else 0,
+        (col_planning_meter + 1) if col_planning_meter is not None else 0,
+        (col_potongan + 1) if col_potongan is not None else 0,
+    )
 
     existing = set()
     last_used_row = 1  # nomor baris di sheet (1-based), mulai dari baris header
@@ -1334,14 +1431,29 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
             existing.add((spk, nojo))
 
     new_rows = []
+    jo1_lookup = None  # lazy: baru dibangun kalau memang ada pasangan baru
     for pair in unique_pairs:
         key = (pair["spk"], pair["noJo"])
         if key in existing:
             continue
         existing.add(key)  # jaga2 kalau ada duplikat di unique_pairs sendiri
+        if jo1_lookup is None:
+            jo1_lookup = _fstl_lookup_jo1_by_suffix_map()
         blank_row = [""] * main_width
         blank_row[col_spk] = pair["spk"]
         blank_row[col_nojo] = pair["noJo"]
+        info = jo1_lookup.get(_fstl_suffix_key(pair["noJo"]))
+        if info:
+            if col_jo_full is not None:
+                blank_row[col_jo_full] = info["jo"]
+            if col_nama is not None:
+                blank_row[col_nama] = info["nama"]
+            if col_planning_order is not None:
+                blank_row[col_planning_order] = info["order"]
+            if col_planning_meter is not None:
+                blank_row[col_planning_meter] = info["meter"]
+            if col_potongan is not None:
+                blank_row[col_potongan] = info["potongan"]
         new_rows.append(blank_row)
 
     if new_rows:
