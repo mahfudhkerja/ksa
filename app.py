@@ -1132,15 +1132,11 @@ WASTE_REWIND_VISIBLE_HEADERS = [
     "SPK",
     "NO_JO",
     "Nama_Produk",
-    "Planning_Order",
     "Planning_Meter",
     "Bahan_Awal_Printing_(Meter)",
-    "Meter_Hilang_Rewind",
     "Hasil_Slitting_(Rol)",
-    "Hasil_Slitting_(Meter)",
-    "Waste_Slitting_Meter",
+    "Meter_Hilang_Rewind",
     "Persentase_Waste_(%)",
-    "Waste_Slitting_After_Rewind_Meter",
     "Waste_Slitting_After_Rewind_Presentase",
 ]
 
