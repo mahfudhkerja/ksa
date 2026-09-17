@@ -472,12 +472,12 @@
   .wrw-table thead th{
     background:#244f80; color:#fff; padding:8px 6px;
     font-size:10px; font-weight:800; letter-spacing:.01em;
-    text-align:left; vertical-align:middle;
-    white-space:normal; overflow-wrap:anywhere; word-break:break-word;
-    line-height:1.2; height:36px; border:0;
+    text-align:center; vertical-align:middle;
+    white-space:normal; overflow-wrap:normal; word-break:normal; hyphens:none;
+    line-height:1.25; height:36px; border:0;
   }
   .wrw-table thead th:first-child{border-radius:10px 0 0 0;}
-  .wrw-table thead th:last-child{border-radius:0 10px 0 0; text-align:center;}
+  .wrw-table thead th:last-child{border-radius:0 10px 0 0;}
   .wrw-table tbody td{
     padding:8px 6px; border-bottom:1px solid #edf1f5;
     vertical-align:top; white-space:normal;
@@ -487,10 +487,16 @@
   .wrw-table tbody tr:hover td{background:#f8fbff;}
   .wrw-table tbody td:last-child{text-align:center; vertical-align:middle; white-space:nowrap;}
   .wrw-table th:nth-child(1), .wrw-table td:nth-child(1){min-width:95px;}
-  .wrw-table th:nth-child(2), .wrw-table td:nth-child(2){min-width:60px;}
-  .wrw-table th:nth-child(3), .wrw-table td:nth-child(3){min-width:55px;}
+  .wrw-table th:nth-child(2), .wrw-table td:nth-child(2){min-width:58px;}
+  .wrw-table th:nth-child(3), .wrw-table td:nth-child(3){min-width:58px;}
   .wrw-table th:nth-child(4), .wrw-table td:nth-child(4){min-width:135px;}
-  .wrw-table th:last-child, .wrw-table td:last-child{min-width:80px;}
+  .wrw-table th:nth-child(5), .wrw-table td:nth-child(5){min-width:78px;}
+  .wrw-table th:nth-child(6), .wrw-table td:nth-child(6){min-width:78px;}
+  .wrw-table th:nth-child(7), .wrw-table td:nth-child(7){min-width:88px;}
+  .wrw-table th:nth-child(8), .wrw-table td:nth-child(8){min-width:82px;}
+  .wrw-table th:nth-child(9), .wrw-table td:nth-child(9){min-width:82px;}
+  .wrw-table th:nth-child(10), .wrw-table td:nth-child(10){min-width:92px;}
+  .wrw-table th:last-child, .wrw-table td:last-child{min-width:82px;}
   .wrw-detail-btn{
     border:1.3px solid #3572b6; background:#fff; color:#1e4573;
     border-radius:8px; padding:7px 11px; font-family:inherit;
@@ -2129,7 +2135,7 @@
     if(!body) return;
     const btn = document.getElementById("wrwRefreshBtn");
     if(force && btn) btn.classList.add("spinning");
-    body.innerHTML = skeletonRows(16);
+    body.innerHTML = skeletonRows(wasteRewindVisibleHeaders.length + 1);
     try{
       const res = await fetch(`${API_BASE}/api/waste-rewind${force?"?refresh=1":""}`);
       const data = await res.json();
