@@ -467,10 +467,10 @@
   }
   .wrw-table{
     width:100%; min-width:0; border-collapse:separate; border-spacing:0;
-    font-size:11px; color:var(--ink); table-layout:auto;
+    font-size:11px; color:var(--ink); table-layout:fixed;
   }
   .wrw-table thead th{
-    background:#244f80; color:#fff; padding:8px 6px;
+    background:#244f80; color:#fff; padding:8px 4px;
     font-size:10px; font-weight:800; letter-spacing:.01em;
     text-align:center; vertical-align:middle;
     white-space:normal; overflow-wrap:normal; word-break:normal; hyphens:none;
@@ -479,29 +479,33 @@
   .wrw-table thead th:first-child{border-radius:10px 0 0 0;}
   .wrw-table thead th:last-child{border-radius:0 10px 0 0;}
   .wrw-table tbody td{
-    padding:8px 6px; border-bottom:1px solid #edf1f5;
+    padding:8px 4px; border-bottom:1px solid #edf1f5;
     vertical-align:top; white-space:normal;
     overflow-wrap:anywhere; word-break:break-word; line-height:1.3;
     background:#fff; font-size:11px;
   }
   .wrw-table tbody tr:hover td{background:#f8fbff;}
-  .wrw-table tbody td:last-child{text-align:center; vertical-align:middle; white-space:nowrap;}
-  .wrw-table th:nth-child(1), .wrw-table td:nth-child(1){min-width:95px;}
-  .wrw-table th:nth-child(2), .wrw-table td:nth-child(2){min-width:58px;}
-  .wrw-table th:nth-child(3), .wrw-table td:nth-child(3){min-width:58px;}
-  .wrw-table th:nth-child(4), .wrw-table td:nth-child(4){min-width:135px;}
-  .wrw-table th:nth-child(5), .wrw-table td:nth-child(5){min-width:78px;}
-  .wrw-table th:nth-child(6), .wrw-table td:nth-child(6){min-width:78px;}
-  .wrw-table th:nth-child(7), .wrw-table td:nth-child(7){min-width:88px;}
-  .wrw-table th:nth-child(8), .wrw-table td:nth-child(8){min-width:82px;}
-  .wrw-table th:nth-child(9), .wrw-table td:nth-child(9){min-width:82px;}
-  .wrw-table th:nth-child(10), .wrw-table td:nth-child(10){min-width:92px;}
-  .wrw-table th:last-child, .wrw-table td:last-child{min-width:82px;}
+  .wrw-table tbody td:last-child{text-align:center; vertical-align:middle; overflow-wrap:normal; word-break:normal;}
+  /* table-layout:fixed -- lebar kolom dalam PERSEN, totalnya 100%, supaya
+     tabel selalu pas dengan lebar container (tidak pernah perlu geser ke
+     kanan). Isi yang tidak muat akan wrap ke bawah (baris jadi lebih
+     tinggi), bukan bikin tabel melebar. */
+  .wrw-table th:nth-child(1),  .wrw-table td:nth-child(1) {width:11%;}
+  .wrw-table th:nth-child(2),  .wrw-table td:nth-child(2) {width:6%;}
+  .wrw-table th:nth-child(3),  .wrw-table td:nth-child(3) {width:6%;}
+  .wrw-table th:nth-child(4),  .wrw-table td:nth-child(4) {width:19%;}
+  .wrw-table th:nth-child(5),  .wrw-table td:nth-child(5) {width:8%;}
+  .wrw-table th:nth-child(6),  .wrw-table td:nth-child(6) {width:8%;}
+  .wrw-table th:nth-child(7),  .wrw-table td:nth-child(7) {width:9%;}
+  .wrw-table th:nth-child(8),  .wrw-table td:nth-child(8) {width:8%;}
+  .wrw-table th:nth-child(9),  .wrw-table td:nth-child(9) {width:8%;}
+  .wrw-table th:nth-child(10), .wrw-table td:nth-child(10){width:9%;}
+  .wrw-table th:last-child,    .wrw-table td:last-child   {width:8%;}
   .wrw-detail-btn{
     border:1.3px solid #3572b6; background:#fff; color:#1e4573;
-    border-radius:8px; padding:7px 11px; font-family:inherit;
-    font-size:11px; font-weight:800; cursor:pointer; white-space:nowrap;
-    transition:all .15s ease;
+    border-radius:8px; padding:6px 4px; font-family:inherit;
+    font-size:10.5px; font-weight:800; cursor:pointer; white-space:nowrap;
+    transition:all .15s ease; width:100%; max-width:100%; box-sizing:border-box;
   }
   .wrw-detail-btn:hover{background:#3572b6; color:#fff; transform:translateY(-1px); box-shadow:0 5px 12px -7px rgba(53,114,182,.8);}
   .wrw-detail-btn:active{transform:translateY(0);}
@@ -2053,7 +2057,7 @@
       const data = await res.json();
       if(!data.success){ toast(data.message || "Refresh gagal dimulai", "error"); return; }
       btn.disabled = true; btn.classList.add("spinning");
-      if(status){ status.style.display="block"; status.innerText = "⏳ Menarik data mentah terbaru (import_rewind_kecil.py)..."; }
+      if(status){ status.style.display="none"; status.innerText=""; }
       if(log){ log.style.display="none"; log.textContent=""; }
       if(wrwRefreshPollTimer) clearInterval(wrwRefreshPollTimer);
       wrwRefreshPollTimer = setInterval(pollWasteRewindRefresh, 1500);
@@ -2072,14 +2076,16 @@
       const ok = st.returncode === 0;
       if(!ok){
         if(log){ log.style.display="block"; log.textContent = st.log || st.error || "Gagal, tidak ada log."; }
-        if(status) status.innerText = `⚠️ Gagal menarik data mentah${st.error ? ": "+st.error : ""} — tampilan tetap dimuat ulang dari data terakhir.`;
+        if(status){ status.style.display="block"; status.innerText = `⚠️ Gagal menarik data mentah${st.error ? ": "+st.error : ""} — tampilan tetap dimuat ulang dari data terakhir.`; }
         toast("Refresh data mentah Rewind Kecil gagal — cek log", "error");
+        await loadWasteRewind(true); // baca ulang REWIND_PY (matikan .spinning-nya loadWasteRewind sendiri)
       } else {
+        // sukses -- 1 notif toast aja (bukan teks status nempel di halaman),
+        // gaya sama kayak notif "sheet berhasil disimpan" dll.
         const spkJoNote = (st.spk_jo_added ?? 0) > 0 ? `, +${st.spk_jo_added} baris SPK/NO_JO baru` : "";
-        if(status) status.innerText = `✅ Data mentah diperbarui (${st.rows_written ?? 0} baris${spkJoNote}) — memuat tampilan...`;
+        await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
+        toast(`Data mentah Rewind Kecil diperbarui (${st.rows_written ?? 0} baris${spkJoNote})`, "success");
       }
-      await loadWasteRewind(true); // baca ulang REWIND_PY (matikan .spinning-nya loadWasteRewind sendiri)
-      if(ok && status) setTimeout(()=>{ status.style.display="none"; }, 4000);
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
   }
@@ -2130,7 +2136,7 @@
   function aliasWrwHeader(h){ return WRW_HEADER_ALIAS[h] || String(h).replace(/_/g," "); }
   let wasteRewindHeaders = [], wasteRewindRows = [];
   function escHtml(v){ return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
-  async function loadWasteRewind(force=false){
+  async function loadWasteRewind(force=false, opts={}){
     const body = document.getElementById("wrwBody");
     if(!body) return;
     const btn = document.getElementById("wrwRefreshBtn");
@@ -2144,7 +2150,7 @@
       wasteRewindRows = data.rows || [];
       renderWasteRewindHead();
       renderWasteRewind();
-      if(force) toast(`Waste Rewind diperbarui — ${wasteRewindRows.length} baris`, "success");
+      if(force && !opts.silentToast) toast(`Waste Rewind diperbarui — ${wasteRewindRows.length} baris`, "success");
     }catch(e){
       document.getElementById("wrwHead").innerHTML="";
       body.innerHTML=emptyState(1,"Gagal memuat Waste Rewind: "+e.message,"⚠️");
