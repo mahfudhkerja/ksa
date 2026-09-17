@@ -2083,8 +2083,9 @@
         // sukses -- 1 notif toast aja (bukan teks status nempel di halaman),
         // gaya sama kayak notif "sheet berhasil disimpan" dll.
         const spkJoNote = (st.spk_jo_added ?? 0) > 0 ? `, +${st.spk_jo_added} baris SPK/NO_JO baru` : "";
+        const bahanNote = (st.bahan_awal_updated ?? 0) > 0 ? `, ${st.bahan_awal_updated} sel Bahan_Awal_Printing diperbarui` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Data mentah Rewind Kecil diperbarui (${st.rows_written ?? 0} baris${spkJoNote})`, "success");
+        toast(`Data mentah Rewind Kecil diperbarui (${st.rows_written ?? 0} baris${spkJoNote}${bahanNote})`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }

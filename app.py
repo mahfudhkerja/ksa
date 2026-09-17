@@ -778,6 +778,7 @@ REWIND_KECIL_RUN_STATE = {
     "returncode": None,
     "rows_written": None,
     "spk_jo_added": None,
+    "bahan_awal_updated": None,
     "error": None,
 }
 
@@ -812,6 +813,7 @@ def _run_rewind_kecil_worker():
             err = None
 
         spk_jo_added = None
+        bahan_awal_updated = None
         if proc.returncode == 0:
             try:
                 spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -819,11 +821,18 @@ def _run_rewind_kecil_worker():
                 with REWIND_KECIL_RUN_STATE_LOCK:
                     REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL SINKRON SPK/NO_JO ke {WASTE_REWIND_SHEET_NAME}] {sync_err}\n"
                 err = err or str(sync_err)
+            try:
+                bahan_awal_updated = _sync_bahan_awal_printing_into_rewind_py()
+            except Exception as bahan_err:
+                with REWIND_KECIL_RUN_STATE_LOCK:
+                    REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Bahan_Awal_Printing_(Meter) di {WASTE_REWIND_SHEET_NAME}] {bahan_err}\n"
+                err = err or str(bahan_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
             REWIND_KECIL_RUN_STATE["rows_written"] = rows_written
             REWIND_KECIL_RUN_STATE["spk_jo_added"] = spk_jo_added
+            REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = bahan_awal_updated
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -1362,6 +1371,136 @@ def _fstl_lookup_jo1_by_suffix_map():
             "potongan": _cell(row, col_potongan),
         }
     return lookup
+
+
+def _lp1_bahan_awal_printing_lookup():
+    """Baca sheet LP_1 (spreadsheet FSTL), balikin dict {(spk_key, jo_key):
+    total_meter_awal} buat auto-isi kolom Bahan_Awal_Printing_(Meter) di
+    REWIND_PY -- lihat _sync_bahan_awal_printing_into_rewind_py().
+
+    Header "SPK/JO" di LP_1 isinya kode gabungan, mis.
+    "2674/26/VIII/8/3095" (segmen PALING DEPAN = SPK "2674", segmen PALING
+    BELAKANG = JO "3095") atau bentuk pendek "3685/3123" (SPK "3685" /
+    JO "3123") -- segmen tengah (kode bulan/urutan romawi dst, kalau ada)
+    diabaikan sepenuhnya, cuma segmen pertama & terakhir yang dipakai.
+
+    Untuk tiap baris LP_1 yang kolom "Urutan_Proses"-nya bernilai 1, kolom
+    "Meter_Awal" dijumlahkan ke pasangan (SPK, JO) itu -- kalau ada
+    beberapa baris LP_1 dengan pasangan SPK/JO sama & Urutan_Proses 1,
+    nilai Meter_Awal-nya DIJUMLAHKAN (bukan dipakai satu baris saja),
+    sesuai definisi user."""
+    try:
+        sh = _fstl_spreadsheet()
+        rows = _fstl_get_sheet_values(sh, FSTL_LP1_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    if not rows:
+        return {}
+
+    header = rows[0]
+    col_spkjo = _fstl_find_col(header, "SPK/JO")
+    col_urutan = _fstl_find_col(header, "Urutan_Proses")
+    col_meter_awal = _fstl_find_col(header, "Meter_Awal")
+    if col_spkjo is None or col_urutan is None or col_meter_awal is None:
+        return {}
+
+    def _cell(row, idx):
+        return str(row[idx]).strip() if idx is not None and idx < len(row) else ""
+
+    lookup = {}
+    for row in rows[1:]:
+        spkjo_cell = _cell(row, col_spkjo)
+        if not spkjo_cell:
+            continue
+
+        urutan_val = import_engine._parse_flexible_number(_cell(row, col_urutan))
+        if urutan_val != 1:
+            continue  # cuma proses pertama (Urutan_Proses = 1) yang dipakai
+
+        segments = [s.strip() for s in spkjo_cell.split("/") if s.strip()]
+        if len(segments) < 2:
+            continue  # bukan format "SPK/.../JO" atau "SPK/JO" yang valid
+
+        spk_key = import_engine._numeric_key_prefix(segments[0])
+        jo_key = import_engine._numeric_key_prefix(segments[-1])
+        if spk_key == "" or jo_key == "":
+            continue
+
+        meter_val = import_engine._parse_flexible_number(_cell(row, col_meter_awal)) or 0.0
+        key = (spk_key, jo_key)
+        lookup[key] = lookup.get(key, 0.0) + meter_val
+
+    return lookup
+
+
+def _sync_bahan_awal_printing_into_rewind_py():
+    """Isi ulang kolom Bahan_Awal_Printing_(Meter) di REWIND_PY, untuk tiap
+    baris yang SPK & NO_JO-nya (keduanya harus angka murni, sama seperti
+    aturan sinkron SPK/NO_JO) cocok dengan pasangan SPK/JO hasil
+    _lp1_bahan_awal_printing_lookup() (dari LP_1, difilter Urutan_Proses = 1,
+    Meter_Awal dijumlahkan kalau cocok lebih dari satu baris).
+
+    Baris yang TIDAK ketemu pasangannya di LP_1 dibiarkan apa adanya (TIDAK
+    dikosongkan) -- dianggap belum ada laporan produksi Printing-nya, bukan
+    berarti harus ditulis 0. Baris yang nilainya sudah sama persis juga TIDAK
+    ditulis ulang (hemat kuota API). Balikin jumlah sel yang benar-benar
+    diupdate.
+
+    Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
+    Waste Rewind), SETELAH _sync_rewind_kecil_spk_jo_into_rewind_py() --
+    supaya baris SPK/NO_JO yang baru saja di-append juga langsung kebagian
+    nilai Bahan_Awal_Printing-nya di refresh yang sama."""
+    lookup = _lp1_bahan_awal_printing_lookup()
+    if not lookup:
+        return 0
+
+    sh = _waste_rewind_spreadsheet()  # spreadsheet sama dgn REWIND_PY, handle dipakai bareng
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    col_bahan = import_engine._find_col_index(header, "Bahan_Awal_Printing_(Meter)")
+    if col_spk is None or col_nojo is None or col_bahan is None:
+        raise RuntimeError(
+            f"Kolom SPK/NO_JO/Bahan_Awal_Printing_(Meter) tidak ketemu di header {WASTE_REWIND_SHEET_NAME}"
+        )
+
+    updates = []
+    for i, row in enumerate(values[1:], start=2):  # baris 2 = data pertama di sheet
+        spk = row[col_spk].strip() if col_spk < len(row) else ""
+        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
+        if not (spk.isdigit() and nojo.isdigit()):
+            continue  # SPK/NO_JO harus angka murni, sama seperti aturan sinkron SPK/NO_JO
+
+        total = lookup.get((
+            import_engine._numeric_key_prefix(spk),
+            import_engine._numeric_key_prefix(nojo),
+        ))
+        if total is None:
+            continue  # tidak ketemu pasangannya di LP_1 -- biarkan sel apa adanya
+
+        new_value = import_engine._format_number(total)
+        current = row[col_bahan].strip() if col_bahan < len(row) else ""
+        if current == new_value:
+            continue  # sudah sama, tidak perlu ditulis ulang
+
+        updates.append({
+            "range": gspread.utils.rowcol_to_a1(i, col_bahan + 1),
+            "values": [[new_value]],
+        })
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
+        # baca nilai Bahan_Awal_Printing_(Meter) yang baru
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+
+    return len(updates)
 
 
 def _sync_rewind_kecil_spk_jo_into_rewind_py():
