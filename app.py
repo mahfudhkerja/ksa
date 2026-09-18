@@ -1818,6 +1818,7 @@ def _sync_printing_kolom_into_rewind_py():
             _waste_rewind_cache["ts"] = 0.0
 
     return len(updates)
+SL1_COL_UP_HEADER = "UP"
 SL1_COL_TOTAL_METER_HEADER = "TOTAL_METER"
 
 
