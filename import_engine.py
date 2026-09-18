@@ -2423,6 +2423,31 @@ def _group_sl_matches(sl_matches):
     return groups, modus_key
 
 
+def _modus_value(values):
+    """Nilai MODUS (paling sering muncul) dari sekumpulan nilai teks --
+    aturan sama seperti modus HASIL_SLITTING di _group_sl_matches(): syarat
+    frekuensi > 1 DAN tidak ada nilai lain dengan frekuensi sama (seri/tie).
+    Kalau tidak ada modus yang jelas (semua nilai cuma muncul 1x, atau ada
+    beberapa nilai dengan frekuensi sama-sama tertinggi), balikin "" (kosong
+    -- biar kolom di pemanggil TIDAK ditulis, bukan ditulis salah pilih).
+    Nilai kosong/'-' di input diabaikan dulu sebelum dihitung frekuensinya."""
+    cleaned = [str(v).strip() for v in values if str(v).strip() not in ("", "-")]
+    if not cleaned:
+        return ""
+
+    counts = OrderedDict()
+    for v in cleaned:
+        counts[v] = counts.get(v, 0) + 1
+
+    max_count = max(counts.values())
+    if max_count <= 1:
+        return ""
+    top = [v for v, c in counts.items() if c == max_count]
+    if len(top) != 1:
+        return ""  # seri/tie -- tidak ada modus tunggal
+    return top[0]
+
+
 def _compute_hasil_slitting(sl_matches):
     """sl_matches: list berisi (k_value: float, panjang_text: str) dari
     semua baris SL_1 yang JO-nya cocok. Return string HASIL SLITTING

@@ -955,10 +955,13 @@ def _run_rewind_kecil_worker():
                     REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Bahan_Awal_Printing_(Meter) di {WASTE_REWIND_SHEET_NAME}] {bahan_err}\n"
                 err = err or str(bahan_err)
             try:
-                hasil_slitting_updated = _sync_hasil_slitting_into_rewind_py()
+                hasil_slitting_updated = _sync_slitting_kolom_into_rewind_py()
             except Exception as slit_err:
                 with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Hasil_Slitting_(Rol) di {WASTE_REWIND_SHEET_NAME}] {slit_err}\n"
+                    REWIND_KECIL_RUN_STATE["log"] += (
+                        f"\n[GAGAL ISI Hasil_Slitting_(Rol)/UP_Slitting/Hasil_Slitting_(Meter) "
+                        f"di {WASTE_REWIND_SHEET_NAME}] {slit_err}\n"
+                    )
                 err = err or str(slit_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -1658,10 +1661,18 @@ def _sync_bahan_awal_printing_into_rewind_py():
     return len(updates)
 
 
-def _sl1_hasil_slitting_lookup():
-    """Baca sheet SL_1 (spreadsheet FSTL), balikin dict {(spk_key, jo_key):
-    sl_matches} buat auto-isi kolom Hasil_Slitting_(Rol) di REWIND_PY --
-    lihat _sync_hasil_slitting_into_rewind_py().
+SL1_COL_UP_HEADER = "UP"
+SL1_COL_TOTAL_METER_HEADER = "TOTAL_METER"
+
+
+def _sl1_slitting_lookup():
+    """Baca sheet SL_1 (spreadsheet FSTL) SEKALI, balikin dict
+    {(spk_key, jo_key): {"sl_matches": [...], "up_values": [...],
+    "total_meter": float}} -- dipakai bareng buat isi TIGA kolom di
+    REWIND_PY sekaligus (lihat _sync_slitting_kolom_into_rewind_py()):
+      - Hasil_Slitting_(Rol)   <- import_engine._compute_hasil_slitting(sl_matches)
+      - UP_Slitting            <- import_engine._modus_value(up_values)
+      - Hasil_Slitting_(Meter) <- jumlah TOTAL_METER
 
     BEDA dari kolom HASIL SLITTING di halaman Data Validasi
     (import_engine.sync_validasi_header(), yang mencocokkan HANYA lewat
@@ -1671,11 +1682,11 @@ def _sl1_hasil_slitting_lookup():
     _lp1_bahan_awal_printing_lookup() di atas (segmen tengah, kalau ada,
     diabaikan).
 
-    sl_matches per pasangan dikumpulkan sebagai list (HASIL_ROL,
-    METER/ROL) -- format input yang sama persis dipakai
-    import_engine._compute_hasil_slitting() (aturan modus/non-modus),
-    supaya rumus HASIL SLITTING-nya tetap konsisten dengan yang di Data
-    Validasi, cuma beda cara nyocokin JO-nya saja."""
+    UP & TOTAL_METER dikumpulkan dari SEMUA baris SL_1 yang pasangan
+    SPK/JO-nya cocok, TERLEPAS baris itu punya HASIL_ROL/METER_ROL valid
+    atau tidak (beda syarat dari sl_matches, yang cuma ikut baris dengan
+    HASIL_ROL & METER_ROL dua-duanya valid) -- soalnya UP & TOTAL_METER
+    adalah kolom independen, tidak terikat ke perhitungan modus rol."""
     try:
         sh = _fstl_spreadsheet()
         rows = _fstl_get_sheet_values(sh, import_engine.SL_SOURCE_SHEET_NAME)
@@ -1688,15 +1699,22 @@ def _sl1_hasil_slitting_lookup():
     col_jo = import_engine._find_col_index(header, "SPK/JO")
     col_hasil_rol = import_engine._find_col_index(header, "HASIL_ROL")
     col_meter_rol = import_engine._find_col_index(header, "METER/ROL")
+    col_up = import_engine._find_col_index(header, SL1_COL_UP_HEADER)
+    col_total_meter = import_engine._find_col_index(header, SL1_COL_TOTAL_METER_HEADER)
     if col_jo is None:
         col_jo = import_engine.SL_COL_JO_FALLBACK
     if col_hasil_rol is None:
         col_hasil_rol = import_engine.SL_COL_HASIL_ROL_FALLBACK
     if col_meter_rol is None:
         col_meter_rol = import_engine.SL_COL_METER_ROL_FALLBACK
-    max_col = max(col_jo, col_hasil_rol, col_meter_rol)
+    # col_up / col_total_meter TIDAK punya fallback (posisinya tidak
+    # didokumentasikan di tempat lain) -- kalau header-nya tidak ketemu,
+    # ya sudah, bagian itu saja yang tidak terisi (lihat pemakaiannya di
+    # bawah, None-checked satu-satu, bukan bikin seluruh lookup gagal).
+    needed_cols = [c for c in (col_jo, col_hasil_rol, col_meter_rol, col_up, col_total_meter) if c is not None]
+    max_col = max(needed_cols)
 
-    lookup = {}  # (spk_key, jo_key) -> list [(k_val, panjang_text), ...]
+    lookup = {}  # (spk_key, jo_key) -> {"sl_matches": [...], "up_values": [...], "total_meter": float}
     for row in rows[1:]:  # lewati header
         if len(row) <= max_col:
             continue
@@ -1713,33 +1731,50 @@ def _sl1_hasil_slitting_lookup():
         if spk_key == "" or jo_key == "":
             continue
 
+        key = (spk_key, jo_key)
+        entry = lookup.setdefault(key, {"sl_matches": [], "up_values": [], "total_meter": 0.0})
+
         k_val = import_engine._parse_flexible_number(row[col_hasil_rol])
         o_val = import_engine._parse_flexible_number(row[col_meter_rol])
-        if k_val is None or o_val is None:
-            continue  # sama seperti sync_validasi_header(): baris tanpa HASIL_ROL/METER_ROL valid dilewati
+        if k_val is not None and o_val is not None:
+            entry["sl_matches"].append((k_val, import_engine._format_number(o_val)))
 
-        key = (spk_key, jo_key)
-        lookup.setdefault(key, []).append((k_val, import_engine._format_number(o_val)))
+        if col_up is not None and col_up < len(row):
+            entry["up_values"].append(row[col_up])
+
+        if col_total_meter is not None and col_total_meter < len(row):
+            tm_val = import_engine._parse_flexible_number(row[col_total_meter])
+            if tm_val is not None:
+                entry["total_meter"] += tm_val
 
     return lookup
 
 
-def _sync_hasil_slitting_into_rewind_py():
-    """Isi ulang kolom Hasil_Slitting_(Rol) di REWIND_PY, untuk tiap
-    baris yang SPK & NO_JO-nya (keduanya harus angka murni, sama seperti
-    aturan sinkron SPK/NO_JO & Bahan_Awal_Printing_(Meter)) cocok dengan
-    pasangan SPK/JO hasil _sl1_hasil_slitting_lookup() (dari SL_1,
-    dihitung pakai import_engine._compute_hasil_slitting() -- format
-    string modus/non-modus, mis. '42 + 3@530').
+def _sync_slitting_kolom_into_rewind_py():
+    """Isi ulang TIGA kolom di REWIND_PY sekaligus (satu kali baca SL_1,
+    satu kali batch_update), untuk tiap baris yang SPK & NO_JO-nya
+    (keduanya harus angka murni, sama seperti aturan sinkron SPK/NO_JO &
+    Bahan_Awal_Printing_(Meter)) cocok dengan pasangan SPK/JO hasil
+    _sl1_slitting_lookup():
+      - Hasil_Slitting_(Rol)   = import_engine._compute_hasil_slitting(sl_matches)
+                                 (format modus/non-modus, mis. '42 + 3@530')
+      - UP_Slitting            = import_engine._modus_value(up_values)
+                                 (nilai UP paling sering muncul; kosong
+                                 kalau tidak ada modus tunggal)
+      - Hasil_Slitting_(Meter) = jumlah TOTAL_METER dari semua baris SL_1
+                                 yang pasangan SPK/JO-nya cocok
 
     Baris yang TIDAK ketemu pasangannya di SL_1 dibiarkan apa adanya
-    (TIDAK dikosongkan) -- dianggap belum ada laporan produksi Slitting-
-    nya. Baris yang nilainya sudah sama persis juga TIDAK ditulis ulang
-    (hemat kuota API). Balikin jumlah sel yang benar-benar diupdate.
+    (TIDAK dikosongkan). Tiap kolom dicek TERPISAH: kalau nilainya sudah
+    sama persis, kolom itu saja yang tidak ditulis ulang (hemat kuota
+    API) -- satu baris bisa saja cuma 1-2 dari 3 kolomnya yang berubah.
+    Kolom yang header-nya tidak ketemu di sheet dilewati begitu saja
+    (tidak menggagalkan kolom lain). Balikin jumlah SEL yang benar-benar
+    diupdate (gabungan ketiga kolom).
 
     Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
     Waste Rewind), sama seperti _sync_bahan_awal_printing_into_rewind_py()."""
-    lookup = _sl1_hasil_slitting_lookup()
+    lookup = _sl1_slitting_lookup()
     if not lookup:
         return 0
 
@@ -1752,11 +1787,12 @@ def _sync_hasil_slitting_into_rewind_py():
     header = [str(h).strip() for h in values[0]]
     col_spk = import_engine._find_col_index(header, "SPK")
     col_nojo = import_engine._find_col_index(header, "NO_JO")
-    col_hasil = import_engine._find_col_index(header, "Hasil_Slitting_(Rol)")
-    if col_spk is None or col_nojo is None or col_hasil is None:
-        raise RuntimeError(
-            f"Kolom SPK/NO_JO/Hasil_Slitting_(Rol) tidak ketemu di header {WASTE_REWIND_SHEET_NAME}"
-        )
+    if col_spk is None or col_nojo is None:
+        raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    col_hasil_rol = import_engine._find_col_index(header, "Hasil_Slitting_(Rol)")
+    col_up = import_engine._find_col_index(header, "UP_Slitting")
+    col_hasil_meter = import_engine._find_col_index(header, "Hasil_Slitting_(Meter)")
 
     updates = []
     for i, row in enumerate(values[1:], start=2):  # baris 2 = data pertama di sheet
@@ -1765,27 +1801,44 @@ def _sync_hasil_slitting_into_rewind_py():
         if not (spk.isdigit() and nojo.isdigit()):
             continue  # SPK/NO_JO harus angka murni, sama seperti aturan sinkron SPK/NO_JO
 
-        sl_matches = lookup.get((
+        entry = lookup.get((
             import_engine._numeric_key_prefix(spk),
             import_engine._numeric_key_prefix(nojo),
         ))
-        if sl_matches is None:
+        if entry is None:
             continue  # tidak ketemu pasangannya di SL_1 -- biarkan sel apa adanya
 
-        new_value = import_engine._compute_hasil_slitting(sl_matches)
-        current = row[col_hasil].strip() if col_hasil < len(row) else ""
-        if current == new_value:
-            continue  # sudah sama, tidak perlu ditulis ulang
+        if col_hasil_rol is not None:
+            new_value = import_engine._compute_hasil_slitting(entry["sl_matches"])
+            current = row[col_hasil_rol].strip() if col_hasil_rol < len(row) else ""
+            if current != new_value:
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(i, col_hasil_rol + 1),
+                    "values": [[new_value]],
+                })
 
-        updates.append({
-            "range": gspread.utils.rowcol_to_a1(i, col_hasil + 1),
-            "values": [[new_value]],
-        })
+        if col_up is not None:
+            new_value = import_engine._modus_value(entry["up_values"])
+            current = row[col_up].strip() if col_up < len(row) else ""
+            if current != new_value:
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(i, col_up + 1),
+                    "values": [[new_value]],
+                })
+
+        if col_hasil_meter is not None:
+            new_value = import_engine._format_number(entry["total_meter"])
+            current = row[col_hasil_meter].strip() if col_hasil_meter < len(row) else ""
+            if current != new_value:
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(i, col_hasil_meter + 1),
+                    "values": [[new_value]],
+                })
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
         # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
-        # baca nilai Hasil_Slitting_(Rol) yang baru
+        # baca nilai Hasil_Slitting_(Rol)/UP_Slitting/Hasil_Slitting_(Meter) yang baru
         with _waste_rewind_cache_lock:
             _waste_rewind_cache["ts"] = 0.0
 
