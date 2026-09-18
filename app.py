@@ -940,6 +940,7 @@ def _run_rewind_kecil_worker():
 
         spk_jo_added = None
         bahan_awal_updated = None
+        hasil_slitting_updated = None
         if proc.returncode == 0:
             try:
                 spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -953,12 +954,19 @@ def _run_rewind_kecil_worker():
                 with REWIND_KECIL_RUN_STATE_LOCK:
                     REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Bahan_Awal_Printing_(Meter) di {WASTE_REWIND_SHEET_NAME}] {bahan_err}\n"
                 err = err or str(bahan_err)
+            try:
+                hasil_slitting_updated = _sync_hasil_slitting_into_rewind_py()
+            except Exception as slit_err:
+                with REWIND_KECIL_RUN_STATE_LOCK:
+                    REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Hasil_Slitting_(Rol) di {WASTE_REWIND_SHEET_NAME}] {slit_err}\n"
+                err = err or str(slit_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
             REWIND_KECIL_RUN_STATE["rows_written"] = rows_written
             REWIND_KECIL_RUN_STATE["spk_jo_added"] = spk_jo_added
             REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = bahan_awal_updated
+            REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = hasil_slitting_updated
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -988,6 +996,8 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["returncode"] = None
         REWIND_KECIL_RUN_STATE["rows_written"] = None
         REWIND_KECIL_RUN_STATE["spk_jo_added"] = None
+        REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = None
+        REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
     thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
@@ -1642,6 +1652,140 @@ def _sync_bahan_awal_printing_into_rewind_py():
         ws.batch_update(updates, value_input_option="USER_ENTERED")
         # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
         # baca nilai Bahan_Awal_Printing_(Meter) yang baru
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+
+    return len(updates)
+
+
+def _sl1_hasil_slitting_lookup():
+    """Baca sheet SL_1 (spreadsheet FSTL), balikin dict {(spk_key, jo_key):
+    sl_matches} buat auto-isi kolom Hasil_Slitting_(Rol) di REWIND_PY --
+    lihat _sync_hasil_slitting_into_rewind_py().
+
+    BEDA dari kolom HASIL SLITTING di halaman Data Validasi
+    (import_engine.sync_validasi_header(), yang mencocokkan HANYA lewat
+    suffix/angka belakang kode JO): di sini dicocokkan lewat PASANGAN
+    LENGKAP (SPK, JO) -- segmen PALING DEPAN & PALING BELAKANG dari
+    kolom "SPK/JO" SL_1, persis logic yang sama dengan
+    _lp1_bahan_awal_printing_lookup() di atas (segmen tengah, kalau ada,
+    diabaikan).
+
+    sl_matches per pasangan dikumpulkan sebagai list (HASIL_ROL,
+    METER/ROL) -- format input yang sama persis dipakai
+    import_engine._compute_hasil_slitting() (aturan modus/non-modus),
+    supaya rumus HASIL SLITTING-nya tetap konsisten dengan yang di Data
+    Validasi, cuma beda cara nyocokin JO-nya saja."""
+    try:
+        sh = _fstl_spreadsheet()
+        rows = _fstl_get_sheet_values(sh, import_engine.SL_SOURCE_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    if not rows:
+        return {}
+
+    header = rows[0]
+    col_jo = import_engine._find_col_index(header, "SPK/JO")
+    col_hasil_rol = import_engine._find_col_index(header, "HASIL_ROL")
+    col_meter_rol = import_engine._find_col_index(header, "METER/ROL")
+    if col_jo is None:
+        col_jo = import_engine.SL_COL_JO_FALLBACK
+    if col_hasil_rol is None:
+        col_hasil_rol = import_engine.SL_COL_HASIL_ROL_FALLBACK
+    if col_meter_rol is None:
+        col_meter_rol = import_engine.SL_COL_METER_ROL_FALLBACK
+    max_col = max(col_jo, col_hasil_rol, col_meter_rol)
+
+    lookup = {}  # (spk_key, jo_key) -> list [(k_val, panjang_text), ...]
+    for row in rows[1:]:  # lewati header
+        if len(row) <= max_col:
+            continue
+        jo_cell = str(row[col_jo]).strip()
+        if not jo_cell or jo_cell == "-":
+            continue
+
+        segments = [s.strip() for s in jo_cell.split("/") if s.strip()]
+        if len(segments) < 2:
+            continue  # bukan format "SPK/.../JO" atau "SPK/JO" yang valid
+
+        spk_key = import_engine._numeric_key_prefix(segments[0])
+        jo_key = import_engine._numeric_key_prefix(segments[-1])
+        if spk_key == "" or jo_key == "":
+            continue
+
+        k_val = import_engine._parse_flexible_number(row[col_hasil_rol])
+        o_val = import_engine._parse_flexible_number(row[col_meter_rol])
+        if k_val is None or o_val is None:
+            continue  # sama seperti sync_validasi_header(): baris tanpa HASIL_ROL/METER_ROL valid dilewati
+
+        key = (spk_key, jo_key)
+        lookup.setdefault(key, []).append((k_val, import_engine._format_number(o_val)))
+
+    return lookup
+
+
+def _sync_hasil_slitting_into_rewind_py():
+    """Isi ulang kolom Hasil_Slitting_(Rol) di REWIND_PY, untuk tiap
+    baris yang SPK & NO_JO-nya (keduanya harus angka murni, sama seperti
+    aturan sinkron SPK/NO_JO & Bahan_Awal_Printing_(Meter)) cocok dengan
+    pasangan SPK/JO hasil _sl1_hasil_slitting_lookup() (dari SL_1,
+    dihitung pakai import_engine._compute_hasil_slitting() -- format
+    string modus/non-modus, mis. '42 + 3@530').
+
+    Baris yang TIDAK ketemu pasangannya di SL_1 dibiarkan apa adanya
+    (TIDAK dikosongkan) -- dianggap belum ada laporan produksi Slitting-
+    nya. Baris yang nilainya sudah sama persis juga TIDAK ditulis ulang
+    (hemat kuota API). Balikin jumlah sel yang benar-benar diupdate.
+
+    Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
+    Waste Rewind), sama seperti _sync_bahan_awal_printing_into_rewind_py()."""
+    lookup = _sl1_hasil_slitting_lookup()
+    if not lookup:
+        return 0
+
+    sh = _waste_rewind_spreadsheet()  # spreadsheet sama dgn REWIND_PY, handle dipakai bareng
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    col_hasil = import_engine._find_col_index(header, "Hasil_Slitting_(Rol)")
+    if col_spk is None or col_nojo is None or col_hasil is None:
+        raise RuntimeError(
+            f"Kolom SPK/NO_JO/Hasil_Slitting_(Rol) tidak ketemu di header {WASTE_REWIND_SHEET_NAME}"
+        )
+
+    updates = []
+    for i, row in enumerate(values[1:], start=2):  # baris 2 = data pertama di sheet
+        spk = row[col_spk].strip() if col_spk < len(row) else ""
+        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
+        if not (spk.isdigit() and nojo.isdigit()):
+            continue  # SPK/NO_JO harus angka murni, sama seperti aturan sinkron SPK/NO_JO
+
+        sl_matches = lookup.get((
+            import_engine._numeric_key_prefix(spk),
+            import_engine._numeric_key_prefix(nojo),
+        ))
+        if sl_matches is None:
+            continue  # tidak ketemu pasangannya di SL_1 -- biarkan sel apa adanya
+
+        new_value = import_engine._compute_hasil_slitting(sl_matches)
+        current = row[col_hasil].strip() if col_hasil < len(row) else ""
+        if current == new_value:
+            continue  # sudah sama, tidak perlu ditulis ulang
+
+        updates.append({
+            "range": gspread.utils.rowcol_to_a1(i, col_hasil + 1),
+            "values": [[new_value]],
+        })
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
+        # baca nilai Hasil_Slitting_(Rol) yang baru
         with _waste_rewind_cache_lock:
             _waste_rewind_cache["ts"] = 0.0
 
