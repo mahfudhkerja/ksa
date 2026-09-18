@@ -941,6 +941,7 @@ def _run_rewind_kecil_worker():
         spk_jo_added = None
         bahan_awal_updated = None
         hasil_slitting_updated = None
+        printing_updated = None
         if proc.returncode == 0:
             try:
                 spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -963,6 +964,15 @@ def _run_rewind_kecil_worker():
                         f"di {WASTE_REWIND_SHEET_NAME}] {slit_err}\n"
                     )
                 err = err or str(slit_err)
+            try:
+                printing_updated = _sync_printing_kolom_into_rewind_py()
+            except Exception as printing_err:
+                with REWIND_KECIL_RUN_STATE_LOCK:
+                    REWIND_KECIL_RUN_STATE["log"] += (
+                        f"\n[GAGAL ISI Printing_1..5/Total_Hasil_Printing "
+                        f"di {WASTE_REWIND_SHEET_NAME}] {printing_err}\n"
+                    )
+                err = err or str(printing_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
@@ -970,6 +980,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["spk_jo_added"] = spk_jo_added
             REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = bahan_awal_updated
             REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = hasil_slitting_updated
+            REWIND_KECIL_RUN_STATE["printing_updated"] = printing_updated
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -1001,6 +1012,7 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["spk_jo_added"] = None
         REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = None
         REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = None
+        REWIND_KECIL_RUN_STATE["printing_updated"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
     thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
@@ -1661,7 +1673,151 @@ def _sync_bahan_awal_printing_into_rewind_py():
     return len(updates)
 
 
-SL1_COL_UP_HEADER = "UP"
+PRINTING_SHEET_NAMES = ["PRINTING_1", "PRINTING_2", "PRINTING_3", "PRINTING_4", "PRINTING_5"]
+PRINTING_METER_HEADER = "METER_AKHIR_JADI"
+
+# Nama kolom tujuan di REWIND_PY, urutan SAMA dengan PRINTING_SHEET_NAMES
+# (index ke-0 = PRINTING_1 -> kolom Printing_1, dst).
+REWIND_PY_PRINTING_COLS = ["Printing_1", "Printing_2", "Printing_3", "Printing_4", "Printing_5"]
+REWIND_PY_TOTAL_PRINTING_COL = "Total_Hasil_Printing"
+
+
+def _printing_meter_lookup(sheet_name):
+    """Baca satu sheet PRINTING_X (spreadsheet FSTL), balikin dict
+    {(spk_key, jo_key): total_meter_akhir_jadi} -- SPK & JO di sini kolom
+    TERPISAH (bukan kode gabungan "SPK/JO" macam LP_1/SL_1), jadi TIDAK
+    ada split by '/' sama sekali, langsung dicocokkan apa adanya lewat
+    kolom "SPK" & "JO" masing-masing.
+
+    Kalau sheet-nya tidak ada sama sekali di spreadsheet FSTL (mis.
+    PRINTING_1, yang sumber datanya memang belum ada) atau header
+    SPK/JO/METER_AKHIR_JADI tidak ketemu, balikin dict kosong -- ini yang
+    bikin _sync_printing_kolom_into_rewind_py() nulis 0 buat sheet itu
+    (lihat pemanggilnya)."""
+    try:
+        sh = _fstl_spreadsheet()
+        rows = _fstl_get_sheet_values(sh, sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return {}
+    if not rows:
+        return {}
+
+    header = rows[0]
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_jo = import_engine._find_col_index(header, "JO")
+    col_meter = import_engine._find_col_index(header, PRINTING_METER_HEADER)
+    if col_spk is None or col_jo is None or col_meter is None:
+        return {}
+    max_col = max(col_spk, col_jo, col_meter)
+
+    lookup = {}  # (spk_key, jo_key) -> total (float)
+    for row in rows[1:]:  # lewati header
+        if len(row) <= max_col:
+            continue
+        spk_cell = str(row[col_spk]).strip()
+        jo_cell = str(row[col_jo]).strip()
+        if not spk_cell or spk_cell == "-" or not jo_cell or jo_cell == "-":
+            continue
+
+        spk_key = import_engine._numeric_key_prefix(spk_cell)
+        jo_key = import_engine._numeric_key_prefix(jo_cell)
+        if spk_key == "" or jo_key == "":
+            continue
+
+        val = import_engine._parse_flexible_number(row[col_meter])
+        if val is None:
+            continue
+
+        key = (spk_key, jo_key)
+        lookup[key] = lookup.get(key, 0.0) + val
+
+    return lookup
+
+
+def _sync_printing_kolom_into_rewind_py():
+    """Isi kolom Printing_1..Printing_5 & Total_Hasil_Printing di
+    REWIND_PY, untuk tiap baris yang SPK & NO_JO-nya (keduanya harus
+    angka murni, sama seperti aturan sinkron SPK/NO_JO lainnya):
+      - Printing_1..5 = jumlah METER_AKHIR_JADI dari sheet PRINTING_1..5
+        (spreadsheet FSTL) yang SPK & JO-nya (kolom TERPISAH, BUKAN kode
+        gabungan macam SL_1/LP_1) sama-sama cocok. Sheet yang tidak
+        ketemu/tidak ada (mis. PRINTING_1, sumber datanya belum ada)
+        ATAU pasangan SPK/JO-nya tidak ketemu di situ -> ditulis 0 (BEDA
+        dari Bahan_Awal_Printing_(Meter)/Hasil_Slitting yang dibiarkan
+        apa adanya kalau tidak ketemu -- di sini SENGAJA ditulis 0,
+        sesuai permintaan user).
+      - Total_Hasil_Printing = jumlah Printing_1 s/d Printing_5 yang baru
+        saja dihitung di atas (bukan dibaca ulang dari sheet).
+
+    Tiap kolom dicek TERPISAH: kalau nilainya sudah sama persis, kolom
+    itu saja yang tidak ditulis ulang (hemat kuota API). Kolom yang
+    header-nya tidak ketemu di REWIND_PY dilewati begitu saja (tidak
+    menggagalkan kolom lain). Balikin jumlah SEL yang benar-benar
+    diupdate (gabungan Printing_1..5 + Total_Hasil_Printing).
+
+    Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
+    Waste Rewind), sama seperti sync-sync lainnya."""
+    lookups = [_printing_meter_lookup(name) for name in PRINTING_SHEET_NAMES]
+    # Sengaja TIDAK early-return kalau semua lookup kosong (beda dari
+    # sync-sync lain di atas) -- di sini kolom tetap harus ditulis 0
+    # (bukan dibiarkan apa adanya) kalau memang tidak ketemu, sesuai
+    # permintaan user (lihat docstring).
+
+    sh = _waste_rewind_spreadsheet()  # spreadsheet sama dgn REWIND_PY, handle dipakai bareng
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    if col_spk is None or col_nojo is None:
+        raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    col_printing = [import_engine._find_col_index(header, name) for name in REWIND_PY_PRINTING_COLS]
+    col_total = import_engine._find_col_index(header, REWIND_PY_TOTAL_PRINTING_COL)
+
+    updates = []
+    for i, row in enumerate(values[1:], start=2):  # baris 2 = data pertama di sheet
+        spk = row[col_spk].strip() if col_spk < len(row) else ""
+        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
+        if not (spk.isdigit() and nojo.isdigit()):
+            continue  # SPK/NO_JO harus angka murni, sama seperti aturan sinkron SPK/NO_JO
+
+        key = (import_engine._numeric_key_prefix(spk), import_engine._numeric_key_prefix(nojo))
+
+        per_line_totals = []
+        for col_idx, lookup in zip(col_printing, lookups):
+            total = lookup.get(key, 0.0)
+            per_line_totals.append(total)
+            if col_idx is None:
+                continue
+            new_value = import_engine._format_number(total)
+            current = row[col_idx].strip() if col_idx < len(row) else ""
+            if current != new_value:
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(i, col_idx + 1),
+                    "values": [[new_value]],
+                })
+
+        if col_total is not None:
+            total_value = import_engine._format_number(sum(per_line_totals))
+            current = row[col_total].strip() if col_total < len(row) else ""
+            if current != total_value:
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(i, col_total + 1),
+                    "values": [[total_value]],
+                })
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
+        # baca nilai Printing_1..5/Total_Hasil_Printing yang baru
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+
+    return len(updates)
 SL1_COL_TOTAL_METER_HEADER = "TOTAL_METER"
 
 
