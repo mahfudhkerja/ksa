@@ -96,6 +96,7 @@ from google.oauth2.service_account import Credentials
 
 import import_engine
 import chatbot_engine
+import run_all as run_all_module  # dipakai buat daftar script (SCRIPTS_ORDER) & jalankan satu-satu
 
 # Baca file .env (SPREADSHEET_ID, GOOGLE_CREDENTIALS_FILE, PORT,
 # DEEPSEEK_API_KEY, dst) dan masukkan ke environment variable proses ini,
@@ -117,6 +118,29 @@ SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID", "")  # isi di file .env
 
 BASE_DIR = Path(__file__).resolve().parent
 RUN_ALL_PATH = BASE_DIR / "run_all.py"
+
+# Label yang enak dibaca untuk tiap script individual di dropdown "Jalankan
+# Satu Script" (halaman Input Data Produksi). Urutan & isi list script-nya
+# sendiri TETAP ambil dari run_all.SCRIPTS_ORDER (satu sumber kebenaran),
+# ini cuma peta nama file -> label tampilan.
+SCRIPT_LABELS = {
+    "import_printing_2.py": "Printing 2",
+    "import_printing_3.py": "Printing 3",
+    "import_printing_4.py": "Printing 4",
+    "import_printing_5.py": "Printing 5",
+    "import_rw.py": "RW (Rewinding)",
+    "import_sl.py": "SL (Slitting)",
+    "import_dry_1.py": "Dry 1",
+    "import_dry_2.py": "Dry 2",
+    "import_dry_3.py": "Dry 3",
+    "import_dry_4.py": "Dry 4",
+    "import_dry_5.py": "Dry 5",
+    "import_sf.py": "SF",
+    "import_ex.py": "EX (Extrusi)",
+    "import_bag.py": "Bag Making",
+    "import_jo.py": "JO",
+    "import_lp.py": "LP (Laporan Produksi)",
+}
 
 app = Flask(__name__)
 CORS(app)  # izinkan dipanggil dari frontend berbeda origin (mis. Figma / GitHub Pages)
@@ -744,9 +768,11 @@ def _run_all_worker():
 def produksi_run_all():
     """Tombol Refresh tunggal: jalankan run_all.py di background thread.
     Frontend lalu polling /api/produksi/run-status untuk lihat progress."""
-    with RUN_STATE_LOCK:
+    with RUN_STATE_LOCK, RUN_ONE_STATE_LOCK:
         if RUN_STATE["running"]:
             return jsonify({"success": False, "message": "Sedang berjalan, tunggu sampai selesai."}), 409
+        if RUN_ONE_STATE["running"]:
+            return jsonify({"success": False, "message": "Ada script tunggal yang sedang jalan, tunggu sampai selesai."}), 409
         RUN_STATE["running"] = True
         RUN_STATE["log"] = ""
         RUN_STATE["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -762,6 +788,106 @@ def produksi_run_all():
 def produksi_run_status():
     with RUN_STATE_LOCK:
         return jsonify(dict(RUN_STATE))
+
+
+# ---- Jalankan SATU script saja (dropdown di sebelah tombol Run All) ----
+# Daftar & urutan file-nya ikut run_all.SCRIPTS_ORDER (satu sumber kebenaran,
+# tidak ditulis ulang di sini) supaya kalau run_all.py nambah/hapus script,
+# dropdown ini otomatis ikut update tanpa perlu ubah app.py.
+RUN_ONE_STATE_LOCK = threading.Lock()
+RUN_ONE_STATE = {
+    "running": False,
+    "log": "",
+    "started_at": None,
+    "finished_at": None,
+    "returncode": None,
+    "script": None,
+}
+
+
+def _run_one_worker(script_name):
+    script_path = BASE_DIR / script_name
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(script_path)],
+            cwd=str(BASE_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            bufsize=1,
+        )
+        for line in proc.stdout:
+            with RUN_ONE_STATE_LOCK:
+                RUN_ONE_STATE["log"] += line
+        proc.wait()
+        with RUN_ONE_STATE_LOCK:
+            RUN_ONE_STATE["returncode"] = proc.returncode
+    except Exception as e:
+        with RUN_ONE_STATE_LOCK:
+            RUN_ONE_STATE["log"] += f"\n[GAGAL MENJALANKAN {script_name}] {e}\n"
+            RUN_ONE_STATE["returncode"] = -1
+    finally:
+        with RUN_ONE_STATE_LOCK:
+            RUN_ONE_STATE["running"] = False
+            RUN_ONE_STATE["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@app.route("/api/produksi/scripts", methods=["GET"])
+def produksi_scripts():
+    """Daftar script individual (file + label) buat isi dropdown di frontend,
+    urutannya sama seperti yang dijalankan run_all.py."""
+    items = [
+        {"file": f, "label": SCRIPT_LABELS.get(f, f)}
+        for f in run_all_module.SCRIPTS_ORDER
+    ]
+    return jsonify(items)
+
+
+@app.route("/api/produksi/run-one", methods=["POST"])
+def produksi_run_one():
+    """Body: {script: "import_rw.py"}
+    Jalankan satu script import saja (bukan run_all.py), di background
+    thread, dengan panel log/status terpisah dari Run All."""
+    body = request.get_json(force=True) or {}
+    script = str(body.get("script", "")).strip()
+
+    if not script:
+        return jsonify({"success": False, "message": "Pilih script dulu."}), 400
+    if script not in run_all_module.SCRIPTS_ORDER:
+        return jsonify({"success": False, "message": f"Script '{script}' tidak dikenal."}), 400
+
+    script_path = BASE_DIR / script
+    if not script_path.exists():
+        return jsonify({"success": False, "message": f"{script} tidak ditemukan di server."}), 404
+
+    with RUN_STATE_LOCK, RUN_ONE_STATE_LOCK:
+        if RUN_STATE["running"]:
+            return jsonify({"success": False, "message": "Refresh Semua sedang berjalan, tunggu sampai selesai."}), 409
+        if RUN_ONE_STATE["running"]:
+            return jsonify({"success": False, "message": "Sedang ada script lain berjalan, tunggu sampai selesai."}), 409
+        RUN_ONE_STATE["running"] = True
+        RUN_ONE_STATE["log"] = ""
+        RUN_ONE_STATE["script"] = script
+        RUN_ONE_STATE["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        RUN_ONE_STATE["finished_at"] = None
+        RUN_ONE_STATE["returncode"] = None
+
+    thread = threading.Thread(target=_run_one_worker, args=(script,), daemon=True)
+    thread.start()
+    label = SCRIPT_LABELS.get(script, script)
+    return jsonify({"success": True, "message": f"{label} mulai dijalankan."})
+
+
+@app.route("/api/produksi/run-one-status", methods=["GET"])
+def produksi_run_one_status():
+    with RUN_ONE_STATE_LOCK:
+        return jsonify(dict(RUN_ONE_STATE))
 
 
 

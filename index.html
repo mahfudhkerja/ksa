@@ -792,10 +792,19 @@
                     lalu jalankan semuanya lewat satu tombol Refresh di bawah — tidak perlu refresh satu-satu.
                   </p>
                 </div>
-                <button class="btn-outline" id="btnRunAll" style="border-color:var(--ok); color:var(--ok); white-space:nowrap;" onclick="doRunAll()">
-                  <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
-                  Refresh Semua (Run All)
-                </button>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <select id="selectRunOne" style="height:38px; border:1.5px solid var(--line); border-radius:10px; padding:0 10px; background:white; font-size:12.5px; max-width:220px;">
+                    <option value="">Pilih script...</option>
+                  </select>
+                  <button class="btn-outline" id="btnRunOne" style="border-color:var(--blue-dark); color:var(--blue-dark); white-space:nowrap;" onclick="doRunOne()">
+                    <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                    Jalankan Satu Script
+                  </button>
+                  <button class="btn-outline" id="btnRunAll" style="border-color:var(--ok); color:var(--ok); white-space:nowrap;" onclick="doRunAll()">
+                    <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                    Refresh Semua (Run All)
+                  </button>
+                </div>
               </div>
               <div id="runAllPanel" style="display:none; margin-top:16px;">
                 <div id="runAllStatusLine" style="font-size:12.5px; font-weight:700; color:var(--blue-dark); margin-bottom:8px;"></div>
@@ -1336,7 +1345,7 @@
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
     const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
-    if(page === "produksi"){ loadProduksiSources(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
+    if(page === "produksi"){ loadProduksiSources(); loadScriptList(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
     if(page === "validasi") loadValidasi();
     if(page === "rekap"){ loadPIC(); loadRekap(); }
     if(page === "updateStock") loadUpdateStock();
@@ -1807,6 +1816,7 @@
   let detectedSheetsCache = {}; // { source_key: [nama sheet hasil deteksi terakhir] }
   let activeSheetModalKey = null;
   let runAllPollTimer = null;
+  let runOnePollTimer = null;
 
   async function loadProduksiSources(){
     const grid = document.getElementById("produksiGrid");
@@ -1991,6 +2001,8 @@
   // ---- Refresh Semua (Run All) — satu tombol, jalan di background lewat Flask ----
   async function doRunAll(){
     const btn = document.getElementById("btnRunAll");
+    const btnOne = document.getElementById("btnRunOne");
+    const selectOne = document.getElementById("selectRunOne");
     const panel = document.getElementById("runAllPanel");
     const statusLine = document.getElementById("runAllStatusLine");
     const logEl = document.getElementById("runAllLog");
@@ -2003,6 +2015,7 @@
         return;
       }
       btn.disabled = true; btn.classList.add("spinning");
+      btnOne.disabled = true; selectOne.disabled = true;
       panel.style.display = "block";
       statusLine.innerText = "⏳ Sedang berjalan... (tiap script diberi jeda ±30 detik supaya tidak kena limit Google Sheets)";
       logEl.textContent = "";
@@ -2017,6 +2030,8 @@
 
   async function pollRunStatus(){
     const btn = document.getElementById("btnRunAll");
+    const btnOne = document.getElementById("btnRunOne");
+    const selectOne = document.getElementById("selectRunOne");
     const statusLine = document.getElementById("runAllStatusLine");
     const logEl = document.getElementById("runAllLog");
     try{
@@ -2027,10 +2042,87 @@
       if(!st.running){
         clearInterval(runAllPollTimer); runAllPollTimer = null;
         btn.disabled = false; btn.classList.remove("spinning");
+        btnOne.disabled = false; selectOne.disabled = false;
         statusLine.innerText = st.returncode === 0
           ? `✅ Selesai — ${st.finished_at || ""}`
           : `⚠️ Selesai dengan masalah (exit code ${st.returncode}) — ${st.finished_at || ""}`;
         toast(st.returncode === 0 ? "Refresh Semua selesai" : "Refresh selesai, ada script yang gagal — cek log", st.returncode === 0 ? "success" : "error");
+        loadProduksiSources(); // muat ulang status per-card (last_import, last_status, dst.)
+      }
+    } catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
+  }
+
+  // ---- Jalankan Satu Script — dropdown di sebelah tombol Run All, pakai
+  // panel log/status yang sama supaya tidak dobel UI. Daftar isi dropdown
+  // diambil dari backend (/api/produksi/scripts), otomatis ikut urutan
+  // SCRIPTS_ORDER di run_all.py. ----
+  async function loadScriptList(){
+    const select = document.getElementById("selectRunOne");
+    try{
+      const res = await fetch(`${API_BASE}/api/produksi/scripts`);
+      const items = await res.json();
+      const currentValue = select.value;
+      select.innerHTML = `<option value="">Pilih script...</option>` +
+        items.map(it => `<option value="${it.file}">${it.label}</option>`).join("");
+      if(currentValue) select.value = currentValue;
+    } catch(e){ /* biarkan, cukup opsi default "Pilih script..." */ }
+  }
+
+  async function doRunOne(){
+    const select = document.getElementById("selectRunOne");
+    const script = select.value;
+    if(!script){ toast("Pilih dulu script yang mau dijalankan", "error"); return; }
+
+    const btn = document.getElementById("btnRunOne");
+    const btnAll = document.getElementById("btnRunAll");
+    const panel = document.getElementById("runAllPanel");
+    const statusLine = document.getElementById("runAllStatusLine");
+    const logEl = document.getElementById("runAllLog");
+    const label = select.options[select.selectedIndex].text;
+
+    try{
+      const res = await fetch(`${API_BASE}/api/produksi/run-one`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ script })
+      });
+      const data = await res.json();
+      if(!data.success){
+        toast(data.message || "Sedang berjalan", "error");
+        return;
+      }
+      btn.disabled = true; btn.classList.add("spinning");
+      btnAll.disabled = true; select.disabled = true;
+      panel.style.display = "block";
+      statusLine.innerText = `⏳ Menjalankan "${label}"...`;
+      logEl.textContent = "";
+      toast(`${label} mulai dijalankan`, "success");
+      if(runOnePollTimer) clearInterval(runOnePollTimer);
+      runOnePollTimer = setInterval(() => pollRunOneStatus(label), 2000);
+      pollRunOneStatus(label);
+    } catch(e){
+      toast("Error: " + e.message, "error");
+    }
+  }
+
+  async function pollRunOneStatus(label){
+    const btn = document.getElementById("btnRunOne");
+    const btnAll = document.getElementById("btnRunAll");
+    const select = document.getElementById("selectRunOne");
+    const statusLine = document.getElementById("runAllStatusLine");
+    const logEl = document.getElementById("runAllLog");
+    try{
+      const res = await fetch(`${API_BASE}/api/produksi/run-one-status`);
+      const st = await res.json();
+      logEl.textContent = st.log || "";
+      logEl.scrollTop = logEl.scrollHeight;
+      if(!st.running){
+        clearInterval(runOnePollTimer); runOnePollTimer = null;
+        btn.disabled = false; btn.classList.remove("spinning");
+        btnAll.disabled = false; select.disabled = false;
+        statusLine.innerText = st.returncode === 0
+          ? `✅ "${label}" selesai — ${st.finished_at || ""}`
+          : `⚠️ "${label}" selesai dengan masalah (exit code ${st.returncode}) — ${st.finished_at || ""}`;
+        toast(st.returncode === 0 ? `${label} selesai` : `${label} gagal — cek log`, st.returncode === 0 ? "success" : "error");
         loadProduksiSources(); // muat ulang status per-card (last_import, last_status, dst.)
       }
     } catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
