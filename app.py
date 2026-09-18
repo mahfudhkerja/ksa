@@ -1356,14 +1356,29 @@ def get_waste_rewind():
 
 
 # --------------------------------------------------------------------------
-# 6e. REWIND KECIL — sinkron SPK & NO_JO unik LANGSUNG KE sheet REWIND_PY
+# 6e. REWIND KECIL — REFRESH PENUH (hapus baris 2 ke bawah + tulis ulang)
+#     sheet REWIND_PY dari sheet mentah REWIND_PY_RAW
 # --------------------------------------------------------------------------
 # BUKAN tabel/list terpisah -- pasangan (SPK, NO_JO) unik dari sheet MENTAH
 # "REWIND_PY_RAW" (hasil import_rewind_kecil.py, spreadsheet SAMA dengan REWIND_PY)
-# ditulis LANGSUNG jadi baris baru di REWIND_PY itu sendiri, supaya tetap
-# tampil di SATU tabel yang sama yang sudah dibaca lewat /api/waste-rewind.
+# ditulis LANGSUNG jadi baris di REWIND_PY itu sendiri, supaya tetap tampil
+# di SATU tabel yang sama yang sudah dibaca lewat /api/waste-rewind.
 # NO_JO di sini SAMA PERSIS dengan kolom "JO" di sheet REWIND_PY_RAW -- tidak ada
 # kolom "NO_JO" terpisah di sheet sumber, cuma beda label kolom di REWIND_PY.
+#
+# !!! PERUBAHAN PERILAKU (atas permintaan user) !!!
+# Versi SEBELUMNYA cuma APPEND pasangan (SPK, NO_JO) yang belum ada & tidak
+# pernah menyentuh baris lama sama sekali -- supaya kolom lain yang diisi
+# manual/formula (Persentase_Waste_(%), Meter_Hilang_Rewind,
+# Hasil_Slitting_(Rol), Waste_Slitting_After_Rewind_Presentase, dst) aman.
+#
+# Versi SEKARANG SENGAJA menghapus SEMUA baris data (baris 2 ke bawah,
+# SELURUH kolom -- termasuk kolom manual/formula tadi) lalu menulis ulang
+# dari nol tiap kali tombol Refresh ditekan, supaya sheet-nya benar2
+# "ke-refresh" total sesuai isi REWIND_PY_RAW saat itu. Konsekuensinya:
+# apa pun yang pernah diisi manual/dihitung pakai formula di baris data
+# REWIND_PY akan HILANG setiap refresh dan HARUS diisi ulang. Baris header
+# (baris 1) TIDAK ikut terhapus.
 #
 # Aturan:
 #   1. Hanya baris REWIND dengan TANGGAL >= REWIND_KECIL_START_DATE yang
@@ -1372,26 +1387,30 @@ def get_waste_rewind():
 #       "EX", "RETUR", "xxx"), SELURUH baris itu diabaikan -- bukan cuma
 #       sisi yang teksnya, supaya tidak ada pasangan (SPK, NO_JO) yang
 #       jomplang (satu sisi keambil, sisi lain kosong/tidak match).
-#   2. Pasangan yang (SPK, NO_JO)-nya SUDAH ADA sebagai baris di REWIND_PY
-#      TIDAK disentuh sama sekali (data lain di baris itu, termasuk yang
-#      sudah dihitung manual/formula, tidak boleh ketimpa).
-#   3. Pasangan yang BELUM ADA di-APPEND sebagai baris baru. Selain kolom
-#      SPK & NO_JO, kolom JO (lengkap), Nama_Produk, Planning_Order,
-#      Planning_Meter & Potongan JUGA ikut diisi otomatis -- dicari lewat
-#      NO_JO dicocokkan ke suffix (angka belakang) kode JO di sheet JO_1
-#      punya spreadsheet FSTL (FSTL_SPREADSHEET_ID, lihat blok "FSTL --
-#      LAMPIRAN WASTE" di bawah), caranya SAMA PERSIS kayak lookup
-#      JO/NAMA/ORDER/METER di halaman Update Stock
-#      (import_engine.sync_update_stock_from_jo()): kolom F JO_1 = kode
-#      JO lengkap, kolom G = NAMA (KEMASAN), header "ORDER" = Planning
-#      Order, header "METER" = Planning Meter, header "POTONGAN" = kolom
-#      Potongan -- lihat _fstl_lookup_jo1_by_suffix_map(). Kalau NO_JO
-#      tidak ketemu di JO_1 (belum ada / suffix tidak match), kolom2 itu
-#      dikosongkan (menunggu diisi manual), sama seperti baris
-#      "xxxxxx"/"xxxxxxxxxx" contoh yang sudah ada di sheet.
+#   2. SEMUA baris data lama di REWIND_PY (baris 2 s.d. baris terakhir,
+#      seluruh lebar sheet) DIHAPUS lebih dulu -- lihat catatan
+#      "PERUBAHAN PERILAKU" di atas.
+#   3. Baris baru ditulis untuk SETIAP pasangan (SPK, NO_JO) unik yang ada
+#      di REWIND_PY_RAW saat ini. Selain kolom SPK & NO_JO, kolom JO
+#      (lengkap), Nama_Produk, Planning_Order, Planning_Meter & Potongan
+#      JUGA ikut diisi otomatis -- dicari lewat NO_JO dicocokkan ke suffix
+#      (angka belakang) kode JO di sheet JO_1 punya spreadsheet FSTL
+#      (FSTL_SPREADSHEET_ID, lihat blok "FSTL -- LAMPIRAN WASTE" di
+#      bawah), caranya SAMA PERSIS kayak lookup JO/NAMA/ORDER/METER di
+#      halaman Update Stock (import_engine.sync_update_stock_from_jo()):
+#      kolom F JO_1 = kode JO lengkap, kolom G = NAMA (KEMASAN), header
+#      "ORDER" = Planning Order, header "METER" = Planning Meter, header
+#      "POTONGAN" = kolom Potongan -- lihat _fstl_lookup_jo1_by_suffix_map().
+#      Kalau NO_JO tidak ketemu di JO_1 (belum ada / suffix tidak match),
+#      kolom2 itu dikosongkan (menunggu diisi manual). Kolom lain di luar
+#      daftar ini (Persentase_Waste_(%), dst) SELALU kosong sampai diisi
+#      manual lagi setelah refresh.
 #   4. Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
 #      Waste Rewind), SETELAH import_rewind_kecil.py sukses -- jadi satu
-#      tombol Refresh yang sama yang menjalankan keduanya.
+#      tombol Refresh yang sama yang menjalankan keduanya. Setelah ini,
+#      _sync_bahan_awal_printing_into_rewind_py() jalan lagi buat isi
+#      ulang kolom Bahan_Awal_Printing_(Meter) di baris-baris yang baru
+#      ditulis.
 REWIND_KECIL_RAW_SHEET_NAME = "REWIND_PY_RAW"
 REWIND_KECIL_START_DATE = date(2026, 9, 1)  # 01/09/2026
 _RW_KECIL_NUMERIC_RE = re.compile(r"\d+")  # SPK & NO_JO harus SELURUHNYA angka -- kalau ada huruf (EX, RETUR, xxx, dll) dianggap teks & baris diabaikan
@@ -1630,29 +1649,32 @@ def _sync_bahan_awal_printing_into_rewind_py():
 
 
 def _sync_rewind_kecil_spk_jo_into_rewind_py():
-    """Tambahkan (append) baris baru ke REWIND_PY untuk tiap pasangan
-    (SPK, NO_JO) unik dari sheet REWIND_PY_RAW yang belum ada baris-nya di
-    REWIND_PY -- sekaligus auto-isi kolom JO/Nama_Produk/Planning_Order/
-    Planning_Meter/Potongan dari lookup JO_1 (spreadsheet FSTL). Balikin
-    jumlah baris baru yang ditambahkan."""
+    """REFRESH PENUH sheet REWIND_PY: hapus SEMUA baris data (baris 2 ke
+    bawah, seluruh lebar sheet), lalu tulis ulang dari nol satu baris per
+    pasangan (SPK, NO_JO) unik dari sheet REWIND_PY_RAW -- sekaligus
+    auto-isi kolom JO/Nama_Produk/Planning_Order/Planning_Meter/Potongan
+    dari lookup JO_1 (spreadsheet FSTL). Baris header (baris 1) tidak
+    disentuh.
+
+    PERINGATAN: ini SENGAJA menghapus juga isi kolom yang sebelumnya
+    diisi manual/formula (Persentase_Waste_(%), Meter_Hilang_Rewind,
+    Hasil_Slitting_(Rol), Waste_Slitting_After_Rewind_Presentase, dst) --
+    lihat catatan "PERUBAHAN PERILAKU" di komentar atas fungsi ini.
+
+    Balikin jumlah baris data yang ditulis ulang (bukan cuma yang baru)."""
     unique_pairs = _read_rewind_kecil_spk_jo()
-    if not unique_pairs:
-        return 0
 
     sh = _waste_rewind_spreadsheet()
     ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
-    values = ws.get_all_values()
-    if not values:
-        return 0
+    header = [str(h).strip() for h in ws.row_values(1)]
 
-    header = [str(h).strip() for h in values[0]]
     col_spk = import_engine._find_col_index(header, "SPK")
     col_nojo = import_engine._find_col_index(header, "NO_JO")
     if col_spk is None or col_nojo is None:
         raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
 
     # Kolom tambahan yang diisi otomatis dari lookup JO_1 (boleh None kalau
-    # sheet REWIND_PY suatu saat tidak/berlum punya salah satu kolom ini --
+    # sheet REWIND_PY suatu saat tidak/belum punya salah satu kolom ini --
     # tetap jalan, cuma kolom itu yang dilewati/tidak diisi).
     col_jo_full = import_engine._find_col_index(header, "JO")
     col_nama = import_engine._find_col_index(header, "Nama_Produk")
@@ -1660,23 +1682,13 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
     col_planning_meter = import_engine._find_col_index(header, "Planning_Meter")
     col_potongan = import_engine._find_col_index(header, "Potongan")
 
-    # Lebar tabel JO/SPK/NO_JO yang "asli" -- dihitung dari kolom A sampai
-    # kolom terakhir yang header-nya masih terisi (berhenti di kolom kosong
-    # pertama). SENGAJA TIDAK pakai len(header) apa adanya / append_rows
-    # bawaan gspread: sheet REWIND_PY ini juga punya kolom bantu lain jauh
-    # di kanan (mis. AF/AG untuk Waste_Slitting) yang masih ada isinya
-    # sampai puluhan baris ke bawah. Kalau ikut kehitung, deteksi "baris
-    # kosong berikutnya" versi Sheets API/gspread jadi salah nganggap baris
-    # kosong ada di bawah kolom AF/AG itu -- bukan tepat di bawah baris
-    # data REWIND_PY yang sebenarnya (baris contoh "xxx"/"xxxx") -- jadi
-    # baris SPK/NO_JO baru nyasar jauh ke bawah dan numpuk sama data lain.
-    main_width = 0
-    for h in header:
-        if not h:
-            break
-        main_width += 1
-    main_width = max(
-        main_width, col_spk + 1, col_nojo + 1,
+    # Lebar yang dipakai buat HAPUS = seluruh lebar sheet (bukan cuma
+    # kolom SPK/NO_JO dkk), supaya kolom manual/formula di kanan (mis.
+    # Waste_Slitting_After_Rewind_Presentase) ikut kehapus juga -- sesuai
+    # permintaan "hapus baris 2 ke bawah, ganti data baru".
+    width = max(
+        len(header), ws.col_count,
+        col_spk + 1, col_nojo + 1,
         (col_jo_full + 1) if col_jo_full is not None else 0,
         (col_nama + 1) if col_nama is not None else 0,
         (col_planning_order + 1) if col_planning_order is not None else 0,
@@ -1684,27 +1696,18 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
         (col_potongan + 1) if col_potongan is not None else 0,
     )
 
-    existing = set()
-    last_used_row = 1  # nomor baris di sheet (1-based), mulai dari baris header
-    for i, row in enumerate(values[1:], start=2):
-        window = row[:main_width]
-        if any(str(c).strip() for c in window):
-            last_used_row = i
-        spk = row[col_spk].strip() if col_spk < len(row) else ""
-        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
-        if spk or nojo:
-            existing.add((spk, nojo))
-
+    # Bangun baris-baris baru dari pasangan (SPK, NO_JO) unik.
+    seen = set()
     new_rows = []
-    jo1_lookup = None  # lazy: baru dibangun kalau memang ada pasangan baru
+    jo1_lookup = None  # lazy: baru dibangun kalau memang ada datanya
     for pair in unique_pairs:
         key = (pair["spk"], pair["noJo"])
-        if key in existing:
+        if key in seen:
             continue
-        existing.add(key)  # jaga2 kalau ada duplikat di unique_pairs sendiri
+        seen.add(key)
         if jo1_lookup is None:
             jo1_lookup = _fstl_lookup_jo1_by_suffix_map()
-        blank_row = [""] * main_width
+        blank_row = [""] * width
         blank_row[col_spk] = pair["spk"]
         blank_row[col_nojo] = pair["noJo"]
         info = jo1_lookup.get(_fstl_suffix_key(pair["noJo"]))
@@ -1721,16 +1724,23 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
                 blank_row[col_potongan] = info["potongan"]
         new_rows.append(blank_row)
 
+    # HAPUS baris 2 ke bawah, seluruh lebar sheet, SEBELUM tulis data baru.
+    end_col_a1 = gspread.utils.rowcol_to_a1(1, width).rstrip("0123456789")
+    clear_last_row = max(ws.row_count, len(new_rows) + 1)
+    ws.batch_clear([f"A2:{end_col_a1}{clear_last_row}"])
+
     if new_rows:
-        start_row = last_used_row + 1
-        end_row = start_row + len(new_rows) - 1
-        start_a1 = gspread.utils.rowcol_to_a1(start_row, 1)
-        end_a1 = gspread.utils.rowcol_to_a1(end_row, main_width)
+        end_row = 1 + len(new_rows)
+        if end_row > ws.row_count:
+            ws.add_rows(end_row - ws.row_count)
+        start_a1 = gspread.utils.rowcol_to_a1(2, 1)
+        end_a1 = gspread.utils.rowcol_to_a1(end_row, width)
         ws.update(f"{start_a1}:{end_a1}", new_rows, value_input_option="USER_ENTERED")
-        # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
-        # (dipanggil loadWasteRewind(true) sesudah refresh ini) baca baris baru
-        with _waste_rewind_cache_lock:
-            _waste_rewind_cache["ts"] = 0.0
+
+    # invalidate cache REWIND_PY biar GET /api/waste-rewind berikutnya
+    # (dipanggil loadWasteRewind(true) sesudah refresh ini) baca data baru
+    with _waste_rewind_cache_lock:
+        _waste_rewind_cache["ts"] = 0.0
 
     return len(new_rows)
 

@@ -182,6 +182,11 @@
   .badge{display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:20px; font-size:11px; font-weight:700;}
   .badge.ok{background:var(--ok-bg); color:var(--ok);}
   .badge.warn{background:var(--warn-bg); color:var(--warn);}
+  /* Sel "Bahan Awal" (Bahan_Awal_Printing_(Meter)) di tabel & modal Detail
+     Waste Rewind, dipakai kalau nilainya 0 atau kosong -- lihat
+     wrwIsBahanAwalEmpty() di script. */
+  #wrwBody td.wrw-cell-danger{background:var(--warn-bg); color:var(--warn); font-weight:700;}
+  .wrw-detail-item.wrw-cell-danger .val{color:var(--warn); font-weight:700;}
 
   .btn-mini{border:none; border-radius:8px; padding:7px 12px; font-size:11px; font-weight:700; cursor:pointer; transition: all .15s var(--ease);}
   .btn-mini.acc{background:var(--ok); color:white; box-shadow:0 4px 10px -4px rgba(31,157,85,.5);}
@@ -2227,6 +2232,15 @@
     "Waste_Slitting_After_Rewind_Presentase": "Persentase SL-RW",
   };
   function aliasWrwHeader(h){ return WRW_HEADER_ALIAS[h] || String(h).replace(/_/g," "); }
+  // Kolom yang di-highlight merah kalau nilainya 0 atau kosong.
+  const WRW_DANGER_IF_ZERO_HEADERS = ["Bahan_Awal_Printing_(Meter)"];
+  function wrwIsZeroOrEmpty(v){
+    const s=String(v??"").trim();
+    if(s==="") return true;
+    // Angka di sheet pakai format Indonesia (koma = desimal, mis. "13,8").
+    const n=parseFloat(s.replace(",", "."));
+    return !isNaN(n) && n===0;
+  }
   let wasteRewindHeaders = [], wasteRewindRows = [];
   function escHtml(v){ return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
   async function loadWasteRewind(force=false, opts={}){
@@ -2259,13 +2273,19 @@
     const rows=wasteRewindRows.filter(r=>!kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw)));
     if(!rows.length){ body.innerHTML=emptyState(wasteRewindVisibleHeaders.length+1,"Tidak ada data Waste Rewind"); return; }
     body.innerHTML=rows.map((r,i)=>`<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
-      wasteRewindVisibleHeaders.map(h=>`<td>${escHtml(r[h]??"")}</td>`).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`).join("");
+      wasteRewindVisibleHeaders.map(h=>{
+        const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(r[h]);
+        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}</td>`;
+      }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`).join("");
   }
   function openWasteRewindDetail(idx){
     const row=wasteRewindRows[idx]; if(!row) return;
     document.getElementById("wrwDetailTitle").innerText="Detail Waste Rewind";
     document.getElementById("wrwDetailSub").innerText=`JO: ${row["JO"]||"-"} · Produk: ${row["Nama_Produk"]||"-"}`;
-    document.getElementById("wrwDetailGrid").innerHTML=wasteRewindHeaders.map(h=>`<div class="wrw-detail-item"><div class="lbl">${escHtml(aliasWrwHeader(h))}</div><div class="val">${escHtml(row[h]??"")||"-"}</div></div>`).join("");
+    document.getElementById("wrwDetailGrid").innerHTML=wasteRewindHeaders.map(h=>{
+      const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(row[h]);
+      return `<div class="wrw-detail-item${danger?' wrw-cell-danger':''}"><div class="lbl">${escHtml(aliasWrwHeader(h))}</div><div class="val">${escHtml(row[h]??"")||"-"}</div></div>`;
+    }).join("");
     document.getElementById("wrwDetailOverlay").style.display="flex";
   }
   function closeWasteRewindDetail(){ document.getElementById("wrwDetailOverlay").style.display="none"; }
