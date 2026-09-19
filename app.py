@@ -1003,7 +1003,7 @@ def _run_rewind_kecil_worker():
             except Exception as kv_err:
                 with REWIND_KECIL_RUN_STATE_LOCK:
                     REWIND_KECIL_RUN_STATE["log"] += (
-                        f"\n[GAGAL ISI Konversi_Meter_Jumbo_Qty_Awal_Rewind "
+                        f"\n[GAGAL ISI Konversi_Meter_Jumbo_Qty_Awal/Akhir_Rewind "
                         f"di {WASTE_REWIND_SHEET_NAME}] {kv_err}\n"
                     )
                 err = err or str(kv_err)
@@ -2218,14 +2218,16 @@ def _sync_kg_bruto_into_rewind_py():
 
 
 def _sync_konversi_meter_jumbo_into_rewind_py():
-    """Isi kolom Konversi_Meter_Jumbo_Qty_Awal_Rewind di REWIND_PY.
+    """Isi DUA kolom konversi di REWIND_PY (satu kali baca, satu kali batch_update):
+      - Konversi_Meter_Jumbo_Qty_Awal_Rewind  <- dari Qty_Awal_Rewind
+      - Konversi_Meter_Jumbo_Qty_Akhir_Rewind <- dari Qty_Akhir_Rewind
 
-    Input per baris: Qty_Awal_Rewind, UP_Slitting, Potongan, Kg_Bruto (semua
-    dibaca ULANG dari sheet, jadi harus dipanggil SETELAH sync Qty/UP/Kg_Bruto).
-    Rumus lengkap ada di konversi_meter_jumbo.py. Baris yang tidak bisa dihitung
-    (Qty kosong, UP/Potongan/Kg_Bruto kosong, teks tidak terbaca) -> sel dikosongkan.
-    Sel yang nilainya sudah sama (dibanding secara numerik) tidak ditulis ulang.
-    Balikin jumlah SEL yang diupdate."""
+    Input lain (sama untuk keduanya): UP_Slitting, Potongan, Kg_Bruto. Semua
+    dibaca ULANG dari sheet, jadi harus dipanggil SETELAH sync Qty/UP/Kg_Bruto.
+    Rumus lengkap ada di konversi_meter_jumbo.py (satu file untuk Awal & Akhir).
+    Baris yang tidak bisa dihitung (Qty kosong, UP/Potongan/Kg_Bruto kosong,
+    teks tidak terbaca) -> sel dikosongkan. Sel yang nilainya sudah sama
+    (dibanding secara numerik) tidak ditulis ulang. Balikin jumlah SEL yang diupdate."""
     sh = _waste_rewind_spreadsheet()
     ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
     values = ws.get_all_values()
@@ -2233,39 +2235,48 @@ def _sync_konversi_meter_jumbo_into_rewind_py():
         return 0
 
     header = [str(h).strip() for h in values[0]]
-    col_qty = import_engine._find_col_index(header, "Qty_Awal_Rewind")
-    col_up = import_engine._find_col_index(header, "UP_Slitting")
-    col_pot = import_engine._find_col_index(header, "Potongan")
-    col_kg = import_engine._find_col_index(header, "Kg_Bruto")
-    col_out = import_engine._find_col_index(header, "Konversi_Meter_Jumbo_Qty_Awal_Rewind")
-    missing = [n for n, c in (("Qty_Awal_Rewind", col_qty), ("UP_Slitting", col_up),
-                              ("Potongan", col_pot), ("Kg_Bruto", col_kg),
-                              ("Konversi_Meter_Jumbo_Qty_Awal_Rewind", col_out)) if c is None]
-    if missing:
-        raise RuntimeError(f"Kolom {', '.join(missing)} tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+    find = import_engine._find_col_index
+    col_up = find(header, "UP_Slitting")
+    col_pot = find(header, "Potongan")
+    col_kg = find(header, "Kg_Bruto")
+    missing = [n for n, c in (("UP_Slitting", col_up), ("Potongan", col_pot), ("Kg_Bruto", col_kg)) if c is None]
+
+    pairs = []  # (kolom_sumber, kolom_hasil, label)
+    for src_name, dst_name in (
+        ("Qty_Awal_Rewind", "Konversi_Meter_Jumbo_Qty_Awal_Rewind"),
+        ("Qty_Akhir_Rewind", "Konversi_Meter_Jumbo_Qty_Akhir_Rewind"),
+    ):
+        c_src, c_dst = find(header, src_name), find(header, dst_name)
+        if c_src is not None and c_dst is not None:
+            pairs.append((c_src, c_dst, dst_name))
+    if missing or not pairs:
+        raise RuntimeError(
+            f"Kolom {', '.join(missing) or 'Qty_*_Rewind/Konversi_Meter_Jumbo_*'} "
+            f"tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
 
     updates = []
     for i, row in enumerate(values[1:], start=2):
         def _cell(idx, _row=row):
             return str(_row[idx]).strip() if idx < len(_row) else ""
 
-        total, why = konversi_meter_jumbo.hitung_meter_jumbo(
-            _cell(col_qty), _cell(col_up), _cell(col_pot), _cell(col_kg))
-        if total is None and why not in (None, "kosong"):
-            print(f"[Konversi Meter Jumbo] baris {i}: dikosongkan ({why})")
-        new_value = "" if total is None else import_engine._format_number(round(total, 2))
+        for col_src, col_dst, label in pairs:
+            total, why = konversi_meter_jumbo.hitung_meter_jumbo(
+                _cell(col_src), _cell(col_up), _cell(col_pot), _cell(col_kg))
+            if total is None and why not in (None, "kosong"):
+                print(f"[{label}] baris {i}: dikosongkan ({why})")
+            new_value = "" if total is None else import_engine._format_number(round(total, 2))
 
-        current = _cell(col_out)
-        cur_num = import_engine._parse_flexible_number(current)
-        if new_value == "":
-            same = current == ""
-        else:
-            same = cur_num is not None and abs(cur_num - total) < 0.005
-        if not same:
-            updates.append({
-                "range": gspread.utils.rowcol_to_a1(i, col_out + 1),
-                "values": [[new_value]],
-            })
+            current = _cell(col_dst)
+            cur_num = import_engine._parse_flexible_number(current)
+            if new_value == "":
+                same = current == ""
+            else:
+                same = cur_num is not None and abs(cur_num - total) < 0.005
+            if not same:
+                updates.append({
+                    "range": gspread.utils.rowcol_to_a1(i, col_dst + 1),
+                    "values": [[new_value]],
+                })
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")

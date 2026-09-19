@@ -2184,7 +2184,7 @@
         // gaya sama kayak notif "sheet berhasil disimpan" dll.
         const spkJoNote = (st.spk_jo_added ?? 0) > 0 ? `, +${st.spk_jo_added} baris SPK/NO_JO baru` : "";
         const bahanNote = (st.bahan_awal_updated ?? 0) > 0 ? `, ${st.bahan_awal_updated} sel Bahan_Awal_Printing diperbarui` : "";
-        const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal diperbarui` : "";
+        const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
         toast(`Data mentah Rewind Kecil diperbarui (${st.rows_written ?? 0} baris${spkJoNote}${bahanNote}${konvNote})`, "success");
       }
