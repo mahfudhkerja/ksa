@@ -95,6 +95,7 @@ from flask_cors import CORS
 from google.oauth2.service_account import Credentials
 
 import import_engine
+import rewind_qty
 import chatbot_engine
 import run_all as run_all_module  # dipakai buat daftar script (SCRIPTS_ORDER) & jalankan satu-satu
 
@@ -942,6 +943,7 @@ def _run_rewind_kecil_worker():
         bahan_awal_updated = None
         hasil_slitting_updated = None
         printing_updated = None
+        tanggal_qty_updated = None
         if proc.returncode == 0:
             try:
                 spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -973,6 +975,15 @@ def _run_rewind_kecil_worker():
                         f"di {WASTE_REWIND_SHEET_NAME}] {printing_err}\n"
                     )
                 err = err or str(printing_err)
+            try:
+                tanggal_qty_updated = _sync_rewind_kecil_tanggal_qty_into_rewind_py()
+            except Exception as tq_err:
+                with REWIND_KECIL_RUN_STATE_LOCK:
+                    REWIND_KECIL_RUN_STATE["log"] += (
+                        f"\n[GAGAL ISI Tanggal_Rewind/Qty_Awal_Rewind/Qty_Akhir_Rewind "
+                        f"di {WASTE_REWIND_SHEET_NAME}] {tq_err}\n"
+                    )
+                err = err or str(tq_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
@@ -981,6 +992,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = bahan_awal_updated
             REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = hasil_slitting_updated
             REWIND_KECIL_RUN_STATE["printing_updated"] = printing_updated
+            REWIND_KECIL_RUN_STATE["tanggal_qty_updated"] = tanggal_qty_updated
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -2000,6 +2012,107 @@ def _sync_slitting_kolom_into_rewind_py():
             _waste_rewind_cache["ts"] = 0.0
 
     return len(updates)
+
+
+def _sync_rewind_kecil_tanggal_qty_into_rewind_py():
+    """Isi TIGA kolom di REWIND_PY (satu kali baca REWIND_PY_RAW, dua kali
+    batch_update): Tanggal_Rewind, Qty_Awal_Rewind, Qty_Akhir_Rewind.
+
+    Pencocokan: SPK REWIND_PY = SPK REWIND_PY_RAW, NO_JO REWIND_PY = JO
+    REWIND_PY_RAW (keduanya angka murni). SEMUA baris RAW yang cocok dipakai
+    (tanpa filter tanggal):
+      - Tanggal_Rewind   = kolom TANGGAL, format DD/Mmm/YY, unik, urut, dipisah koma
+      - Qty_Awal_Rewind  = kolom JUMLAH_AWAL, digabung lewat rewind_qty.combine_qty()
+      - Qty_Akhir_Rewind = kolom JUMLAH_AKHIR, aturan sama
+
+    Baris REWIND_PY yang SPK/NO_JO-nya angka tapi TIDAK ketemu di RAW
+    dikosongkan (""). Baris dengan SPK/NO_JO non-angka dilewati. Sel yang
+    nilainya sudah sama tidak ditulis ulang. Balikin jumlah SEL yang diupdate.
+
+    Dipanggil dari _run_rewind_kecil_worker(), SETELAH
+    _sync_rewind_kecil_spk_jo_into_rewind_py() (baris REWIND_PY sudah ada)."""
+    sh = _waste_rewind_spreadsheet()
+    raw_ws = sh.worksheet(REWIND_KECIL_RAW_SHEET_NAME)
+    raw_values = raw_ws.get_all_values()
+    if not raw_values:
+        return 0
+
+    raw_header = [str(h).strip() for h in raw_values[0]]
+    r_tgl = import_engine._find_col_index(raw_header, "TANGGAL")
+    r_spk = import_engine._find_col_index(raw_header, "SPK")
+    r_jo = import_engine._find_col_index(raw_header, "JO")
+    r_awal = import_engine._find_col_index(raw_header, "JUMLAH_AWAL")
+    r_akhir = import_engine._find_col_index(raw_header, "JUMLAH_AKHIR")
+    if r_spk is None or r_jo is None:
+        raise RuntimeError(f"Kolom SPK/JO tidak ketemu di header {REWIND_KECIL_RAW_SHEET_NAME}")
+
+    lookup = {}  # (spk_key, jo_key) -> {"dates": [], "awal": [], "akhir": []}
+    for raw_row in raw_values[1:]:
+        def _cell(idx, _row=raw_row):
+            return str(_row[idx]).strip() if idx is not None and idx < len(_row) else ""
+
+        spk, jo = _cell(r_spk), _cell(r_jo)
+        if not (spk.isdigit() and jo.isdigit()):
+            continue
+        entry = lookup.setdefault(
+            (import_engine._numeric_key_prefix(spk), import_engine._numeric_key_prefix(jo)),
+            {"dates": [], "awal": [], "akhir": []},
+        )
+        entry["dates"].append(import_engine._parse_date_flexible(_cell(r_tgl)))
+        entry["awal"].append(_cell(r_awal))
+        entry["akhir"].append(_cell(r_akhir))
+
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    if col_spk is None or col_nojo is None:
+        raise RuntimeError(f"Kolom SPK/NO_JO tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    col_tgl = import_engine._find_col_index(header, "Tanggal_Rewind")
+    col_awal = import_engine._find_col_index(header, "Qty_Awal_Rewind")
+    col_akhir = import_engine._find_col_index(header, "Qty_Akhir_Rewind")
+
+    updates_text = []  # tanggal: RAW supaya "01/Sep/26" tidak diubah Sheets jadi tanggal
+    updates_qty = []   # qty: USER_ENTERED
+    for i, row in enumerate(values[1:], start=2):
+        spk = row[col_spk].strip() if col_spk < len(row) else ""
+        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
+        if not (spk.isdigit() and nojo.isdigit()):
+            continue
+
+        entry = lookup.get((
+            import_engine._numeric_key_prefix(spk),
+            import_engine._numeric_key_prefix(nojo),
+        ))
+
+        def _queue(col, new_value, bucket, _row=row, _i=i):
+            if col is None:
+                return
+            current = _row[col].strip() if col < len(_row) else ""
+            if current != new_value:
+                bucket.append({
+                    "range": gspread.utils.rowcol_to_a1(_i, col + 1),
+                    "values": [[new_value]],
+                })
+
+        _queue(col_tgl, rewind_qty.combine_dates(entry["dates"]) if entry else "", updates_text)
+        _queue(col_awal, rewind_qty.combine_qty(entry["awal"]) if entry else "", updates_qty)
+        _queue(col_akhir, rewind_qty.combine_qty(entry["akhir"]) if entry else "", updates_qty)
+
+    if updates_text:
+        ws.batch_update(updates_text, value_input_option="RAW")
+    if updates_qty:
+        ws.batch_update(updates_qty, value_input_option="USER_ENTERED")
+    if updates_text or updates_qty:
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+
+    return len(updates_text) + len(updates_qty)
 
 
 def _sync_rewind_kecil_spk_jo_into_rewind_py():
