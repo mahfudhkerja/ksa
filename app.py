@@ -947,6 +947,7 @@ def _run_rewind_kecil_worker():
         tanggal_qty_updated = None
         kg_bruto_updated = None
         if proc.returncode == 0:
+            _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
             try:
                 spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
             except Exception as sync_err:
@@ -2478,6 +2479,22 @@ def _fstl_get_sheet_values(sh, sheet_name):
     with _fstl_cache_lock:
         _fstl_sheet_values_cache[sheet_name] = (now, rows)
     return rows
+
+
+def _invalidate_waste_rewind_source_cache():
+    """Hapus cache sheet sumber yang dipakai sinkron Waste Rewind saja
+    (LP_1, JO_1, SL_1, PRINTING_1..5), supaya klik Refresh di halaman
+    Waste Rewind selalu baca data terbaru. Cache sheet lain (halaman FSTL
+    dll) tidak disentuh."""
+    names = {
+        FSTL_LP1_SHEET,
+        FSTL_JO1_SHEET,
+        import_engine.SL_SOURCE_SHEET_NAME,
+        *PRINTING_SHEET_NAMES,
+    }
+    with _fstl_cache_lock:
+        for name in names:
+            _fstl_sheet_values_cache.pop(name, None)
 
 
 def _fstl_invalidate_cache():
