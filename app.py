@@ -96,6 +96,7 @@ from google.oauth2.service_account import Credentials
 
 import import_engine
 import rewind_qty
+import kg_bruto
 import chatbot_engine
 import run_all as run_all_module  # dipakai buat daftar script (SCRIPTS_ORDER) & jalankan satu-satu
 
@@ -944,6 +945,7 @@ def _run_rewind_kecil_worker():
         hasil_slitting_updated = None
         printing_updated = None
         tanggal_qty_updated = None
+        kg_bruto_updated = None
         if proc.returncode == 0:
             try:
                 spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -984,6 +986,14 @@ def _run_rewind_kecil_worker():
                         f"di {WASTE_REWIND_SHEET_NAME}] {tq_err}\n"
                     )
                 err = err or str(tq_err)
+            try:
+                kg_bruto_updated = _sync_kg_bruto_into_rewind_py()
+            except Exception as kg_err:
+                with REWIND_KECIL_RUN_STATE_LOCK:
+                    REWIND_KECIL_RUN_STATE["log"] += (
+                        f"\n[GAGAL ISI Kg_Bruto di {WASTE_REWIND_SHEET_NAME}] {kg_err}\n"
+                    )
+                err = err or str(kg_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
@@ -993,6 +1003,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = hasil_slitting_updated
             REWIND_KECIL_RUN_STATE["printing_updated"] = printing_updated
             REWIND_KECIL_RUN_STATE["tanggal_qty_updated"] = tanggal_qty_updated
+            REWIND_KECIL_RUN_STATE["kg_bruto_updated"] = kg_bruto_updated
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -2113,6 +2124,83 @@ def _sync_rewind_kecil_tanggal_qty_into_rewind_py():
             _waste_rewind_cache["ts"] = 0.0
 
     return len(updates_text) + len(updates_qty)
+
+
+FORM_ST1_SHEET_NAME = "FORM_ST_1"
+
+
+def _sync_kg_bruto_into_rewind_py():
+    """Isi kolom Kg_Bruto di REWIND_PY.
+
+    Untuk tiap baris REWIND_PY dengan NO_JO angka murni: cari baris di sheet
+    FORM_ST_1 (spreadsheet FSTL, lewat _fstl_spreadsheet()) yang SUFFIX kolom
+    JO-nya (angka setelah '/' terakhir) sama dengan NO_JO -- kolom JO_DIGIT
+    TIDAK dipakai. Hanya baris ber-STATUS yang ada di kg_bruto.STATUS_PRIORITY.
+    Berat diambil dari BERAT/KG sesuai posisi bagian polos (tanpa '@') di
+    JUMLAH_MASUK_GBJ, lalu Kg_Bruto = modus (aturan lengkap ada di kg_bruto.py).
+
+    NO_JO yang tidak ketemu di FORM_ST_1 -> Kg_Bruto dikosongkan (""). Sel yang
+    nilainya sudah sama tidak ditulis ulang. Balikin jumlah SEL yang diupdate."""
+    fstl_sh = _fstl_spreadsheet()
+    form_ws = fstl_sh.worksheet(FORM_ST1_SHEET_NAME)
+    form_values = form_ws.get_all_values()
+    if not form_values:
+        return 0
+
+    f_header = [str(h).strip() for h in form_values[0]]
+    f_jo = import_engine._find_col_index(f_header, "JO")  # exact: JO_DIGIT beda header
+    f_status = import_engine._find_col_index(f_header, "STATUS")
+    f_berat = import_engine._find_col_index(f_header, "BERAT/KG")
+    f_jumlah = _fstl_find_col(f_header, "JUMLAH_MASUK_GBJ", "JUMLAH_MASUK")
+    missing = [n for n, c in (("JO", f_jo), ("STATUS", f_status),
+                              ("BERAT/KG", f_berat), ("JUMLAH_MASUK_GBJ", f_jumlah)) if c is None]
+    if missing:
+        raise RuntimeError(f"Kolom {', '.join(missing)} tidak ketemu di header {FORM_ST1_SHEET_NAME}")
+
+    by_suffix = {}  # suffix_key -> [(rank, row_idx, jumlah, berat)]
+    for row_idx, row in enumerate(form_values[1:], start=2):
+        def _cell(idx, _row=row):
+            return str(_row[idx]).strip() if idx < len(_row) else ""
+
+        rank = kg_bruto.status_rank(_cell(f_status))
+        if rank is None:
+            continue
+        key = _fstl_suffix_key(_cell(f_jo))
+        if not key:
+            continue
+        by_suffix.setdefault(key, []).append((rank, row_idx, _cell(f_jumlah), _cell(f_berat)))
+
+    sh = _waste_rewind_spreadsheet()
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    col_kg = import_engine._find_col_index(header, "Kg_Bruto")
+    if col_nojo is None or col_kg is None:
+        raise RuntimeError(f"Kolom NO_JO/Kg_Bruto tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    updates = []
+    for i, row in enumerate(values[1:], start=2):
+        nojo = row[col_nojo].strip() if col_nojo < len(row) else ""
+        if not nojo.isdigit():
+            continue
+        cands = by_suffix.get(import_engine._numeric_key_prefix(nojo))
+        new_value = kg_bruto.pick_kg_bruto(cands) if cands else ""
+        current = row[col_kg].strip() if col_kg < len(row) else ""
+        if current != new_value:
+            updates.append({
+                "range": gspread.utils.rowcol_to_a1(i, col_kg + 1),
+                "values": [[new_value]],
+            })
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+    return len(updates)
 
 
 def _sync_rewind_kecil_spk_jo_into_rewind_py():
