@@ -542,6 +542,9 @@
   .wrw-detail-grid{
     overflow:auto; padding:18px; display:grid;
     grid-template-columns:repeat(2,minmax(0,1fr)); gap:0;
+    /* baris menyesuaikan isi (teks panjang seperti Tgl Rewind tidak nimpa baris bawahnya)
+       walau jumlah baris banyak & modal kena max-height + scroll */
+    grid-auto-rows:max-content; align-content:start;
   }
   .wrw-detail-item{
     display:grid; grid-template-columns:minmax(150px,42%) 1fr;
@@ -1358,7 +1361,7 @@
     if(page === "gudangBjb") loadGudangStatus("gudangBjb");
     if(page === "gudangBjl") loadGudangStatus("gudangBjl");
     if(page === "fstlWaste") fstlLoadList();
-    if(page === "wasteRewind") loadWasteRewind();
+    if(page === "wasteRewind") loadWasteRewind(true, {silentToast:true}); // selalu baca ulang dari sheet, bukan cache server
     if(page === "chatbot") chatInit();
   }
 
@@ -2250,7 +2253,7 @@
     if(force && btn) btn.classList.add("spinning");
     body.innerHTML = skeletonRows(wasteRewindVisibleHeaders.length + 1);
     try{
-      const res = await fetch(`${API_BASE}/api/waste-rewind${force?"?refresh=1":""}`);
+      const res = await fetch(`${API_BASE}/api/waste-rewind${force?"?refresh=1":""}`, {cache:"no-store"});
       const data = await res.json();
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat Waste Rewind");
       wasteRewindHeaders = data.headers || [];
