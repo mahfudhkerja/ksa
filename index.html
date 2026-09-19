@@ -1361,7 +1361,7 @@
     if(page === "gudangBjb") loadGudangStatus("gudangBjb");
     if(page === "gudangBjl") loadGudangStatus("gudangBjl");
     if(page === "fstlWaste") fstlLoadList();
-    if(page === "wasteRewind") loadWasteRewind(true, {silentToast:true}); // selalu baca ulang dari sheet, bukan cache server
+    if(page === "wasteRewind") loadWasteRewind();
     if(page === "chatbot") chatInit();
   }
 
