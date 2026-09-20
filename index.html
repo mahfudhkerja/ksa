@@ -580,6 +580,17 @@
   .wrw-act.calc:hover:not([disabled]){background:#1c3f66;}
   .wrw-act.finish{background:#2e9e5b; border-color:#2e9e5b; color:#fff;}
   .wrw-act.finish:hover:not([disabled]){background:#25834b;}
+  .wrw-select{
+    height:44px; box-sizing:border-box; border:1.5px solid var(--line); border-radius:10px;
+    padding:0 34px 0 12px; background:#fff; color:var(--ink); font-family:inherit; font-size:13px;
+    cursor:pointer; outline:none; transition:border-color .15s ease, box-shadow .15s ease;
+  }
+  .wrw-select:focus{border-color:var(--blue); box-shadow:0 0 0 4px var(--blue-50);}
+  .wrw-count{font-size:12px; color:var(--ink-soft); font-weight:600; white-space:nowrap;}
+  .wrw-fin-badge{
+    display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
+    background:#e3f6ea; color:#1f7a45; font-size:10px; font-weight:800; white-space:nowrap;
+  }
   .wrw-act.danger{border-color:#c0392b; color:#c0392b;}
   .wrw-act.danger:hover:not([disabled]){background:#fdecea;}
   .wrw-act[disabled]{opacity:.55; cursor:not-allowed;}
@@ -1136,9 +1147,20 @@
               </div>
               <div class="wrw-toolbar">
                 <div class="wrw-search"><span class="ic">🔍</span><input id="wrwSearch" placeholder="Cari JO / SPK / Produk..." oninput="renderWasteRewind()"></div>
-                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';renderWasteRewind()">✖ Reset</button>
-                <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
+                <select class="wrw-select" id="wrwFilterStatus" onchange="renderWasteRewind()" title="Filter status Finish per SPK/JO">
+                  <option value="">Semua status</option>
+                  <option value="finish">✔ Sudah Finish</option>
+                  <option value="belum">Belum Finish</option>
+                </select>
+                <select class="wrw-select" id="wrwSort" onchange="renderWasteRewind()" title="Urutkan berdasarkan persentase waste">
+                  <option value="">Urutan default</option>
+                  <option value="sl">Persentase SL terbesar</option>
+                  <option value="slrw">Persentase SL-RW terbesar</option>
+                </select>
+                <button class="btn-danger-outline" onclick="wrwResetFilters()">✖ Reset</button>
+                <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada + hitung waste untuk baris yang belum Finish (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
+              <div class="wrw-count" id="wrwCount" style="margin:-4px 0 8px;"></div>
               <div class="rwk-status" id="wrwRefreshStatus" style="display:none;"></div>
               <pre id="wrwRefreshLog" class="run-log" style="display:none;"></pre>
               <div class="table-wrap">
@@ -2238,8 +2260,9 @@
         const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
         const mhNote = (st.meter_hilang_updated ?? 0) > 0 ? `, ${st.meter_hilang_updated} sel Meter Hilang diperbarui` : "";
         const rvNote = (st.revisi_applied ?? 0) > 0 ? `, ${st.revisi_applied} sel revisi diterapkan` : "";
+        const wsNote = (st.waste_computed ?? 0) > 0 ? `, waste dihitung untuk ${st.waste_computed} baris` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+rvNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+rvNote).replace(/^, /,"")+")" : ""}`, "success");
+        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+rvNote+wsNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+rvNote+wsNote).replace(/^, /,"")+")" : ""}`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
@@ -2329,16 +2352,41 @@
     head.innerHTML = wasteRewindVisibleHeaders.map(h=>`<th>${escHtml(aliasWrwHeader(h))}</th>`).join("")+`<th>DETAIL</th>`;
     makeColumnsResizable("wrwTable", wrwColWidths);
   }
+  // "7,52%" -> 7.52 ; kosong/tidak valid -> -Infinity (jatuh ke paling bawah saat urut terbesar)
+  function wrwPct(v){
+    const n = parseFloat(String(v??"").replace("%","").trim().replace(/\./g,"").replace(",","."));
+    return isNaN(n) ? -Infinity : n;
+  }
+  function wrwResetFilters(){
+    document.getElementById("wrwSearch").value="";
+    document.getElementById("wrwFilterStatus").value="";
+    document.getElementById("wrwSort").value="";
+    renderWasteRewind();
+  }
   function renderWasteRewind(){
     const body=document.getElementById("wrwBody"); if(!body) return;
     const kw=(document.getElementById("wrwSearch")?.value||"").toLowerCase();
-    const rows=wasteRewindRows.filter(r=>!kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw)));
+    const fStatus=document.getElementById("wrwFilterStatus")?.value||"";
+    const sortBy=document.getElementById("wrwSort")?.value||"";
+    let rows=wasteRewindRows.filter(r=>{
+      if(fStatus==="finish" && !wrwIsFinished(r)) return false;
+      if(fStatus==="belum" && wrwIsFinished(r)) return false;
+      return !kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw));
+    });
+    const sortCol = {sl:"Persentase_Waste_(%)", slrw:"Waste_Slitting_After_Rewind_Presentase"}[sortBy];
+    if(sortCol) rows = rows.map((r,i)=>[r,i]).sort((a,b)=>(wrwPct(b[0][sortCol])-wrwPct(a[0][sortCol])) || (a[1]-b[1])).map(x=>x[0]);  // terbesar dulu, kosong paling bawah, urutan asli dijaga
+    const cnt=document.getElementById("wrwCount");
+    if(cnt){
+      const nFin = wasteRewindRows.filter(wrwIsFinished).length;
+      cnt.textContent = `Menampilkan ${rows.length} dari ${wasteRewindRows.length} data · ${nFin} sudah Finish, ${wasteRewindRows.length-nFin} belum`;
+    }
     if(!rows.length){ body.innerHTML=emptyState(wasteRewindVisibleHeaders.length+1,"Tidak ada data Waste Rewind"); return; }
     body.innerHTML=rows.map((r,i)=>{ const revCols = wrwRevisedCols(r); return `<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
       wasteRewindVisibleHeaders.map(h=>{
         const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(r[h]);
         const star = revCols.includes(h) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : "";
-        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}${star}</td>`;
+        const fin = (h==="JO" && wrwIsFinished(r)) ? ' <span class="wrw-fin-badge" title="Sudah Finish">✔ Finish</span>' : "";
+        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}${star}${fin}</td>`;
       }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`; }).join("");
   }
   let wrwDetailIdx = -1;
