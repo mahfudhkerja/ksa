@@ -2181,8 +2181,9 @@
         const spkJoNote = (st.spk_jo_added ?? 0) > 0 ? `, +${st.spk_jo_added} baris SPK/NO_JO baru` : "";
         const bahanNote = (st.bahan_awal_updated ?? 0) > 0 ? `, ${st.bahan_awal_updated} sel Bahan_Awal_Printing diperbarui` : "";
         const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
+        const mhNote = (st.meter_hilang_updated ?? 0) > 0 ? `, ${st.meter_hilang_updated} sel Meter Hilang diperbarui` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote) ? " ("+(spkJoNote+bahanNote+konvNote).replace(/^, /,"")+")" : ""}`, "success");
+        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote).replace(/^, /,"")+")" : ""}`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }

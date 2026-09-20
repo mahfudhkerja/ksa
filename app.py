@@ -79,6 +79,7 @@ env var / default di bawah), bukan SPREADSHEET_ID utama:
                             baris kosong pemisah.
 """
 
+import math
 import os
 import re
 import subprocess
@@ -970,6 +971,7 @@ def _run_rewind_kecil_worker():
         tanggal_qty_updated = None
         kg_bruto_updated = None
         konversi_updated = None
+        meter_hilang_updated = None
         _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
         try:
             spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -1028,6 +1030,16 @@ def _run_rewind_kecil_worker():
                     f"di {WASTE_REWIND_SHEET_NAME}] {kv_err}\n"
                 )
             err = err or str(kv_err)
+        # HARUS setelah Konversi_Meter_Jumbo_* terisi (jadi input Meter_Jumbo_Hilang_Rewind)
+        try:
+            meter_hilang_updated = _sync_meter_hilang_into_rewind_py()
+        except Exception as mh_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL ISI Meter_Jumbo_Hilang_Rewind/Meter_Hilang_Rewind "
+                    f"di {WASTE_REWIND_SHEET_NAME}] {mh_err}\n"
+                )
+            err = err or str(mh_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = 0
@@ -1039,6 +1051,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["tanggal_qty_updated"] = tanggal_qty_updated
             REWIND_KECIL_RUN_STATE["kg_bruto_updated"] = kg_bruto_updated
             REWIND_KECIL_RUN_STATE["konversi_updated"] = konversi_updated
+            REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = meter_hilang_updated
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -1072,6 +1085,8 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = None
         REWIND_KECIL_RUN_STATE["hasil_slitting_updated"] = None
         REWIND_KECIL_RUN_STATE["printing_updated"] = None
+        REWIND_KECIL_RUN_STATE["konversi_updated"] = None
+        REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
     thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
@@ -2300,6 +2315,112 @@ def _sync_konversi_meter_jumbo_into_rewind_py():
                     "range": gspread.utils.rowcol_to_a1(i, col_dst + 1),
                     "values": [[new_value]],
                 })
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+    return len(updates)
+
+
+def hitung_meter_hilang(meter, potongan, up):
+    """Port dari fungsi HITUNG (Apps Script). Ubah total meter jadi teks
+    "<rol utuh> + <up>@<sisa>":
+      utuh = floor(round(meter) / potongan), sisa = round(meter) % potongan
+      utuh == 0            -> "<up>@<meter>"
+      sisa  == 0           -> "<utuh*up>"
+      selain itu           -> "<utuh*up> + <up>@<sisa>"
+    Balikin "" (sel dikosongkan) kalau input tidak bisa dihitung: meter/up
+    kosong atau bukan angka, atau potongan <= 0. Kalau meter (dibulatkan) <= 0
+    hasilnya "0", sama seperti HITUNG aslinya."""
+    if meter is None or potongan is None or up is None:
+        return ""
+    if potongan <= 0:
+        return ""
+    meter_bulat = math.floor(meter + 0.5)  # = Math.round di JS (bukan round() Python yang bulatkan ke genap)
+    if meter_bulat <= 0:
+        return "0"
+    utuh = int(meter_bulat // potongan)
+    sisa = round(meter_bulat - utuh * potongan, 2)
+    fmt = import_engine._format_number
+    if utuh == 0:
+        return f"{fmt(up)}@{fmt(meter_bulat)}"
+    nilai_utuh = utuh * up
+    if sisa == 0:
+        return fmt(nilai_utuh)
+    return f"{fmt(nilai_utuh)} + {fmt(up)}@{fmt(sisa)}"
+
+
+def _sync_meter_hilang_into_rewind_py():
+    """Isi DUA kolom di REWIND_PY (satu kali baca, satu kali batch_update):
+      - Meter_Jumbo_Hilang_Rewind = Konversi_Meter_Jumbo_Qty_Awal_Rewind
+                                    - Konversi_Meter_Jumbo_Qty_Akhir_Rewind
+      - Meter_Hilang_Rewind       = hitung_meter_hilang(Meter_Jumbo_Hilang_Rewind,
+                                    Potongan, UP_Slitting)   (rumus HITUNG)
+
+    HARUS dipanggil SETELAH _sync_konversi_meter_jumbo_into_rewind_py() dan
+    sync UP_Slitting/Potongan (semua dibaca ULANG dari sheet). Baris yang
+    tidak bisa dihitung (Awal/Akhir kosong, Potongan kosong/<=0, UP kosong)
+    -> sel dikosongkan. Sel yang nilainya sudah sama tidak ditulis ulang.
+    Balikin jumlah SEL yang diupdate."""
+    sh = _waste_rewind_spreadsheet()
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    find = import_engine._find_col_index
+    names = (
+        "Konversi_Meter_Jumbo_Qty_Awal_Rewind", "Konversi_Meter_Jumbo_Qty_Akhir_Rewind",
+        "Meter_Jumbo_Hilang_Rewind", "Meter_Hilang_Rewind", "Potongan", "UP_Slitting",
+    )
+    cols = {n: find(header, n) for n in names}
+    missing = [n for n, c in cols.items() if c is None]
+    if missing:
+        raise RuntimeError(f"Kolom {', '.join(missing)} tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    c_awal = cols["Konversi_Meter_Jumbo_Qty_Awal_Rewind"]
+    c_akhir = cols["Konversi_Meter_Jumbo_Qty_Akhir_Rewind"]
+    c_jh = cols["Meter_Jumbo_Hilang_Rewind"]
+    c_mh = cols["Meter_Hilang_Rewind"]
+    c_pot = cols["Potongan"]
+    c_up = cols["UP_Slitting"]
+    parse = import_engine._parse_flexible_number
+
+    updates = []
+    for i, row in enumerate(values[1:], start=2):
+        def _cell(idx, _row=row):
+            return str(_row[idx]).strip() if idx < len(_row) else ""
+
+        # 1) Meter_Jumbo_Hilang_Rewind = Awal - Akhir
+        awal, akhir = parse(_cell(c_awal)), parse(_cell(c_akhir))
+        if awal is None or akhir is None:
+            jumbo_hilang = None
+            new_jh = ""
+        else:
+            jumbo_hilang = round(awal - akhir, 2)
+            new_jh = import_engine._format_number(jumbo_hilang)
+
+        cur_jh = _cell(c_jh)
+        cur_jh_num = parse(cur_jh)
+        if jumbo_hilang is None:
+            same = cur_jh == ""
+        else:
+            same = cur_jh_num is not None and abs(cur_jh_num - jumbo_hilang) < 0.005
+        if not same:
+            updates.append({
+                "range": gspread.utils.rowcol_to_a1(i, c_jh + 1),
+                "values": [[new_jh]],
+            })
+
+        # 2) Meter_Hilang_Rewind = HITUNG(Meter_Jumbo_Hilang, Potongan, UP)
+        new_mh = hitung_meter_hilang(jumbo_hilang, parse(_cell(c_pot)), parse(_cell(c_up)))
+        if _cell(c_mh) != new_mh:
+            updates.append({
+                "range": gspread.utils.rowcol_to_a1(i, c_mh + 1),
+                "values": [[new_mh]],
+            })
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
