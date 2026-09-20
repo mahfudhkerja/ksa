@@ -1437,10 +1437,12 @@ def _read_waste_rewind(force=False):
             if any(str(v).strip() for v in row_obj.values()):
                 rows.append(row_obj)
 
+    revised = _read_revisi_map(sh, headers) if headers else {}
     with _waste_rewind_cache_lock:
         _waste_rewind_cache["ts"] = now
         _waste_rewind_cache["headers"] = headers
         _waste_rewind_cache["rows"] = rows
+        _waste_rewind_cache["revised"] = revised
 
     return headers, rows
 
@@ -1458,6 +1460,7 @@ def get_waste_rewind():
             "headers": headers,
             "visible_headers": WASTE_REWIND_VISIBLE_HEADERS,
             "rows": rows,
+            "revised": dict(_waste_rewind_cache.get("revised") or {}),  # {"SPK||NO_JO": [kolom revisi]}
             "count": len(rows),
         })
     except Exception as e:
@@ -1909,6 +1912,90 @@ def waste_rewind_revisi():
         return _wrw_error_response(e)
 
 
+def _wrw_revisi_col_map(rev_header, header):
+    """Pasangan (indeks kolom di REWIND_PY_REVISI, indeks kolom di REWIND_PY)
+    untuk kolom-kolom DATA revisi (bukan Jam/Nama_User/JO/SPK/NO_JO/Status).
+    Nama kembar / kosong: hanya kemunculan pertama yang dipakai."""
+    norm = import_engine._norm
+    find = import_engine._find_col_index
+    skip = {norm(x) for x in _WRW_REVISI_SKIP}
+    out, seen = [], set()
+    for j, h in enumerate(rev_header):
+        k = norm(h)
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        if k in skip:
+            continue
+        c = find(header, h)
+        if c is not None:
+            out.append((j, c))
+    return out
+
+
+def _wrw_pair_key(spk, no_jo):
+    return f"{str(spk).strip()}||{str(no_jo).strip()}"
+
+
+def _read_revisi_map(sh, header):
+    """{"SPK||NO_JO": [nama kolom REWIND_PY yang punya revisi]} -- dipakai
+    frontend buat menandai sel hasil revisi dengan *. Sheet REVISI tidak ada
+    / gagal dibaca -> {} (tampilan tetap jalan)."""
+    try:
+        rev = sh.worksheet(WASTE_REWIND_REVISI_SHEET).get_all_values()
+    except Exception as e:
+        print(f"[revisi map] dilewati: {e}")
+        return {}
+    if len(rev) < 2:
+        return {}
+    rev_header = [str(h).strip() for h in rev[0]]
+    rc_spk = import_engine._find_col_index(rev_header, "SPK")
+    rc_nojo = import_engine._find_col_index(rev_header, "NO_JO")
+    if rc_spk is None or rc_nojo is None:
+        return {}
+    col_map = _wrw_revisi_col_map(rev_header, header)
+    out = {}
+    for row in rev[1:]:
+        r = _wrw_pad(row, len(rev_header))
+        key = _wrw_pair_key(r[rc_spk], r[rc_nojo])
+        for j, c in col_map:
+            if str(r[j]).strip():
+                out.setdefault(key, set()).add(header[c])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+@app.route("/api/waste-rewind/hapus-revisi", methods=["POST"])
+def waste_rewind_hapus_revisi():
+    """Hapus SEMUA baris revisi milik pasangan (SPK, NO_JO) dari
+    REWIND_PY_REVISI. Nilai default di REWIND_PY dikembalikan oleh refresh
+    Waste Rewind berikutnya (frontend menjalankannya otomatis) -- nilai default
+    hanya bisa dihitung ulang dari data mentah, jadi tidak ditebak di sini."""
+    spk, no_jo, _user = _wrw_body()
+    try:
+        if not spk or not no_jo:
+            raise ValueError("SPK / NO_JO kosong.")
+        sh = _waste_rewind_spreadsheet()
+        ws_r, values, header = _wrw_sheet_and_header(sh, WASTE_REWIND_REVISI_SHEET)
+        deleted = 0
+        while True:
+            hit, _ = _wrw_find_pair(values, header, spk, no_jo)
+            if hit is None:
+                break
+            ws_r.delete_rows(hit)
+            del values[hit - 1]
+            deleted += 1
+        if deleted == 0:
+            raise LookupError(f"Tidak ada revisi untuk SPK {spk} / NO JO {no_jo} di {WASTE_REWIND_REVISI_SHEET}.")
+        _wrw_invalidate_cache()
+        return jsonify({
+            "success": True,
+            "deleted": deleted,
+            "message": f"{deleted} baris revisi dihapus dari {WASTE_REWIND_REVISI_SHEET}.",
+        })
+    except Exception as e:
+        return _wrw_error_response(e)
+
+
 def _apply_rewind_revisi_into_rewind_py():
     """LANGKAH TERAKHIR refresh Waste Rewind (setelah semua sync lain, karena
     sync lain menghitung ulang kolom turunan dari data mentah). Baca
@@ -1942,18 +2029,7 @@ def _apply_rewind_revisi_into_rewind_py():
         r = _wrw_pad(row, len(header))
         row_by_key[(str(r[c_spk]).strip(), str(r[c_nojo]).strip())] = i
 
-    skip = {norm(x) for x in _WRW_REVISI_SKIP}
-    col_map, seen = [], set()  # (kolom di REVISI, kolom di REWIND_PY)
-    for j, h in enumerate(rev_header):
-        k = norm(h)
-        if not k or k in seen:
-            continue
-        seen.add(k)
-        if k in skip:
-            continue
-        c = find(header, h)
-        if c is not None:
-            col_map.append((j, c))
+    col_map = _wrw_revisi_col_map(rev_header, header)  # (kolom di REVISI, kolom di REWIND_PY)
 
     desired = {}
     for row in rev[1:]:

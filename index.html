@@ -592,6 +592,15 @@
     padding:6px 8px; font:inherit; font-size:12px; color:var(--ink); background:#fff;
   }
   .wrw-detail-item .val input:focus{outline:none; border-color:#3572b6; box-shadow:0 0 0 3px rgba(53,114,182,.15);}
+  /* Tanda * = nilai hasil revisi (ada entri di REWIND_PY_REVISI) */
+  .wrw-detail-item.revised .val{position:relative; padding-right:26px; background:#fffaf0;}
+  .wrw-detail-item.revised .val::after{
+    content:"*"; position:absolute; top:5px; right:10px;
+    color:#d9480f; font-weight:900; font-size:18px; line-height:1;
+  }
+  .wrw-detail-item.revised .val input{padding-right:24px;}
+  .wrw-rev-star{color:#d9480f; font-weight:900;}
+  .wrw-rev-legend{margin-right:auto; font-size:11.5px; color:#8a4b12; font-weight:700;}
   .wrw-detail-item.changed .val{background:#fff8e1;}
   .wrw-detail-item.changed .val input{border-color:#e0a800; background:#fffdf4;}
   .wrw-detail-item.locked .lbl::after{content:" 🔒"; font-weight:400;}
@@ -2290,6 +2299,9 @@
     return !isNaN(n) && n===0;
   }
   let wasteRewindHeaders = [], wasteRewindRows = [];
+  let wasteRewindRevised = {};   // {"SPK||NO_JO": [nama kolom hasil revisi]} dari server
+  function wrwPairKey(row){ return `${String(row["SPK"]??"").trim()}||${String(row["NO_JO"]??"").trim()}`; }
+  function wrwRevisedCols(row){ return wasteRewindRevised[wrwPairKey(row)] || []; }
   function escHtml(v){ return String(v ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
   async function loadWasteRewind(force=false, opts={}){
     const body = document.getElementById("wrwBody");
@@ -2303,6 +2315,7 @@
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat Waste Rewind");
       wasteRewindHeaders = data.headers || [];
       wasteRewindRows = data.rows || [];
+      wasteRewindRevised = data.revised || {};
       renderWasteRewindHead();
       renderWasteRewind();
       if(force && !opts.silentToast) toast(`Waste Rewind diperbarui — ${wasteRewindRows.length} baris`, "success");
@@ -2321,11 +2334,12 @@
     const kw=(document.getElementById("wrwSearch")?.value||"").toLowerCase();
     const rows=wasteRewindRows.filter(r=>!kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw)));
     if(!rows.length){ body.innerHTML=emptyState(wasteRewindVisibleHeaders.length+1,"Tidak ada data Waste Rewind"); return; }
-    body.innerHTML=rows.map((r,i)=>`<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
+    body.innerHTML=rows.map((r,i)=>{ const revCols = wrwRevisedCols(r); return `<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
       wasteRewindVisibleHeaders.map(h=>{
         const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(r[h]);
-        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}</td>`;
-      }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`).join("");
+        const star = revCols.includes(h) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : "";
+        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}${star}</td>`;
+      }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`; }).join("");
   }
   let wrwDetailIdx = -1;
   let wrwRevisiMode = false;
@@ -2341,16 +2355,18 @@
     const hint = wrwRevisiMode
       ? `<div class="wrw-revisi-hint">✏️ <b>Mode Revisi</b> — ubah kolom yang perlu direvisi. Hanya kolom yang <b>berubah</b> yang dikirim ke REWIND_PY_REVISI. Kolom bertanda 🔒 tidak bisa diubah.</div>`
       : "";
+    const revCols = wrwRevisedCols(row);
     document.getElementById("wrwDetailGrid").innerHTML = hint + wasteRewindHeaders.map(hd=>{
       const val = row[hd] ?? "";
+      const isRev = revCols.includes(hd);
       const locked = WRW_REVISI_LOCKED.includes(hd);
       const lbl = escHtml(aliasWrwHeader(hd));
       if(wrwRevisiMode && !locked){
-        return `<div class="wrw-detail-item"><div class="lbl">${lbl}</div><div class="val"><input type="text" data-h="${escHtml(hd)}" data-orig="${escHtml(val)}" value="${escHtml(val)}" oninput="wrwRevisiInput(this)"></div></div>`;
+        return `<div class="wrw-detail-item${isRev?" revised":""}"><div class="lbl">${lbl}</div><div class="val"${isRev?' title="Hasil revisi"':""}><input type="text" data-h="${escHtml(hd)}" data-orig="${escHtml(val)}" value="${escHtml(val)}" oninput="wrwRevisiInput(this)"></div></div>`;
       }
       const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(hd) && wrwIsZeroOrEmpty(val);
-      const cls = "wrw-detail-item" + (danger?" wrw-cell-danger":"") + (wrwRevisiMode && locked ? " locked" : "");
-      return `<div class="${cls}"><div class="lbl">${lbl}</div><div class="val">${escHtml(val)||"-"}</div></div>`;
+      const cls = "wrw-detail-item" + (danger?" wrw-cell-danger":"") + (wrwRevisiMode && locked ? " locked" : "") + (isRev ? " revised" : "");
+      return `<div class="${cls}"><div class="lbl">${lbl}</div><div class="val"${isRev?' title="Hasil revisi"':""}>${escHtml(val)||"-"}</div></div>`;
     }).join("");
     renderWrwFooter();
   }
@@ -2381,7 +2397,10 @@
     if(!fin) finishBtn = `<button class="wrw-act finish" onclick="wrwDoAction('finish',this)">✅ Set Status Finish</button>`;
     else if(wrwIsAdmin()) finishBtn = `<button class="wrw-act danger" onclick="wrwDoAction('unfinish',this)">↩️ Lepas Status Finish</button>`;
     else finishBtn = `<button class="wrw-act finish" disabled title="Sudah Finish. Hanya Admin yang bisa melepas status ini.">🔒 Sudah Finish</button>`;
+    const hasRev = wrwRevisedCols(row).length > 0;
     foot.innerHTML =
+      (hasRev ? `<span class="wrw-rev-legend">* = hasil revisi</span>`+
+                `<button class="wrw-act danger" onclick="wrwDeleteRevisi(this)" title="Hapus revisi & kembali ke data default">🗑️ Hapus Revisi</button>` : "")+
       `<button class="wrw-act" onclick="wrwStartRevisi()">✏️ Revisi</button>`+
       `<button class="wrw-act calc" ${fin?'disabled title="Sudah Finish: waste terkunci"':""} onclick="wrwDoAction('hitung',this)">🧮 Hitung Waste</button>`+
       finishBtn;
@@ -2435,7 +2454,23 @@
     const ident = `SPK ${row["SPK"]||"-"} / NO JO ${row["NO_JO"]||"-"}`;
     const list = keys.map(k=>`• ${aliasWrwHeader(k)}: ${row[k]||"-"} → ${ch[k]}`).join("\n");
     if(!confirm(`Kirim revisi ${ident} ke sheet REWIND_PY_REVISI?\n\n${list}`)) return;
-    return wrwPost("revisi", btn, {changes: ch}, ()=>{ wrwRevisiMode = false; });
+    return wrwPost("revisi", btn, {changes: ch}, ()=>{
+      wrwRevisiMode = false;
+      const k = wrwPairKey(row);   // tandai * tanpa nunggu reload dari server
+      wasteRewindRevised[k] = [...new Set([...(wasteRewindRevised[k]||[]), ...keys])];
+    });
+  }
+  // Hapus semua revisi baris ini -> mode default. Nilai default cuma bisa
+  // dihitung ulang dari data mentah, jadi Refresh Waste Rewind dijalankan otomatis.
+  async function wrwDeleteRevisi(btn){
+    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
+    const cols = wrwRevisedCols(row);
+    const ident = `SPK ${row["SPK"]||"-"} / NO JO ${row["NO_JO"]||"-"}`;
+    const list = cols.map(c=>`• ${aliasWrwHeader(c)}`).join("\n");
+    if(!confirm(`Hapus semua revisi ${ident} dari sheet REWIND_PY_REVISI dan kembali ke data default?\n\nKolom hasil revisi:\n${list}\n\nSetelah dihapus, Refresh Waste Rewind akan berjalan otomatis untuk menghitung ulang nilai default.`)) return;
+    let deleted = false;
+    await wrwPost("hapus-revisi", btn, {}, ()=>{ deleted = true; delete wasteRewindRevised[wrwPairKey(row)]; });
+    if(deleted){ closeWasteRewindDetail(); renderWasteRewind(); refreshWasteRewindFull(); }
   }
   function closeWasteRewindDetail(){ wrwRevisiMode=false; document.getElementById("wrwDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape") closeWasteRewindDetail();});
