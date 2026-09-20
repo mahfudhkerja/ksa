@@ -566,6 +566,22 @@
     padding:10px 11px; font-size:12px; color:var(--ink);
     line-height:1.4; overflow-wrap:anywhere; word-break:break-word;
   }
+  .wrw-modal-foot{
+    display:flex; justify-content:flex-end; align-items:center; flex-wrap:wrap; gap:10px;
+    padding:14px 20px; border-top:1px solid #e7ecf2; background:#fff; flex-shrink:0;
+  }
+  .wrw-act{
+    border:1.5px solid #3572b6; background:#fff; color:#1e4573; border-radius:10px;
+    padding:10px 16px; font-family:inherit; font-size:12.5px; font-weight:800; cursor:pointer;
+    transition:all .15s ease; white-space:nowrap;
+  }
+  .wrw-act:hover:not([disabled]){background:#eef4fb; transform:translateY(-1px);}
+  .wrw-act.calc{background:#244f80; border-color:#244f80; color:#fff;}
+  .wrw-act.calc:hover:not([disabled]){background:#1c3f66;}
+  .wrw-act.finish{background:#2e9e5b; border-color:#2e9e5b; color:#fff;}
+  .wrw-act.finish:hover:not([disabled]){background:#25834b;}
+  .wrw-act[disabled]{opacity:.55; cursor:not-allowed;}
+  @media(max-width:600px){ .wrw-modal-foot .wrw-act{flex:1 1 100%;} }
   @media(max-width:900px){
     .wrw-table{min-width:820px;}
     .wrw-detail-grid{grid-template-columns:1fr;}
@@ -657,6 +673,11 @@
         <button class="wrw-modal-close" onclick="closeWasteRewindDetail()">✕</button>
       </div>
       <div class="wrw-detail-grid" id="wrwDetailGrid"></div>
+      <div class="wrw-modal-foot">
+        <button class="wrw-act" id="wrwBtnRevisi" onclick="wrwDoAction('revisi')">✏️ Revisi</button>
+        <button class="wrw-act calc" id="wrwBtnHitung" onclick="wrwDoAction('hitung')">🧮 Hitung Waste</button>
+        <button class="wrw-act finish" id="wrwBtnFinish" onclick="wrwDoAction('finish')">✅ Set Status Finish</button>
+      </div>
     </div>
   </div>
 
@@ -2295,15 +2316,53 @@
         return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}</td>`;
       }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`).join("");
   }
-  function openWasteRewindDetail(idx){
-    const row=wasteRewindRows[idx]; if(!row) return;
+  let wrwDetailIdx = -1;
+  function renderWasteRewindDetailBody(){
+    const row=wasteRewindRows[wrwDetailIdx]; if(!row) return;
     document.getElementById("wrwDetailTitle").innerText="Detail Waste Rewind";
     document.getElementById("wrwDetailSub").innerText=`JO: ${row["JO"]||"-"} · Produk: ${row["Nama_Produk"]||"-"}`;
     document.getElementById("wrwDetailGrid").innerHTML=wasteRewindHeaders.map(h=>{
       const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(row[h]);
       return `<div class="wrw-detail-item${danger?' wrw-cell-danger':''}"><div class="lbl">${escHtml(aliasWrwHeader(h))}</div><div class="val">${escHtml(row[h]??"")||"-"}</div></div>`;
     }).join("");
+  }
+  function openWasteRewindDetail(idx){
+    if(!wasteRewindRows[idx]) return;
+    wrwDetailIdx = idx;
+    renderWasteRewindDetailBody();
     document.getElementById("wrwDetailOverlay").style.display="flex";
+  }
+  // Aksi di modal Detail: hitung (isi 4 kolom waste) / finish (Status=Finish +
+  // kirim ke REWIND_PY_FINISH) / revisi (kirim ke REWIND_PY_REVISI). Baris
+  // dicari di server lewat pasangan SPK + NO_JO.
+  async function wrwDoAction(kind){
+    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
+    const ident = `SPK ${row["SPK"]||"-"} / NO JO ${row["NO_JO"]||"-"}`;
+    if(kind==="finish" && !confirm(`Set status Finish untuk ${ident}?\n\nHasil hitung waste + status akan dikirim ke sheet REWIND_PY_FINISH.`)) return;
+    if(kind==="revisi" && !confirm(`Kirim data ${ident} ke sheet REWIND_PY_REVISI?`)) return;
+    const btns = ["wrwBtnRevisi","wrwBtnHitung","wrwBtnFinish"].map(id=>document.getElementById(id));
+    const active = {hitung:btns[1], finish:btns[2], revisi:btns[0]}[kind];
+    const oldText = active.textContent;
+    btns.forEach(b=>b.disabled=true);
+    active.textContent = "Memproses...";
+    try{
+      const res = await fetch(`${API_BASE}/api/waste-rewind/${kind}`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          spk: row["SPK"], no_jo: row["NO_JO"],
+          user: currentUser ? currentUser.nama : "Tidak diketahui"
+        })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memproses");
+      if(data.row){ Object.assign(row, data.row); renderWasteRewindDetailBody(); renderWasteRewind(); }
+      toast(data.message || "Berhasil", "success");
+    }catch(e){
+      toast(e.message, "error");
+    }finally{
+      active.textContent = oldText;
+      btns.forEach(b=>b.disabled=false);
+    }
   }
   function closeWasteRewindDetail(){ document.getElementById("wrwDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape") closeWasteRewindDetail();});

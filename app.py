@@ -86,7 +86,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 
 import gspread
@@ -1454,6 +1454,320 @@ def get_waste_rewind():
         }), 500
 
 
+
+# --------------------------------------------------------------------------
+# 6d.1 WASTE REWIND — aksi di modal Detail: Hitung Waste / Set Status Finish /
+#      Revisi. Baris dicari berdasarkan pasangan (SPK, NO_JO) -- pasangan itu
+#      unik di REWIND_PY (lihat _sync_rewind_kecil_spk_jo_into_rewind_py).
+#
+#   Hitung Waste     -> isi 4 kolom di REWIND_PY:
+#        Waste_Slitting_Meter                    = Bahan_Awal_Printing_(Meter) - Hasil_Slitting_(Meter)
+#        Persentase_Waste_(%)                    = |Waste_Slitting_Meter| / Bahan_Awal_Printing_(Meter)
+#        Waste_Slitting_After_Rewind_Meter       = Bahan_Awal_Printing_(Meter)
+#                                                  - (Hasil_Slitting_(Meter) - Meter_Jumbo_Hilang_Rewind)
+#        Waste_Slitting_After_Rewind_Presentase  = |Waste_Slitting_After_Rewind_Meter| / Bahan_Awal_Printing_(Meter)
+#   Set Status Finish -> simpan snapshot baris ke sheet REWIND_PY_FINISH
+#        (upsert per SPK+NO_JO), lalu isi kolom Status di REWIND_PY = "Finish".
+#        Harus sudah Hitung Waste dulu.
+#   Revisi           -> tambah snapshot baris ke sheet REWIND_PY_REVISI (selalu
+#        append = riwayat revisi). REWIND_PY tidak diubah.
+#
+# Header REWIND_PY_FINISH / REWIND_PY_REVISI dicocokkan PER NAMA KOLOM
+# (bukan per posisi). "Jam" & "Nama_User" diisi otomatis; header kosong atau
+# nama kolom kembar (mis. Waste_Slitting_After_Rewind_Presentase muncul 2x)
+# cuma diisi di kemunculan PERTAMA, sisanya dibiarkan kosong.
+# --------------------------------------------------------------------------
+WASTE_REWIND_FINISH_SHEET = "REWIND_PY_FINISH"
+WASTE_REWIND_REVISI_SHEET = "REWIND_PY_REVISI"
+_WRW_CALC_COLS = (
+    "Waste_Slitting_Meter",
+    "Persentase_Waste_(%)",
+    "Waste_Slitting_After_Rewind_Meter",
+    "Waste_Slitting_After_Rewind_Presentase",
+)
+
+
+def _wib_now_str():
+    """Waktu sekarang WIB (server bisa jalan di UTC, mis. di Render)."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Jakarta")
+    except Exception:
+        tz = timezone(timedelta(hours=7))
+    return datetime.now(tz).strftime("%d/%m/%Y %H:%M:%S")
+
+
+def _fmt_persen(fraction):
+    """0.07518 -> '7,52%' (format Indonesia; Sheets membacanya sbg persen)."""
+    return f"{fraction * 100:.2f}".replace(".", ",") + "%"
+
+
+def hitung_waste_rewind(bahan_awal, hasil_meter, jumbo_hilang):
+    """Balikin dict 4 kolom waste (string siap tulis ke sheet).
+    ValueError kalau Bahan_Awal_Printing_(Meter) / Hasil_Slitting_(Meter)
+    kosong atau Bahan Awal = 0. Kalau Meter_Jumbo_Hilang_Rewind kosong, dua
+    kolom "After Rewind" dikosongkan."""
+    if bahan_awal is None:
+        raise ValueError("Bahan_Awal_Printing_(Meter) kosong, tidak bisa menghitung waste.")
+    if hasil_meter is None:
+        raise ValueError("Hasil_Slitting_(Meter) kosong, tidak bisa menghitung waste.")
+    if bahan_awal == 0:
+        raise ValueError("Bahan_Awal_Printing_(Meter) = 0, persentase waste tidak bisa dihitung.")
+    fmt = import_engine._format_number
+    waste = bahan_awal - hasil_meter
+    out = {
+        "Waste_Slitting_Meter": fmt(round(waste, 2)),
+        "Persentase_Waste_(%)": _fmt_persen(abs(waste) / bahan_awal),
+        "Waste_Slitting_After_Rewind_Meter": "",
+        "Waste_Slitting_After_Rewind_Presentase": "",
+    }
+    if jumbo_hilang is not None:
+        after = bahan_awal - (hasil_meter - jumbo_hilang)
+        out["Waste_Slitting_After_Rewind_Meter"] = fmt(round(after, 2))
+        out["Waste_Slitting_After_Rewind_Presentase"] = _fmt_persen(abs(after) / bahan_awal)
+    return out
+
+
+def _wrw_pad(row, width):
+    return list(row) + [""] * max(0, width - len(row))
+
+
+def _wrw_row_dict(header, row):
+    row = _wrw_pad(row, len(header))
+    d = {}
+    for i, h in enumerate(header):
+        if h and h not in d:
+            d[h] = row[i]
+    return d
+
+
+def _wrw_find_pair(values, header, spk, no_jo):
+    """Cari baris (nomor baris sheet 1-based, isi baris) dengan SPK & NO_JO
+    yang sama. (None, None) kalau tidak ketemu."""
+    col_spk = import_engine._find_col_index(header, "SPK")
+    col_nojo = import_engine._find_col_index(header, "NO_JO")
+    if col_spk is None or col_nojo is None:
+        raise RuntimeError("Kolom SPK/NO_JO tidak ketemu di header sheet.")
+    spk, no_jo = str(spk).strip(), str(no_jo).strip()
+    for i, row in enumerate(values[1:], start=2):
+        r = _wrw_pad(row, len(header))
+        if str(r[col_spk]).strip() == spk and str(r[col_nojo]).strip() == no_jo:
+            return i, r
+    return None, None
+
+
+def _wrw_load_target(spk, no_jo):
+    if not str(spk).strip() or not str(no_jo).strip():
+        raise ValueError("SPK / NO_JO kosong.")
+    sh = _waste_rewind_spreadsheet()
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        raise LookupError(f"Sheet {WASTE_REWIND_SHEET_NAME} kosong.")
+    header = [str(h).strip() for h in values[0]]
+    row_no, row = _wrw_find_pair(values, header, spk, no_jo)
+    if row_no is None:
+        raise LookupError(
+            f"Baris SPK {spk} / NO_JO {no_jo} tidak ditemukan di {WASTE_REWIND_SHEET_NAME} "
+            f"(mungkin baru di-refresh). Muat ulang halaman lalu coba lagi.")
+    return sh, ws, header, row_no, row
+
+
+def _wrw_open_sheet(sh, name):
+    try:
+        return sh.worksheet(name)
+    except gspread.exceptions.WorksheetNotFound:
+        raise LookupError(f"Sheet {name} tidak ditemukan di spreadsheet. Buat dulu sheet-nya (lengkap dengan kepala tabel).")
+
+
+def _wrw_build_snapshot(target_header, src_header, src_row, user, overrides=None):
+    """Susun satu baris untuk sheet FINISH/REVISI mengikuti urutan header
+    sheet tujuan. overrides = {nama_kolom: nilai} (mis. Status)."""
+    norm = import_engine._norm
+    src_row = _wrw_pad(src_row, len(src_header))
+    src_map = {}
+    for i, h in enumerate(src_header):
+        k = norm(h)
+        if k and k not in src_map:
+            src_map[k] = src_row[i]
+    over = {norm(k): v for k, v in (overrides or {}).items()}
+    fixed = {norm("Jam"): _wib_now_str(), norm("Nama_User"): user}
+    out, seen = [], set()
+    for h in target_header:
+        k = norm(h)
+        if not k or k in seen:
+            out.append("")
+            continue
+        seen.add(k)
+        if k in fixed:
+            out.append(fixed[k])
+        elif k in over:
+            out.append(over[k])
+        else:
+            out.append(src_map.get(k, ""))
+    return out
+
+
+def _wrw_write_row(ws, values, header, row_no, row_out):
+    width = len(header)
+    end_col = gspread.utils.rowcol_to_a1(1, width).rstrip("0123456789")
+    if row_no > ws.row_count:
+        ws.add_rows(row_no - ws.row_count)
+    ws.batch_update(
+        [{"range": f"A{row_no}:{end_col}{row_no}", "values": [row_out]}],
+        value_input_option="USER_ENTERED",
+    )
+
+
+def _wrw_save_snapshot(sh, sheet_name, src_header, src_row, user, overrides=None, upsert=False):
+    """Simpan snapshot ke sheet_name. upsert=True: kalau pasangan (SPK, NO_JO)
+    sudah ada di sheet itu, barisnya ditimpa; kalau tidak, ditambah di bawah."""
+    ws = _wrw_open_sheet(sh, sheet_name)
+    values = ws.get_all_values()
+    if not values or not any(str(h).strip() for h in values[0]):
+        raise LookupError(f"Kepala tabel sheet {sheet_name} kosong.")
+    header = [str(h).strip() for h in values[0]]
+    row_out = _wrw_build_snapshot(header, src_header, src_row, user, overrides)
+    row_no = None
+    if upsert:
+        col_spk = import_engine._find_col_index(src_header, "SPK")
+        col_nojo = import_engine._find_col_index(src_header, "NO_JO")
+        row_no, _ = _wrw_find_pair(values, header,
+                                   _wrw_pad(src_row, len(src_header))[col_spk],
+                                   _wrw_pad(src_row, len(src_header))[col_nojo])
+    if row_no is None:
+        row_no = len(values) + 1
+    _wrw_write_row(ws, values, header, row_no, row_out)
+    return row_no
+
+
+def _wrw_error_response(e):
+    if isinstance(e, ValueError):
+        return jsonify({"success": False, "message": str(e)}), 400
+    if isinstance(e, LookupError):
+        return jsonify({"success": False, "message": str(e)}), 404
+    return jsonify({"success": False, "message": f"Gagal: {e}"}), 500
+
+
+def _wrw_invalidate_cache():
+    with _waste_rewind_cache_lock:
+        _waste_rewind_cache["ts"] = 0.0
+
+
+def _wrw_body():
+    body = request.get_json(silent=True) or {}
+    return (str(body.get("spk", "")).strip(), str(body.get("no_jo", "")).strip(),
+            str(body.get("user", "")).strip() or "Tidak diketahui")
+
+
+@app.route("/api/waste-rewind/hitung", methods=["POST"])
+def waste_rewind_hitung():
+    spk, no_jo, _user = _wrw_body()
+    try:
+        sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
+        find = import_engine._find_col_index
+        parse = import_engine._parse_flexible_number
+        need = ("Bahan_Awal_Printing_(Meter)", "Hasil_Slitting_(Meter)", "Meter_Jumbo_Hilang_Rewind") + _WRW_CALC_COLS
+        cols = {n: find(header, n) for n in need}
+        missing = [n for n, c in cols.items() if c is None]
+        if missing:
+            raise RuntimeError(f"Kolom {', '.join(missing)} tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+        res = hitung_waste_rewind(
+            parse(row[cols["Bahan_Awal_Printing_(Meter)"]]),
+            parse(row[cols["Hasil_Slitting_(Meter)"]]),
+            parse(row[cols["Meter_Jumbo_Hilang_Rewind"]]),
+        )
+        ws.batch_update(
+            [{"range": gspread.utils.rowcol_to_a1(row_no, cols[n] + 1), "values": [[res[n]]]} for n in _WRW_CALC_COLS],
+            value_input_option="USER_ENTERED",
+        )
+        _wrw_invalidate_cache()
+        new_row = _wrw_row_dict(header, ws.row_values(row_no))
+        msg = "Waste dihitung."
+        if not res["Waste_Slitting_After_Rewind_Meter"]:
+            msg += " (Meter_Jumbo_Hilang_Rewind kosong, kolom After Rewind dikosongkan.)"
+        return jsonify({"success": True, "message": msg, "row": new_row})
+    except Exception as e:
+        return _wrw_error_response(e)
+
+
+@app.route("/api/waste-rewind/finish", methods=["POST"])
+def waste_rewind_finish():
+    spk, no_jo, user = _wrw_body()
+    try:
+        sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
+        find = import_engine._find_col_index
+        col_status = find(header, "Status")
+        col_waste = find(header, "Waste_Slitting_Meter")
+        if col_status is None or col_waste is None:
+            raise RuntimeError(f"Kolom Status/Waste_Slitting_Meter tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+        if not str(row[col_waste]).strip():
+            raise ValueError("Klik \"Hitung Waste\" dulu sebelum Set Status Finish.")
+        # 1) simpan ke REWIND_PY_FINISH (upsert per SPK+NO_JO)
+        saved_row = _wrw_save_snapshot(
+            sh, WASTE_REWIND_FINISH_SHEET, header, row, user,
+            overrides={"Status": "Finish"}, upsert=True)
+        # 2) baru set Status di REWIND_PY
+        ws.batch_update(
+            [{"range": gspread.utils.rowcol_to_a1(row_no, col_status + 1), "values": [["Finish"]]}],
+            value_input_option="USER_ENTERED",
+        )
+        _wrw_invalidate_cache()
+        new_row = _wrw_row_dict(header, ws.row_values(row_no))
+        return jsonify({
+            "success": True,
+            "message": f"Status Finish tersimpan & data dikirim ke {WASTE_REWIND_FINISH_SHEET} (baris {saved_row}).",
+            "row": new_row,
+        })
+    except Exception as e:
+        return _wrw_error_response(e)
+
+
+@app.route("/api/waste-rewind/revisi", methods=["POST"])
+def waste_rewind_revisi():
+    spk, no_jo, user = _wrw_body()
+    try:
+        sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
+        saved_row = _wrw_save_snapshot(sh, WASTE_REWIND_REVISI_SHEET, header, row, user, upsert=False)
+        return jsonify({
+            "success": True,
+            "message": f"Data dikirim ke {WASTE_REWIND_REVISI_SHEET} (baris {saved_row}).",
+        })
+    except Exception as e:
+        return _wrw_error_response(e)
+
+
+def _read_rewind_finish_restore_map():
+    """Isi Status + 4 kolom waste dari REWIND_PY_FINISH, per (SPK, NO_JO).
+    Dipakai refresh penuh REWIND_PY supaya baris yang sudah Finish tidak
+    kehilangan Status/hasil hitungnya. Sheet tidak ada / gagal dibaca ->
+    {} (refresh tetap jalan)."""
+    try:
+        sh = _waste_rewind_spreadsheet()
+        ws = sh.worksheet(WASTE_REWIND_FINISH_SHEET)
+        values = ws.get_all_values()
+    except Exception as e:
+        print(f"[restore Finish] dilewati: {e}")
+        return {}
+    if not values:
+        return {}
+    header = [str(h).strip() for h in values[0]]
+    find = import_engine._find_col_index
+    c_spk, c_nojo = find(header, "SPK"), find(header, "NO_JO")
+    if c_spk is None or c_nojo is None:
+        return {}
+    names = ("Status",) + _WRW_CALC_COLS
+    cols = {n: find(header, n) for n in names}
+    out = {}
+    for row in values[1:]:
+        r = _wrw_pad(row, len(header))
+        key = (str(r[c_spk]).strip(), str(r[c_nojo]).strip())
+        if not key[0] or not key[1]:
+            continue
+        out[key] = {n: r[c] for n, c in cols.items() if c is not None}  # baris terbawah menang
+    return out
+
+
 # --------------------------------------------------------------------------
 # 6e. REWIND KECIL — REFRESH PENUH (hapus baris 2 ke bawah + tulis ulang)
 #     sheet REWIND_PY dari sheet mentah REWIND_PY_RAW
@@ -2441,6 +2755,9 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
     diisi manual/formula (Persentase_Waste_(%), Meter_Hilang_Rewind,
     Hasil_Slitting_(Rol), Waste_Slitting_After_Rewind_Presentase, dst) --
     lihat catatan "PERUBAHAN PERILAKU" di komentar atas fungsi ini.
+    PENGECUALIAN: Status + 4 kolom waste (Waste_Slitting_Meter,
+    Persentase_Waste_(%), Waste_Slitting_After_Rewind_Meter/Presentase) dipulihkan
+    dari sheet REWIND_PY_FINISH untuk baris (SPK, NO_JO) yang sudah di-Finish.
 
     Balikin jumlah baris data yang ditulis ulang (bukan cuma yang baru)."""
     unique_pairs = _read_rewind_kecil_spk_jo()
@@ -2477,6 +2794,15 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
         (col_potongan + 1) if col_potongan is not None else 0,
     )
 
+    # Status + 4 kolom waste yang sudah disimpan lewat "Set Status Finish"
+    # (sheet REWIND_PY_FINISH) dipulihkan supaya tidak hilang oleh refresh penuh.
+    finish_map = _read_rewind_finish_restore_map()
+    restore_cols = {
+        n: import_engine._find_col_index(header, n)
+        for n in ("Status",) + _WRW_CALC_COLS
+    }
+    restore_cols = {n: c for n, c in restore_cols.items() if c is not None}
+
     # Bangun baris-baris baru dari pasangan (SPK, NO_JO) unik.
     seen = set()
     new_rows = []
@@ -2503,6 +2829,11 @@ def _sync_rewind_kecil_spk_jo_into_rewind_py():
                 blank_row[col_planning_meter] = info["meter"]
             if col_potongan is not None:
                 blank_row[col_potongan] = info["potongan"]
+        saved = finish_map.get((str(pair["spk"]).strip(), str(pair["noJo"]).strip()))
+        if saved:
+            for n, c in restore_cols.items():
+                if saved.get(n):
+                    blank_row[c] = saved[n]
         new_rows.append(blank_row)
 
     # HAPUS baris 2 ke bawah, seluruh lebar sheet, SEBELUM tulis data baru.
