@@ -170,6 +170,13 @@
   thead th:first-child{border-top-left-radius:10px;}
   thead th:last-child{border-top-right-radius:10px;}
   thead th.th-resizable{position:relative; overflow:hidden; text-overflow:ellipsis;}
+  /* Header tabel nempel (freeze) waktu scroll ke bawah. Wrapper-nya sendiri yang
+     scroll (X & Y) dengan tinggi maksimal, supaya sticky bekerja di dalamnya.
+     Dipasang lewat class .tw-sticky di .table-wrap. Waste Rewind sudah punya
+     wrapper scroll sendiri (lihat .wrw-table-wrap), jadi cukup sticky di th. */
+  .table-wrap.tw-sticky{overflow:auto; max-height:calc(100vh - 300px); min-height:220px;}
+  .table-wrap.tw-sticky thead th,
+  .wrw-table thead th, .wrw-table thead th.th-resizable{position:sticky; top:0; z-index:3; box-shadow:0 1px 0 rgba(0,0,0,.12);}
   .col-resizer{position:absolute; top:0; right:0; width:6px; height:100%; cursor:col-resize; user-select:none; touch-action:none;}
   .col-resizer:hover, .col-resizer.resizing{background:rgba(255,255,255,.35);}
   tbody td{padding:11px 12px; border-bottom:1px solid var(--line-soft); color:var(--ink); overflow-wrap:anywhere; word-break:break-word;}
@@ -938,8 +945,8 @@
                   <button class="btn-outline" id="btnRefreshRekap" onclick="loadRekap(true)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
                 </div>
               </div>
-              <div class="table-wrap">
-              <table>
+              <div class="table-wrap tw-sticky">
+              <table id="tblRekapTable">
                 <thead><tr><th>Tanggal</th><th>JO</th><th>Nama</th><th>Order</th><th>Slitting</th><th>Total</th><th>Selisih</th><th>Konfirmasi</th><th>Status OK (Manual)</th></tr></thead>
                 <tbody id="tblRekap"></tbody>
               </table>
@@ -955,8 +962,8 @@
                 <button class="btn-danger-outline" onclick="document.getElementById('txtCariValidasi').value='';renderValidasi()">✖ Reset</button>
                 <button class="btn-outline" id="btnRefreshValidasi" onclick="loadValidasi(true)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
-              <div class="table-wrap">
-              <table>
+              <div class="table-wrap tw-sticky">
+              <table id="tblValidasiTable">
                 <thead><tr><th>Tanggal</th><th>JO</th><th>Nama</th><th>Order</th><th>Slitting</th><th>Bag</th><th>Validasi</th><th>Serah Terima</th><th>Total</th><th>Selisih</th></tr></thead>
                 <tbody id="tblValidasi"></tbody>
               </table>
@@ -980,7 +987,7 @@
                 </div>
                 <button class="btn-mini acc" id="btnBulkAccUpdateStock" style="display:none; padding:11px 16px; font-size:12.5px;" onclick="bulkAccUpdateStock()">ACC Terpilih (<span id="usSelectedCount">0</span>)</button>
               </div>
-              <div class="table-wrap">
+              <div class="table-wrap tw-sticky">
               <table id="tblUpdateStockTable">
                 <thead><tr><th style="width:34px"><input type="checkbox" id="chkAllUpdateStock" onchange="toggleSelectAllUpdateStock(this.checked)"></th><th>JO</th><th>Nama</th><th>Order</th><th>Meter Order</th><th>Meter Validasi</th><th>Lapisan Order</th><th>Lapisan Validasi</th><th>Keterangan</th><th>ACC</th></tr></thead>
                 <tbody id="tblUpdateStock"></tbody>
@@ -997,8 +1004,8 @@
                 <button class="btn-danger-outline" onclick="document.getElementById('txtCariStockBahan').value='';renderStockBahan()">✖ Reset</button>
                 <button class="btn-outline" id="btnRefreshStockBahan" onclick="loadStockBahan(true)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
-              <div class="table-wrap">
-              <table>
+              <div class="table-wrap tw-sticky">
+              <table id="tblStockBahanTable">
                 <thead><tr><th>Tanggal</th><th>User</th><th>JO</th><th>Nama</th><th>Order</th><th>Meter Order</th><th>Meter Validasi</th><th>Lapisan Order</th><th>Lapisan Validasi</th></tr></thead>
                 <tbody id="tblStockBahan"></tbody>
               </table>
@@ -1095,7 +1102,7 @@
               <div class="rwk-status" id="wrwRefreshStatus" style="display:none;"></div>
               <pre id="wrwRefreshLog" class="run-log" style="display:none;"></pre>
               <div class="table-wrap">
-                <table class="wrw-table">
+                <table class="wrw-table" id="wrwTable">
                   <thead><tr id="wrwHead"></tr></thead>
                   <tbody id="wrwBody"></tbody>
                 </table>
@@ -1205,13 +1212,16 @@
   // di CSS). Cuma dipasang SEKALI (thead-nya statis di HTML, tidak
   // ikut di-render ulang tiap loadX()), jadi tidak numpuk handle.
   // ============================================================
-  function makeColumnsResizable(tableId){
+  // store (opsional): objek {index: lebar_px}. Dipakai kalau <thead> dirender
+  // ulang (mis. Waste Rewind) supaya lebar hasil drag tidak hilang.
+  function makeColumnsResizable(tableId, store){
     const table = document.getElementById(tableId);
     if(!table) return;
     const ths = table.querySelectorAll("thead th");
     ths.forEach((th, idx)=>{
       if(idx === ths.length - 1) return; // kolom terakhir dibiarkan ngisi sisa ruang
       th.classList.add("th-resizable");
+      if(store && store[idx]) th.style.width = store[idx] + "px";
       const handle = document.createElement("span");
       handle.className = "col-resizer";
       th.appendChild(handle);
@@ -1224,6 +1234,7 @@
         function onMove(ev){
           const newWidth = Math.max(40, startWidth + (ev.pageX - startX));
           th.style.width = newWidth + "px";
+          if(store) store[idx] = newWidth;
         }
         function onUp(){
           handle.classList.remove("resizing");
@@ -1237,6 +1248,10 @@
     });
   }
   makeColumnsResizable("tblUpdateStockTable");
+  makeColumnsResizable("tblRekapTable");
+  makeColumnsResizable("tblValidasiTable");
+  makeColumnsResizable("tblStockBahanTable");
+  const wrwColWidths = {};  // lebar kolom Waste Rewind hasil drag (thead-nya dirender ulang tiap load)
 
   // ---------------- TOAST ----------------
   function toast(msg, type="info"){
@@ -2267,6 +2282,7 @@
   function renderWasteRewindHead(){
     const head=document.getElementById("wrwHead"); if(!head) return;
     head.innerHTML = wasteRewindVisibleHeaders.map(h=>`<th>${escHtml(aliasWrwHeader(h))}</th>`).join("")+`<th>DETAIL</th>`;
+    makeColumnsResizable("wrwTable", wrwColWidths);
   }
   function renderWasteRewind(){
     const body=document.getElementById("wrwBody"); if(!body) return;
