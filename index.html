@@ -580,7 +580,21 @@
   .wrw-act.calc:hover:not([disabled]){background:#1c3f66;}
   .wrw-act.finish{background:#2e9e5b; border-color:#2e9e5b; color:#fff;}
   .wrw-act.finish:hover:not([disabled]){background:#25834b;}
+  .wrw-act.danger{border-color:#c0392b; color:#c0392b;}
+  .wrw-act.danger:hover:not([disabled]){background:#fdecea;}
   .wrw-act[disabled]{opacity:.55; cursor:not-allowed;}
+  .wrw-revisi-hint{
+    grid-column:1/-1; margin-bottom:10px; padding:10px 12px; border-radius:10px;
+    background:#fff8e1; border:1px solid #f0d98a; color:#7a5b00; font-size:12px; line-height:1.4;
+  }
+  .wrw-detail-item .val input{
+    width:100%; box-sizing:border-box; border:1.5px solid #d5dde7; border-radius:8px;
+    padding:6px 8px; font:inherit; font-size:12px; color:var(--ink); background:#fff;
+  }
+  .wrw-detail-item .val input:focus{outline:none; border-color:#3572b6; box-shadow:0 0 0 3px rgba(53,114,182,.15);}
+  .wrw-detail-item.changed .val{background:#fff8e1;}
+  .wrw-detail-item.changed .val input{border-color:#e0a800; background:#fffdf4;}
+  .wrw-detail-item.locked .lbl::after{content:" 🔒"; font-weight:400;}
   @media(max-width:600px){ .wrw-modal-foot .wrw-act{flex:1 1 100%;} }
   @media(max-width:900px){
     .wrw-table{min-width:820px;}
@@ -673,11 +687,7 @@
         <button class="wrw-modal-close" onclick="closeWasteRewindDetail()">✕</button>
       </div>
       <div class="wrw-detail-grid" id="wrwDetailGrid"></div>
-      <div class="wrw-modal-foot">
-        <button class="wrw-act" id="wrwBtnRevisi" onclick="wrwDoAction('revisi')">✏️ Revisi</button>
-        <button class="wrw-act calc" id="wrwBtnHitung" onclick="wrwDoAction('hitung')">🧮 Hitung Waste</button>
-        <button class="wrw-act finish" id="wrwBtnFinish" onclick="wrwDoAction('finish')">✅ Set Status Finish</button>
-      </div>
+      <div class="wrw-modal-foot" id="wrwModalFoot"></div>
     </div>
   </div>
 
@@ -2218,8 +2228,9 @@
         const bahanNote = (st.bahan_awal_updated ?? 0) > 0 ? `, ${st.bahan_awal_updated} sel Bahan_Awal_Printing diperbarui` : "";
         const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
         const mhNote = (st.meter_hilang_updated ?? 0) > 0 ? `, ${st.meter_hilang_updated} sel Meter Hilang diperbarui` : "";
+        const rvNote = (st.revisi_applied ?? 0) > 0 ? `, ${st.revisi_applied} sel revisi diterapkan` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote).replace(/^, /,"")+")" : ""}`, "success");
+        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+rvNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+rvNote).replace(/^, /,"")+")" : ""}`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
@@ -2317,54 +2328,116 @@
       }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`).join("");
   }
   let wrwDetailIdx = -1;
+  let wrwRevisiMode = false;
+  const WRW_REVISI_LOCKED = ["JO","SPK","NO_JO","Status"];   // sama dengan _WRW_REVISI_LOCKED di app.py
+  function wrwIsAdmin(){ return !!currentUser && String(currentUser.role||"").trim().toLowerCase()==="admin"; }
+  function wrwIsFinished(row){ return String((row||{})["Status"]??"").trim().toLowerCase()==="finish"; }
+  function wrwCurrentUserName(){ return currentUser ? currentUser.nama : "Tidak diketahui"; }
+
   function renderWasteRewindDetailBody(){
     const row=wasteRewindRows[wrwDetailIdx]; if(!row) return;
-    document.getElementById("wrwDetailTitle").innerText="Detail Waste Rewind";
+    document.getElementById("wrwDetailTitle").innerText = wrwRevisiMode ? "Revisi Waste Rewind" : "Detail Waste Rewind";
     document.getElementById("wrwDetailSub").innerText=`JO: ${row["JO"]||"-"} · Produk: ${row["Nama_Produk"]||"-"}`;
-    document.getElementById("wrwDetailGrid").innerHTML=wasteRewindHeaders.map(h=>{
-      const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(row[h]);
-      return `<div class="wrw-detail-item${danger?' wrw-cell-danger':''}"><div class="lbl">${escHtml(aliasWrwHeader(h))}</div><div class="val">${escHtml(row[h]??"")||"-"}</div></div>`;
+    const hint = wrwRevisiMode
+      ? `<div class="wrw-revisi-hint">✏️ <b>Mode Revisi</b> — ubah kolom yang perlu direvisi. Hanya kolom yang <b>berubah</b> yang dikirim ke REWIND_PY_REVISI. Kolom bertanda 🔒 tidak bisa diubah.</div>`
+      : "";
+    document.getElementById("wrwDetailGrid").innerHTML = hint + wasteRewindHeaders.map(hd=>{
+      const val = row[hd] ?? "";
+      const locked = WRW_REVISI_LOCKED.includes(hd);
+      const lbl = escHtml(aliasWrwHeader(hd));
+      if(wrwRevisiMode && !locked){
+        return `<div class="wrw-detail-item"><div class="lbl">${lbl}</div><div class="val"><input type="text" data-h="${escHtml(hd)}" data-orig="${escHtml(val)}" value="${escHtml(val)}" oninput="wrwRevisiInput(this)"></div></div>`;
+      }
+      const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(hd) && wrwIsZeroOrEmpty(val);
+      const cls = "wrw-detail-item" + (danger?" wrw-cell-danger":"") + (wrwRevisiMode && locked ? " locked" : "");
+      return `<div class="${cls}"><div class="lbl">${lbl}</div><div class="val">${escHtml(val)||"-"}</div></div>`;
     }).join("");
+    renderWrwFooter();
+  }
+  function wrwCollectChanges(){
+    const ch = {};
+    document.querySelectorAll("#wrwDetailGrid input[data-h]").forEach(i=>{
+      if(i.value.trim() !== (i.dataset.orig||"").trim()) ch[i.dataset.h] = i.value.trim();
+    });
+    return ch;
+  }
+  function wrwRevisiInput(input){
+    const changed = input.value.trim() !== (input.dataset.orig||"").trim();
+    input.closest(".wrw-detail-item").classList.toggle("changed", changed);
+    renderWrwFooter();   // footer saja (grid tidak dirender ulang, fokus input aman)
+  }
+  function renderWrwFooter(){
+    const foot=document.getElementById("wrwModalFoot"); const row=wasteRewindRows[wrwDetailIdx];
+    if(!foot || !row) return;
+    if(wrwRevisiMode){
+      const n = Object.keys(wrwCollectChanges()).length;
+      foot.innerHTML =
+        `<button class="wrw-act" onclick="wrwCancelRevisi()">Batal</button>`+
+        `<button class="wrw-act calc" ${n?"":"disabled"} onclick="wrwSendRevisi(this)">📤 Kirim Revisi${n?` (${n} kolom)`:""}</button>`;
+      return;
+    }
+    const fin = wrwIsFinished(row);
+    let finishBtn;
+    if(!fin) finishBtn = `<button class="wrw-act finish" onclick="wrwDoAction('finish',this)">✅ Set Status Finish</button>`;
+    else if(wrwIsAdmin()) finishBtn = `<button class="wrw-act danger" onclick="wrwDoAction('unfinish',this)">↩️ Lepas Status Finish</button>`;
+    else finishBtn = `<button class="wrw-act finish" disabled title="Sudah Finish. Hanya Admin yang bisa melepas status ini.">🔒 Sudah Finish</button>`;
+    foot.innerHTML =
+      `<button class="wrw-act" onclick="wrwStartRevisi()">✏️ Revisi</button>`+
+      `<button class="wrw-act calc" ${fin?'disabled title="Sudah Finish: waste terkunci"':""} onclick="wrwDoAction('hitung',this)">🧮 Hitung Waste</button>`+
+      finishBtn;
   }
   function openWasteRewindDetail(idx){
     if(!wasteRewindRows[idx]) return;
     wrwDetailIdx = idx;
+    wrwRevisiMode = false;
     renderWasteRewindDetailBody();
     document.getElementById("wrwDetailOverlay").style.display="flex";
   }
-  // Aksi di modal Detail: hitung (isi 4 kolom waste) / finish (Status=Finish +
-  // kirim ke REWIND_PY_FINISH) / revisi (kirim ke REWIND_PY_REVISI). Baris
-  // dicari di server lewat pasangan SPK + NO_JO.
-  async function wrwDoAction(kind){
+  function wrwStartRevisi(){ wrwRevisiMode = true; renderWasteRewindDetailBody(); }
+  function wrwCancelRevisi(){ wrwRevisiMode = false; renderWasteRewindDetailBody(); }
+
+  // Kirim ke server. kind: hitung | finish | unfinish | revisi. Baris dicari
+  // di server lewat pasangan SPK + NO_JO.
+  async function wrwPost(kind, btn, extra, onOk){
     const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
-    const ident = `SPK ${row["SPK"]||"-"} / NO JO ${row["NO_JO"]||"-"}`;
-    if(kind==="finish" && !confirm(`Set status Finish untuk ${ident}?\n\nHasil hitung waste + status akan dikirim ke sheet REWIND_PY_FINISH.`)) return;
-    if(kind==="revisi" && !confirm(`Kirim data ${ident} ke sheet REWIND_PY_REVISI?`)) return;
-    const btns = ["wrwBtnRevisi","wrwBtnHitung","wrwBtnFinish"].map(id=>document.getElementById(id));
-    const active = {hitung:btns[1], finish:btns[2], revisi:btns[0]}[kind];
-    const oldText = active.textContent;
+    const btns = [...document.querySelectorAll("#wrwModalFoot .wrw-act")];
     btns.forEach(b=>b.disabled=true);
-    active.textContent = "Memproses...";
+    if(btn) btn.textContent = "Memproses...";
     try{
       const res = await fetch(`${API_BASE}/api/waste-rewind/${kind}`, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          spk: row["SPK"], no_jo: row["NO_JO"],
-          user: currentUser ? currentUser.nama : "Tidak diketahui"
-        })
+        body: JSON.stringify({ spk: row["SPK"], no_jo: row["NO_JO"], user: wrwCurrentUserName(), ...(extra||{}) })
       });
       const data = await res.json();
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal memproses");
-      if(data.row){ Object.assign(row, data.row); renderWasteRewindDetailBody(); renderWasteRewind(); }
+      if(onOk) onOk();
+      if(data.row) Object.assign(row, data.row);
+      renderWasteRewindDetailBody();
+      renderWasteRewind();
       toast(data.message || "Berhasil", "success");
     }catch(e){
       toast(e.message, "error");
-    }finally{
-      active.textContent = oldText;
-      btns.forEach(b=>b.disabled=false);
+      renderWrwFooter();   // kembalikan tombol
     }
   }
-  function closeWasteRewindDetail(){ document.getElementById("wrwDetailOverlay").style.display="none"; }
+  function wrwDoAction(kind, btn){
+    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
+    const ident = `SPK ${row["SPK"]||"-"} / NO JO ${row["NO_JO"]||"-"}`;
+    if(kind==="finish" && !confirm(`Set status Finish untuk ${ident}?\n\nHasil hitung waste + status akan dikirim ke sheet REWIND_PY_FINISH. Setelah Finish, status tidak bisa di-Finish-kan lagi (hanya Admin yang bisa melepasnya).`)) return;
+    if(kind==="unfinish" && !confirm(`Lepas status Finish untuk ${ident}?\n\nBaris ini akan dihapus dari sheet REWIND_PY_FINISH.`)) return;
+    return wrwPost(kind, btn);
+  }
+  function wrwSendRevisi(btn){
+    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
+    const ch = wrwCollectChanges();
+    const keys = Object.keys(ch);
+    if(!keys.length){ toast("Belum ada kolom yang diubah", "info"); return; }
+    const ident = `SPK ${row["SPK"]||"-"} / NO JO ${row["NO_JO"]||"-"}`;
+    const list = keys.map(k=>`• ${aliasWrwHeader(k)}: ${row[k]||"-"} → ${ch[k]}`).join("\n");
+    if(!confirm(`Kirim revisi ${ident} ke sheet REWIND_PY_REVISI?\n\n${list}`)) return;
+    return wrwPost("revisi", btn, {changes: ch}, ()=>{ wrwRevisiMode = false; });
+  }
+  function closeWasteRewindDetail(){ wrwRevisiMode=false; document.getElementById("wrwDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape") closeWasteRewindDetail();});
 
   // ============================================================

@@ -972,6 +972,7 @@ def _run_rewind_kecil_worker():
         kg_bruto_updated = None
         konversi_updated = None
         meter_hilang_updated = None
+        revisi_applied = None
         _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
         try:
             spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -1040,6 +1041,16 @@ def _run_rewind_kecil_worker():
                     f"di {WASTE_REWIND_SHEET_NAME}] {mh_err}\n"
                 )
             err = err or str(mh_err)
+        # PALING AKHIR: terapkan revisi manual (REWIND_PY_REVISI) per sel yang
+        # berbeda, supaya tidak ditimpa sync-sync di atas.
+        try:
+            revisi_applied = _apply_rewind_revisi_into_rewind_py()
+        except Exception as rv_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL TERAPKAN REVISI dari {WASTE_REWIND_REVISI_SHEET}] {rv_err}\n"
+                )
+            err = err or str(rv_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = 0
@@ -1052,6 +1063,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["kg_bruto_updated"] = kg_bruto_updated
             REWIND_KECIL_RUN_STATE["konversi_updated"] = konversi_updated
             REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = meter_hilang_updated
+            REWIND_KECIL_RUN_STATE["revisi_applied"] = revisi_applied
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -1087,6 +1099,7 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["printing_updated"] = None
         REWIND_KECIL_RUN_STATE["konversi_updated"] = None
         REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = None
+        REWIND_KECIL_RUN_STATE["revisi_applied"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
     thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
@@ -1466,11 +1479,15 @@ def get_waste_rewind():
 #        Waste_Slitting_After_Rewind_Meter       = Bahan_Awal_Printing_(Meter)
 #                                                  - (Hasil_Slitting_(Meter) - Meter_Jumbo_Hilang_Rewind)
 #        Waste_Slitting_After_Rewind_Presentase  = |Waste_Slitting_After_Rewind_Meter| / Bahan_Awal_Printing_(Meter)
-#   Set Status Finish -> simpan snapshot baris ke sheet REWIND_PY_FINISH
-#        (upsert per SPK+NO_JO), lalu isi kolom Status di REWIND_PY = "Finish".
-#        Harus sudah Hitung Waste dulu.
-#   Revisi           -> tambah snapshot baris ke sheet REWIND_PY_REVISI (selalu
-#        append = riwayat revisi). REWIND_PY tidak diubah.
+#   Set Status Finish -> simpan snapshot baris ke sheet REWIND_PY_FINISH, lalu
+#        isi kolom Status di REWIND_PY = "Finish". Harus sudah Hitung Waste dulu.
+#        Setelah Finish: tidak bisa Finish / Hitung Waste lagi (terkunci).
+#   Lepas Finish (/unfinish, KHUSUS Admin) -> kosongkan Status + hapus baris
+#        SPK+NO_JO dari REWIND_PY_FINISH.
+#   Revisi           -> user memilih/mengubah kolom di modal, HANYA kolom yang
+#        berubah dikirim ke REWIND_PY_REVISI (append = riwayat) dan langsung
+#        ditulis ke REWIND_PY. Di refresh, _apply_rewind_revisi_into_rewind_py()
+#        menerapkan lagi sel revisi yang beda dari data hasil refresh.
 #
 # Header REWIND_PY_FINISH / REWIND_PY_REVISI dicocokkan PER NAMA KOLOM
 # (bukan per posisi). "Jam" & "Nama_User" diisi otomatis; header kosong atau
@@ -1619,26 +1636,105 @@ def _wrw_write_row(ws, values, header, row_no, row_out):
     )
 
 
-def _wrw_save_snapshot(sh, sheet_name, src_header, src_row, user, overrides=None, upsert=False):
-    """Simpan snapshot ke sheet_name. upsert=True: kalau pasangan (SPK, NO_JO)
-    sudah ada di sheet itu, barisnya ditimpa; kalau tidak, ditambah di bawah."""
+def _wrw_sheet_and_header(sh, sheet_name):
     ws = _wrw_open_sheet(sh, sheet_name)
     values = ws.get_all_values()
     if not values or not any(str(h).strip() for h in values[0]):
         raise LookupError(f"Kepala tabel sheet {sheet_name} kosong.")
-    header = [str(h).strip() for h in values[0]]
-    row_out = _wrw_build_snapshot(header, src_header, src_row, user, overrides)
-    row_no = None
-    if upsert:
-        col_spk = import_engine._find_col_index(src_header, "SPK")
-        col_nojo = import_engine._find_col_index(src_header, "NO_JO")
-        row_no, _ = _wrw_find_pair(values, header,
-                                   _wrw_pad(src_row, len(src_header))[col_spk],
-                                   _wrw_pad(src_row, len(src_header))[col_nojo])
-    if row_no is None:
-        row_no = len(values) + 1
+    return ws, values, [str(h).strip() for h in values[0]]
+
+
+def _wrw_append_finish(sh, src_header, src_row, user):
+    """Tambah snapshot ke REWIND_PY_FINISH. Ditolak kalau pasangan (SPK,
+    NO_JO) sudah ada di sana (mencegah dobel)."""
+    ws, values, header = _wrw_sheet_and_header(sh, WASTE_REWIND_FINISH_SHEET)
+    src = _wrw_pad(src_row, len(src_header))
+    spk = src[import_engine._find_col_index(src_header, "SPK")]
+    no_jo = src[import_engine._find_col_index(src_header, "NO_JO")]
+    exist, _ = _wrw_find_pair(values, header, spk, no_jo)
+    if exist is not None:
+        raise ValueError(f"SPK {spk} / NO JO {no_jo} sudah ada di {WASTE_REWIND_FINISH_SHEET} (baris {exist}).")
+    row_out = _wrw_build_snapshot(header, src_header, src_row, user, {"Status": "Finish"})
+    row_no = len(values) + 1
     _wrw_write_row(ws, values, header, row_no, row_out)
     return row_no
+
+
+# Kolom yang TIDAK boleh direvisi (kunci baris / dikunci sistem).
+_WRW_REVISI_LOCKED = ("JO", "SPK", "NO_JO", "Status")
+# Kolom di REWIND_PY_REVISI yang bukan data revisi (identitas / metadata).
+_WRW_REVISI_SKIP = ("Jam", "Nama_User", "JO", "SPK", "NO_JO", "Status")
+
+
+def _wrw_build_revisi_row(target_header, src_header, src_row, user, changes):
+    """Baris untuk REWIND_PY_REVISI: Jam, Nama_User, JO, SPK, NO_JO + HANYA
+    kolom yang direvisi (changes = {nama_kolom: nilai_baru}). Kolom lain
+    dikosongkan -- saat refresh cuma kolom berisi ini yang dipakai."""
+    norm = import_engine._norm
+    src = _wrw_pad(src_row, len(src_header))
+    src_map = {}
+    for i, h in enumerate(src_header):
+        k = norm(h)
+        if k and k not in src_map:
+            src_map[k] = src[i]
+    target_keys = {norm(h) for h in target_header if norm(h)}
+    absent = [k for k in changes if norm(k) not in target_keys]
+    if absent:
+        raise ValueError(f"Kolom {', '.join(absent)} tidak ada di header {WASTE_REWIND_REVISI_SHEET}.")
+    ch = {norm(k): str(v).strip() for k, v in changes.items()}
+    fixed = {
+        norm("Jam"): _wib_now_str(),
+        norm("Nama_User"): user,
+        norm("JO"): src_map.get(norm("JO"), ""),
+        norm("SPK"): src_map.get(norm("SPK"), ""),
+        norm("NO_JO"): src_map.get(norm("NO_JO"), ""),
+    }
+    out, seen = [], set()
+    for h in target_header:
+        k = norm(h)
+        if not k or k in seen:
+            out.append("")
+            continue
+        seen.add(k)
+        out.append(ch[k] if k in ch else fixed.get(k, ""))
+    return out
+
+
+def _wrw_append_revisi(sh, src_header, src_row, user, changes):
+    ws, values, header = _wrw_sheet_and_header(sh, WASTE_REWIND_REVISI_SHEET)
+    row_out = _wrw_build_revisi_row(header, src_header, src_row, user, changes)
+    row_no = len(values) + 1
+    _wrw_write_row(ws, values, header, row_no, row_out)
+    return row_no
+
+
+def _wrw_same_value(a, b):
+    """Sama secara numerik (format Indonesia) atau teks persis."""
+    a, b = str(a).strip(), str(b).strip()
+    if a == b:
+        return True
+    pa, pb = import_engine._parse_flexible_number(a), import_engine._parse_flexible_number(b)
+    return pa is not None and pb is not None and abs(pa - pb) < 0.005
+
+
+def _wrw_is_finished(header, row):
+    c = import_engine._find_col_index(header, "Status")
+    return c is not None and str(row[c]).strip().lower() == "finish"
+
+
+def _wrw_is_admin(nama):
+    """Cek ke sheet Login: apakah user dengan NAMA ini ber-role Admin.
+    (Aplikasi ini belum punya sesi/token login, jadi nama dikirim dari
+    frontend -- pengecekan ini menghindari cuma percaya string 'role'.)"""
+    nama = str(nama or "").strip().lower()
+    if not nama:
+        return False
+    ws = get_sheet("Login")
+    for r in ws.get_all_records():
+        low = {str(k).strip().lower(): v for k, v in r.items()}
+        if str(low.get("nama", "")).strip().lower() == nama and str(low.get("role", "")).strip().lower() == "admin":
+            return True
+    return False
 
 
 def _wrw_error_response(e):
@@ -1665,6 +1761,8 @@ def waste_rewind_hitung():
     spk, no_jo, _user = _wrw_body()
     try:
         sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
+        if _wrw_is_finished(header, row):
+            raise ValueError("Sudah Finish: waste terkunci. Gunakan Revisi, atau minta Admin melepas status Finish.")
         find = import_engine._find_col_index
         parse = import_engine._parse_flexible_number
         need = ("Bahan_Awal_Printing_(Meter)", "Hasil_Slitting_(Meter)", "Meter_Jumbo_Hilang_Rewind") + _WRW_CALC_COLS
@@ -1701,12 +1799,12 @@ def waste_rewind_finish():
         col_waste = find(header, "Waste_Slitting_Meter")
         if col_status is None or col_waste is None:
             raise RuntimeError(f"Kolom Status/Waste_Slitting_Meter tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+        if _wrw_is_finished(header, row):
+            raise ValueError("Sudah Finish. Status tidak bisa di-Finish-kan dua kali (hanya Admin yang bisa melepasnya).")
         if not str(row[col_waste]).strip():
             raise ValueError("Klik \"Hitung Waste\" dulu sebelum Set Status Finish.")
-        # 1) simpan ke REWIND_PY_FINISH (upsert per SPK+NO_JO)
-        saved_row = _wrw_save_snapshot(
-            sh, WASTE_REWIND_FINISH_SHEET, header, row, user,
-            overrides={"Status": "Finish"}, upsert=True)
+        # 1) simpan ke REWIND_PY_FINISH (ditolak kalau SPK+NO_JO sudah ada di sana)
+        saved_row = _wrw_append_finish(sh, header, row, user)
         # 2) baru set Status di REWIND_PY
         ws.batch_update(
             [{"range": gspread.utils.rowcol_to_a1(row_no, col_status + 1), "values": [["Finish"]]}],
@@ -1723,18 +1821,161 @@ def waste_rewind_finish():
         return _wrw_error_response(e)
 
 
-@app.route("/api/waste-rewind/revisi", methods=["POST"])
-def waste_rewind_revisi():
+@app.route("/api/waste-rewind/unfinish", methods=["POST"])
+def waste_rewind_unfinish():
+    """KHUSUS ADMIN: lepas status Finish (kosongkan Status di REWIND_PY) dan
+    hapus baris SPK+NO_JO itu dari REWIND_PY_FINISH. Kolom waste/persentase
+    di REWIND_PY dibiarkan (akan ikut terhapus di refresh berikutnya)."""
     spk, no_jo, user = _wrw_body()
     try:
+        if not _wrw_is_admin(user):
+            return jsonify({"success": False, "message": "Hanya Admin yang boleh melepas status Finish."}), 403
         sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
-        saved_row = _wrw_save_snapshot(sh, WASTE_REWIND_REVISI_SHEET, header, row, user, upsert=False)
+        col_status = import_engine._find_col_index(header, "Status")
+        if col_status is None:
+            raise RuntimeError(f"Kolom Status tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+        # 1) hapus dari REWIND_PY_FINISH dulu (kalau gagal, Status belum berubah)
+        ws_f, values_f, header_f = _wrw_sheet_and_header(sh, WASTE_REWIND_FINISH_SHEET)
+        deleted = 0
+        while True:
+            hit, _ = _wrw_find_pair(values_f, header_f, spk, no_jo)
+            if hit is None:
+                break
+            ws_f.delete_rows(hit)
+            del values_f[hit - 1]
+            deleted += 1
+        # 2) kosongkan Status di REWIND_PY
+        ws.batch_update(
+            [{"range": gspread.utils.rowcol_to_a1(row_no, col_status + 1), "values": [[""]]}],
+            value_input_option="USER_ENTERED",
+        )
+        _wrw_invalidate_cache()
+        new_row = _wrw_row_dict(header, ws.row_values(row_no))
         return jsonify({
             "success": True,
-            "message": f"Data dikirim ke {WASTE_REWIND_REVISI_SHEET} (baris {saved_row}).",
+            "message": f"Status Finish dilepas; {deleted} baris dihapus dari {WASTE_REWIND_FINISH_SHEET}.",
+            "row": new_row,
         })
     except Exception as e:
         return _wrw_error_response(e)
+
+
+@app.route("/api/waste-rewind/revisi", methods=["POST"])
+def waste_rewind_revisi():
+    """Body: {spk, no_jo, user, changes: {nama_kolom: nilai_baru}}.
+    Cuma kolom yang benar-benar berubah yang dikirim ke REWIND_PY_REVISI
+    (bersama Jam, Nama_User, JO, SPK, NO_JO), lalu nilai barunya juga
+    langsung ditulis ke REWIND_PY supaya tampilan konsisten. Saat refresh,
+    kolom-kolom ini diterapkan lagi (lihat _apply_rewind_revisi_into_rewind_py)."""
+    spk, no_jo, user = _wrw_body()
+    body = request.get_json(silent=True) or {}
+    changes_in = body.get("changes")
+    try:
+        if not isinstance(changes_in, dict) or not changes_in:
+            raise ValueError("Tidak ada perubahan yang dikirim.")
+        sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
+        find = import_engine._find_col_index
+        locked = {import_engine._norm(x) for x in _WRW_REVISI_LOCKED}
+        changes = {}  # nama header sheet -> nilai baru
+        for name, new_val in changes_in.items():
+            c = find(header, str(name))
+            if c is None:
+                raise ValueError(f"Kolom {name} tidak ada di {WASTE_REWIND_SHEET_NAME}.")
+            real_name = header[c]
+            if import_engine._norm(real_name) in locked:
+                raise ValueError(f"Kolom {real_name} dikunci dan tidak bisa direvisi.")
+            new_val = str(new_val).strip()
+            if _wrw_same_value(row[c], new_val):
+                continue  # tidak berubah
+            if new_val == "":
+                raise ValueError(f"Kolom {real_name} tidak boleh dikosongkan (isi nilai baru atau batalkan perubahannya).")
+            changes[real_name] = new_val
+        if not changes:
+            raise ValueError("Tidak ada nilai yang berubah.")
+        # 1) REWIND_PY_REVISI  2) REWIND_PY
+        saved_row = _wrw_append_revisi(sh, header, row, user, changes)
+        ws.batch_update(
+            [{"range": gspread.utils.rowcol_to_a1(row_no, find(header, n) + 1), "values": [[v]]} for n, v in changes.items()],
+            value_input_option="USER_ENTERED",
+        )
+        _wrw_invalidate_cache()
+        new_row = _wrw_row_dict(header, ws.row_values(row_no))
+        return jsonify({
+            "success": True,
+            "message": f"{len(changes)} kolom revisi dikirim ke {WASTE_REWIND_REVISI_SHEET} (baris {saved_row}).",
+            "row": new_row,
+        })
+    except Exception as e:
+        return _wrw_error_response(e)
+
+
+def _apply_rewind_revisi_into_rewind_py():
+    """LANGKAH TERAKHIR refresh Waste Rewind (setelah semua sync lain, karena
+    sync lain menghitung ulang kolom turunan dari data mentah). Baca
+    REWIND_PY_REVISI; untuk tiap baris revisi (urut dari atas -> yang lebih
+    baru menimpa), tiap kolom revisi yang TERISI dan BEDA dari nilai di
+    REWIND_PY dipakai (per sel, bukan seluruh baris). Kolom identitas/Status
+    tidak pernah ditimpa. Balikin jumlah sel yang diubah."""
+    sh = _waste_rewind_spreadsheet()
+    try:
+        ws_rev = sh.worksheet(WASTE_REWIND_REVISI_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        return 0
+    rev = ws_rev.get_all_values()
+    if len(rev) < 2:
+        return 0
+    rev_header = [str(h).strip() for h in rev[0]]
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if len(values) < 2:
+        return 0
+    header = [str(h).strip() for h in values[0]]
+    find = import_engine._find_col_index
+    norm = import_engine._norm
+    rc_spk, rc_nojo = find(rev_header, "SPK"), find(rev_header, "NO_JO")
+    c_spk, c_nojo = find(header, "SPK"), find(header, "NO_JO")
+    if None in (rc_spk, rc_nojo, c_spk, c_nojo):
+        return 0
+
+    row_by_key = {}
+    for i, row in enumerate(values[1:], start=2):
+        r = _wrw_pad(row, len(header))
+        row_by_key[(str(r[c_spk]).strip(), str(r[c_nojo]).strip())] = i
+
+    skip = {norm(x) for x in _WRW_REVISI_SKIP}
+    col_map, seen = [], set()  # (kolom di REVISI, kolom di REWIND_PY)
+    for j, h in enumerate(rev_header):
+        k = norm(h)
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        if k in skip:
+            continue
+        c = find(header, h)
+        if c is not None:
+            col_map.append((j, c))
+
+    desired = {}
+    for row in rev[1:]:
+        r = _wrw_pad(row, len(rev_header))
+        rn = row_by_key.get((str(r[rc_spk]).strip(), str(r[rc_nojo]).strip()))
+        if rn is None:
+            continue
+        for j, c in col_map:
+            v = str(r[j]).strip()
+            if v != "":
+                desired[(rn, c)] = v
+
+    updates = []
+    for (rn, c), v in desired.items():
+        cur = _wrw_pad(values[rn - 1], len(header))[c]
+        if _wrw_same_value(cur, v):
+            continue
+        updates.append({"range": gspread.utils.rowcol_to_a1(rn, c + 1), "values": [[v]]})
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        _wrw_invalidate_cache()
+    return len(updates)
 
 
 def _read_rewind_finish_restore_map():
