@@ -1484,7 +1484,8 @@ def get_waste_rewind():
 #        Waste_Slitting_After_Rewind_Presentase  = |Waste_Slitting_After_Rewind_Meter| / Bahan_Awal_Printing_(Meter)
 #   Set Status Finish -> simpan snapshot baris ke sheet REWIND_PY_FINISH, lalu
 #        isi kolom Status di REWIND_PY = "Finish". Harus sudah Hitung Waste dulu.
-#        Setelah Finish: tidak bisa Finish / Hitung Waste lagi (terkunci).
+#        Setelah Finish: tidak bisa Finish / Hitung Waste / Revisi / Hapus Revisi
+#        (terkunci; dicek dari Status DAN keberadaan di REWIND_PY_FINISH).
 #   Lepas Finish (/unfinish, KHUSUS Admin) -> kosongkan Status + hapus baris
 #        SPK+NO_JO dari REWIND_PY_FINISH.
 #   Revisi           -> user memilih/mengubah kolom di modal, HANYA kolom yang
@@ -1725,6 +1726,28 @@ def _wrw_is_finished(header, row):
     return c is not None and str(row[c]).strip().lower() == "finish"
 
 
+def _wrw_finish_locked(sh, header, row):
+    """True kalau baris ini sudah Finish: Status di REWIND_PY = "Finish" ATAU
+    pasangan (SPK, NO_JO) ada di REWIND_PY_FINISH. Cek kedua-duanya supaya
+    kunci tidak lepas kalau Status di REWIND_PY sempat kosong (mis. di tengah
+    refresh). Sheet FINISH belum ada -> cuma andalkan Status."""
+    if _wrw_is_finished(header, row):
+        return True
+    try:
+        ws_f = sh.worksheet(WASTE_REWIND_FINISH_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        return False
+    values_f = ws_f.get_all_values()
+    if not values_f:
+        return False
+    header_f = [str(h).strip() for h in values_f[0]]
+    src = _wrw_pad(row, len(header))
+    spk = src[import_engine._find_col_index(header, "SPK")]
+    no_jo = src[import_engine._find_col_index(header, "NO_JO")]
+    hit, _ = _wrw_find_pair(values_f, header_f, spk, no_jo)
+    return hit is not None
+
+
 def _wrw_is_admin(nama):
     """Cek ke sheet Login: apakah user dengan NAMA ini ber-role Admin.
     (Aplikasi ini belum punya sesi/token login, jadi nama dikirim dari
@@ -1764,8 +1787,8 @@ def waste_rewind_hitung():
     spk, no_jo, _user = _wrw_body()
     try:
         sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
-        if _wrw_is_finished(header, row):
-            raise ValueError("Sudah Finish: waste terkunci. Gunakan Revisi, atau minta Admin melepas status Finish.")
+        if _wrw_finish_locked(sh, header, row):
+            raise ValueError("Sudah Finish: waste terkunci. Minta Admin melepas status Finish kalau perlu diubah.")
         find = import_engine._find_col_index
         parse = import_engine._parse_flexible_number
         need = ("Bahan_Awal_Printing_(Meter)", "Hasil_Slitting_(Meter)", "Meter_Jumbo_Hilang_Rewind") + _WRW_CALC_COLS
@@ -1869,7 +1892,8 @@ def waste_rewind_revisi():
     Cuma kolom yang benar-benar berubah yang dikirim ke REWIND_PY_REVISI
     (bersama Jam, Nama_User, JO, SPK, NO_JO), lalu nilai barunya juga
     langsung ditulis ke REWIND_PY supaya tampilan konsisten. Saat refresh,
-    kolom-kolom ini diterapkan lagi (lihat _apply_rewind_revisi_into_rewind_py)."""
+    kolom-kolom ini diterapkan lagi (lihat _apply_rewind_revisi_into_rewind_py).
+    Ditolak kalau baris sudah Finish."""
     spk, no_jo, user = _wrw_body()
     body = request.get_json(silent=True) or {}
     changes_in = body.get("changes")
@@ -1877,6 +1901,8 @@ def waste_rewind_revisi():
         if not isinstance(changes_in, dict) or not changes_in:
             raise ValueError("Tidak ada perubahan yang dikirim.")
         sh, ws, header, row_no, row = _wrw_load_target(spk, no_jo)
+        if _wrw_finish_locked(sh, header, row):
+            raise ValueError("Sudah Finish: data tidak bisa direvisi. Minta Admin melepas status Finish dulu.")
         find = import_engine._find_col_index
         locked = {import_engine._norm(x) for x in _WRW_REVISI_LOCKED}
         changes = {}  # nama header sheet -> nilai baru
@@ -1974,7 +2000,9 @@ def waste_rewind_hapus_revisi():
     try:
         if not spk or not no_jo:
             raise ValueError("SPK / NO_JO kosong.")
-        sh = _waste_rewind_spreadsheet()
+        sh, _ws, py_header, _row_no, py_row = _wrw_load_target(spk, no_jo)
+        if _wrw_finish_locked(sh, py_header, py_row):
+            raise ValueError("Sudah Finish: revisi tidak bisa dihapus. Minta Admin melepas status Finish dulu.")
         ws_r, values, header = _wrw_sheet_and_header(sh, WASTE_REWIND_REVISI_SHEET)
         deleted = 0
         while True:
@@ -2059,13 +2087,15 @@ def _read_rewind_finish_restore_map():
     Dipakai refresh penuh REWIND_PY supaya baris yang sudah Finish tidak
     kehilangan Status/hasil hitungnya. Sheet tidak ada / gagal dibaca ->
     {} (refresh tetap jalan)."""
+    sh = _waste_rewind_spreadsheet()
     try:
-        sh = _waste_rewind_spreadsheet()
         ws = sh.worksheet(WASTE_REWIND_FINISH_SHEET)
-        values = ws.get_all_values()
-    except Exception as e:
-        print(f"[restore Finish] dilewati: {e}")
+    except gspread.exceptions.WorksheetNotFound:
+        print(f"[restore Finish] sheet {WASTE_REWIND_FINISH_SHEET} tidak ada, dilewati")
         return {}
+    # Sengaja TIDAK ditelan: kalau gagal baca (mis. 429), refresh dibatalkan
+    # SEBELUM REWIND_PY dihapus, supaya Status/waste yang terkunci tidak hilang.
+    values = ws.get_all_values()
     if not values:
         return {}
     header = [str(h).strip() for h in values[0]]

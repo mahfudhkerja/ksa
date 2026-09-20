@@ -2398,10 +2398,13 @@
     else if(wrwIsAdmin()) finishBtn = `<button class="wrw-act danger" onclick="wrwDoAction('unfinish',this)">↩️ Lepas Status Finish</button>`;
     else finishBtn = `<button class="wrw-act finish" disabled title="Sudah Finish. Hanya Admin yang bisa melepas status ini.">🔒 Sudah Finish</button>`;
     const hasRev = wrwRevisedCols(row).length > 0;
+    const lockTip = 'title="Sudah Finish: terkunci. Minta Admin melepas status Finish dulu."';
     foot.innerHTML =
       (hasRev ? `<span class="wrw-rev-legend">* = hasil revisi</span>`+
-                `<button class="wrw-act danger" onclick="wrwDeleteRevisi(this)" title="Hapus revisi & kembali ke data default">🗑️ Hapus Revisi</button>` : "")+
-      `<button class="wrw-act" onclick="wrwStartRevisi()">✏️ Revisi</button>`+
+                (fin ? `<button class="wrw-act danger" disabled ${lockTip}>🔒 Hapus Revisi</button>`
+                     : `<button class="wrw-act danger" onclick="wrwDeleteRevisi(this)" title="Hapus revisi & kembali ke data default">🗑️ Hapus Revisi</button>`) : "")+
+      (fin ? `<button class="wrw-act" disabled ${lockTip}>🔒 Revisi</button>`
+           : `<button class="wrw-act" onclick="wrwStartRevisi()">✏️ Revisi</button>`)+
       `<button class="wrw-act calc" ${fin?'disabled title="Sudah Finish: waste terkunci"':""} onclick="wrwDoAction('hitung',this)">🧮 Hitung Waste</button>`+
       finishBtn;
   }
@@ -2412,7 +2415,10 @@
     renderWasteRewindDetailBody();
     document.getElementById("wrwDetailOverlay").style.display="flex";
   }
-  function wrwStartRevisi(){ wrwRevisiMode = true; renderWasteRewindDetailBody(); }
+  function wrwStartRevisi(){
+    if(wrwIsFinished(wasteRewindRows[wrwDetailIdx])){ toast("Sudah Finish: data tidak bisa direvisi.", "error"); return; }
+    wrwRevisiMode = true; renderWasteRewindDetailBody();
+  }
   function wrwCancelRevisi(){ wrwRevisiMode = false; renderWasteRewindDetailBody(); }
 
   // Kirim ke server. kind: hitung | finish | unfinish | revisi. Baris dicari
