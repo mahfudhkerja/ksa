@@ -1090,7 +1090,7 @@
               <div class="wrw-toolbar">
                 <div class="wrw-search"><span class="ic">🔍</span><input id="wrwSearch" placeholder="Cari JO / SPK / Produk..." oninput="renderWasteRewind()"></div>
                 <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';renderWasteRewind()">✖ Reset</button>
-                <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Tarik data mentah terbaru (import_rewind_kecil.py) lalu muat ulang tampilan"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
+                <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
               <div class="rwk-status" id="wrwRefreshStatus" style="display:none;"></div>
               <pre id="wrwRefreshLog" class="run-log" style="display:none;"></pre>
@@ -1874,7 +1874,7 @@
           </div>
           <div class="sheet-summary" style="margin-top:8px;">${sheetSummary}</div>
           <div style="font-size:11px; color:var(--ink-faint); margin-top:8px;">${lastImportLine}</div>
-          ${key === "rewind_kecil" ? `<div style="font-size:11px; color:var(--ink-faint); margin-top:4px;">↻ Refresh untuk source ini digabung ke tombol <b>Refresh</b> di halaman <b>Waste Rewind</b>.</div>` : ``}
+          ${key === "rewind_kecil" ? `<div style="font-size:11px; color:var(--ink-faint); margin-top:4px;">↻ Import data mentah source ini (REWIND_PY_RAW) lewat <b>Refresh Semua</b> / <b>Jalankan Satu Script</b> di halaman ini. Tombol <b>Refresh</b> di <b>Waste Rewind</b> hanya menghitung ulang dari data mentah tsb.</div>` : ``}
         </div>`;
     });
     grid.innerHTML = html;
@@ -2137,15 +2137,11 @@
   }
 
   // ==================== WASTE REWIND — TOMBOL REFRESH TUNGGAL ====================
-  // Satu tombol "Refresh" di halaman ini sekarang melakukan DUA hal berurutan:
-  //   1. Jalankan import_rewind_kecil.py (tarik data mentah terbaru dari
-  //      sumber -> tulis ke sheet "REWIND" di spreadsheet "Menghitung Waste",
-  //      lihat TARGET_SPREADSHEET_ID di import_rewind_kecil.py -- BUKAN ke
-  //      warehouse utama).
-  //   2. Setelah selesai (apapun hasilnya), muat ulang tampilan dari sheet
-  //      "REWIND_PY" (yang formula-nya baca dari sheet REWIND di atas).
-  // Dulu ada 2 tombol terpisah untuk ini -- sekarang digabung jadi 1 supaya
-  // user tidak perlu klik dua kali / bingung urutannya.
+  // Tombol "Refresh" di halaman ini TIDAK lagi import data mentah ke
+  // REWIND_PY_RAW (dulu memicu limit 429 Sheets API). Import mentah sekarang
+  // lewat Refresh Semua / Jalankan Satu Script di Input Data Produksi.
+  // Tombol ini hanya: (1) hitung ulang isi REWIND_PY dari data yang sudah
+  // ada, lalu (2) muat ulang tampilan dari sheet "REWIND_PY".
   let wrwRefreshPollTimer = null;
   async function refreshWasteRewindFull(){
     const btn = document.getElementById("wrwRefreshBtn");
@@ -2176,8 +2172,8 @@
       const ok = st.returncode === 0;
       if(!ok){
         if(log){ log.style.display="block"; log.textContent = st.log || st.error || "Gagal, tidak ada log."; }
-        if(status){ status.style.display="block"; status.innerText = `⚠️ Gagal menarik data mentah${st.error ? ": "+st.error : ""} — tampilan tetap dimuat ulang dari data terakhir.`; }
-        toast("Refresh data mentah Rewind Kecil gagal — cek log", "error");
+        if(status){ status.style.display="block"; status.innerText = `⚠️ Gagal memperbarui Waste Rewind${st.error ? ": "+st.error : ""} — tampilan tetap dimuat ulang dari data terakhir.`; }
+        toast("Refresh Waste Rewind gagal — cek log", "error");
         await loadWasteRewind(true); // baca ulang REWIND_PY (matikan .spinning-nya loadWasteRewind sendiri)
       } else {
         // sukses -- 1 notif toast aja (bukan teks status nempel di halaman),
@@ -2186,7 +2182,7 @@
         const bahanNote = (st.bahan_awal_updated ?? 0) > 0 ? `, ${st.bahan_awal_updated} sel Bahan_Awal_Printing diperbarui` : "";
         const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Data mentah Rewind Kecil diperbarui (${st.rows_written ?? 0} baris${spkJoNote}${bahanNote}${konvNote})`, "success");
+        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote) ? " ("+(spkJoNote+bahanNote+konvNote).replace(/^, /,"")+")" : ""}`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }

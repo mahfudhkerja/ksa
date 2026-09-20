@@ -143,6 +143,7 @@ SCRIPT_LABELS = {
     "import_bag.py": "Bag Making",
     "import_jo.py": "JO",
     "import_lp.py": "LP (Laporan Produksi)",
+    "import_rewind_kecil.py": "Rewind Kecil (REWIND_PY_RAW)",
 }
 
 app = Flask(__name__)
@@ -755,8 +756,35 @@ def _run_all_worker():
             with RUN_STATE_LOCK:
                 RUN_STATE["log"] += line
         proc.wait()
+        returncode = proc.returncode
+
+        # Rewind Kecil (import mentah ke REWIND_PY_RAW) ikut Refresh Semua,
+        # supaya tombol Refresh di halaman Waste Rewind TIDAK perlu narik
+        # data mentah lagi (hemat kuota API / hindari 429). Kalau
+        # run_all.SCRIPTS_ORDER sudah memuat script ini, jangan dobel.
+        if REWIND_KECIL_SCRIPT.name not in run_all_module.SCRIPTS_ORDER and REWIND_KECIL_SCRIPT.exists():
+            with RUN_STATE_LOCK:
+                RUN_STATE["log"] += f"\n=== {REWIND_KECIL_SCRIPT.name} (Rewind Kecil -> REWIND_PY_RAW) ===\n"
+            proc2 = subprocess.Popen(
+                [sys.executable, str(REWIND_KECIL_SCRIPT)],
+                cwd=str(BASE_DIR),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                bufsize=1,
+            )
+            for line in proc2.stdout:
+                with RUN_STATE_LOCK:
+                    RUN_STATE["log"] += line
+            proc2.wait()
+            if returncode == 0:
+                returncode = proc2.returncode
+
         with RUN_STATE_LOCK:
-            RUN_STATE["returncode"] = proc.returncode
+            RUN_STATE["returncode"] = returncode
     except Exception as e:
         with RUN_STATE_LOCK:
             RUN_STATE["log"] += f"\n[GAGAL MENJALANKAN run_all.py] {e}\n"
@@ -841,13 +869,23 @@ def _run_one_worker(script_name):
             RUN_ONE_STATE["finished_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _produksi_scripts_order():
+    """SCRIPTS_ORDER dari run_all.py + import_rewind_kecil.py (kalau belum
+    ada di sana), supaya Rewind Kecil bisa dijalankan lewat "Jalankan Satu
+    Script" di halaman Input Data Produksi."""
+    items = list(run_all_module.SCRIPTS_ORDER)
+    if REWIND_KECIL_SCRIPT.name not in items:
+        items.append(REWIND_KECIL_SCRIPT.name)
+    return items
+
+
 @app.route("/api/produksi/scripts", methods=["GET"])
 def produksi_scripts():
     """Daftar script individual (file + label) buat isi dropdown di frontend,
     urutannya sama seperti yang dijalankan run_all.py."""
     items = [
         {"file": f, "label": SCRIPT_LABELS.get(f, f)}
-        for f in run_all_module.SCRIPTS_ORDER
+        for f in _produksi_scripts_order()
     ]
     return jsonify(items)
 
@@ -862,7 +900,7 @@ def produksi_run_one():
 
     if not script:
         return jsonify({"success": False, "message": "Pilih script dulu."}), 400
-    if script not in run_all_module.SCRIPTS_ORDER:
+    if script not in _produksi_scripts_order():
         return jsonify({"success": False, "message": f"Script '{script}' tidak dikenal."}), 400
 
     script_path = BASE_DIR / script
@@ -895,7 +933,8 @@ def produksi_run_one_status():
 
 
 # --------------------------------------------------------------------------
-# 6a.5 REWIND KECIL — refresh TERPISAH, TIDAK ikut /api/produksi/run-all
+# 6a.5 REWIND KECIL — import mentah (REWIND_PY_RAW) ikut Refresh Semua & Run One;
+#      endpoint /rewind-kecil/run di bawah = refresh Waste Rewind (tanpa import)
 # --------------------------------------------------------------------------
 REWIND_KECIL_SCRIPT = BASE_DIR / "import_rewind_kecil.py"
 REWIND_KECIL_RUN_STATE_LOCK = threading.Lock()
@@ -913,33 +952,16 @@ REWIND_KECIL_RUN_STATE = {
 
 
 def _run_rewind_kecil_worker():
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONUTF8"] = "1"
-    try:
-        proc = subprocess.Popen(
-            [sys.executable, str(REWIND_KECIL_SCRIPT)],
-            cwd=str(BASE_DIR),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=env,
-            bufsize=1,
-        )
-        for line in proc.stdout:
-            with REWIND_KECIL_RUN_STATE_LOCK:
-                REWIND_KECIL_RUN_STATE["log"] += line
-        proc.wait()
+    """Tombol Refresh di halaman Waste Rewind.
 
+    TIDAK lagi menjalankan import_rewind_kecil.py / menulis ke
+    REWIND_PY_RAW (itu bikin kena limit 429 dari Sheets API). Import data
+    mentah sekarang lewat Refresh Semua / Jalankan Satu Script di halaman
+    Input Data Produksi. Di sini cuma menghitung ulang REWIND_PY dari data
+    yang SUDAH ada di REWIND_PY_RAW + LP/JO/SL/PRINTING."""
+    try:
         rows_written = None
-        try:
-            _, src_after = import_engine.get_source("rewind_kecil")
-            rows_written = src_after.get("last_rows")
-            err = src_after.get("last_error")
-        except Exception:
-            err = None
+        err = None
 
         spk_jo_added = None
         bahan_awal_updated = None
@@ -948,68 +970,67 @@ def _run_rewind_kecil_worker():
         tanggal_qty_updated = None
         kg_bruto_updated = None
         konversi_updated = None
-        if proc.returncode == 0:
-            _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
-            try:
-                spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
-            except Exception as sync_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL SINKRON SPK/NO_JO ke {WASTE_REWIND_SHEET_NAME}] {sync_err}\n"
-                err = err or str(sync_err)
-            try:
-                bahan_awal_updated = _sync_bahan_awal_printing_into_rewind_py()
-            except Exception as bahan_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Bahan_Awal_Printing_(Meter) di {WASTE_REWIND_SHEET_NAME}] {bahan_err}\n"
-                err = err or str(bahan_err)
-            try:
-                hasil_slitting_updated = _sync_slitting_kolom_into_rewind_py()
-            except Exception as slit_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += (
-                        f"\n[GAGAL ISI Hasil_Slitting_(Rol)/UP_Slitting/Hasil_Slitting_(Meter) "
-                        f"di {WASTE_REWIND_SHEET_NAME}] {slit_err}\n"
-                    )
-                err = err or str(slit_err)
-            try:
-                printing_updated = _sync_printing_kolom_into_rewind_py()
-            except Exception as printing_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += (
-                        f"\n[GAGAL ISI Printing_1..5/Total_Hasil_Printing "
-                        f"di {WASTE_REWIND_SHEET_NAME}] {printing_err}\n"
-                    )
-                err = err or str(printing_err)
-            try:
-                tanggal_qty_updated = _sync_rewind_kecil_tanggal_qty_into_rewind_py()
-            except Exception as tq_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += (
-                        f"\n[GAGAL ISI Tanggal_Rewind/Qty_Awal_Rewind/Qty_Akhir_Rewind "
-                        f"di {WASTE_REWIND_SHEET_NAME}] {tq_err}\n"
-                    )
-                err = err or str(tq_err)
-            try:
-                kg_bruto_updated = _sync_kg_bruto_into_rewind_py()
-            except Exception as kg_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += (
-                        f"\n[GAGAL ISI Kg_Bruto di {WASTE_REWIND_SHEET_NAME}] {kg_err}\n"
-                    )
-                err = err or str(kg_err)
-            # HARUS setelah Qty_Awal_Rewind, UP_Slitting & Kg_Bruto terisi (ketiganya jadi input)
-            try:
-                konversi_updated = _sync_konversi_meter_jumbo_into_rewind_py()
-            except Exception as kv_err:
-                with REWIND_KECIL_RUN_STATE_LOCK:
-                    REWIND_KECIL_RUN_STATE["log"] += (
-                        f"\n[GAGAL ISI Konversi_Meter_Jumbo_Qty_Awal/Akhir_Rewind "
-                        f"di {WASTE_REWIND_SHEET_NAME}] {kv_err}\n"
-                    )
-                err = err or str(kv_err)
+        _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
+        try:
+            spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
+        except Exception as sync_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL SINKRON SPK/NO_JO ke {WASTE_REWIND_SHEET_NAME}] {sync_err}\n"
+            err = err or str(sync_err)
+        try:
+            bahan_awal_updated = _sync_bahan_awal_printing_into_rewind_py()
+        except Exception as bahan_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL ISI Bahan_Awal_Printing_(Meter) di {WASTE_REWIND_SHEET_NAME}] {bahan_err}\n"
+            err = err or str(bahan_err)
+        try:
+            hasil_slitting_updated = _sync_slitting_kolom_into_rewind_py()
+        except Exception as slit_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL ISI Hasil_Slitting_(Rol)/UP_Slitting/Hasil_Slitting_(Meter) "
+                    f"di {WASTE_REWIND_SHEET_NAME}] {slit_err}\n"
+                )
+            err = err or str(slit_err)
+        try:
+            printing_updated = _sync_printing_kolom_into_rewind_py()
+        except Exception as printing_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL ISI Printing_1..5/Total_Hasil_Printing "
+                    f"di {WASTE_REWIND_SHEET_NAME}] {printing_err}\n"
+                )
+            err = err or str(printing_err)
+        try:
+            tanggal_qty_updated = _sync_rewind_kecil_tanggal_qty_into_rewind_py()
+        except Exception as tq_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL ISI Tanggal_Rewind/Qty_Awal_Rewind/Qty_Akhir_Rewind "
+                    f"di {WASTE_REWIND_SHEET_NAME}] {tq_err}\n"
+                )
+            err = err or str(tq_err)
+        try:
+            kg_bruto_updated = _sync_kg_bruto_into_rewind_py()
+        except Exception as kg_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL ISI Kg_Bruto di {WASTE_REWIND_SHEET_NAME}] {kg_err}\n"
+                )
+            err = err or str(kg_err)
+        # HARUS setelah Qty_Awal_Rewind, UP_Slitting & Kg_Bruto terisi (ketiganya jadi input)
+        try:
+            konversi_updated = _sync_konversi_meter_jumbo_into_rewind_py()
+        except Exception as kv_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL ISI Konversi_Meter_Jumbo_Qty_Awal/Akhir_Rewind "
+                    f"di {WASTE_REWIND_SHEET_NAME}] {kv_err}\n"
+                )
+            err = err or str(kv_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
-            REWIND_KECIL_RUN_STATE["returncode"] = proc.returncode
+            REWIND_KECIL_RUN_STATE["returncode"] = 0
             REWIND_KECIL_RUN_STATE["rows_written"] = rows_written
             REWIND_KECIL_RUN_STATE["spk_jo_added"] = spk_jo_added
             REWIND_KECIL_RUN_STATE["bahan_awal_updated"] = bahan_awal_updated
@@ -1021,7 +1042,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
-            REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL MENJALANKAN import_rewind_kecil.py] {e}\n"
+            REWIND_KECIL_RUN_STATE["log"] += f"\n[GAGAL REFRESH WASTE REWIND] {e}\n"
             REWIND_KECIL_RUN_STATE["returncode"] = -1
             REWIND_KECIL_RUN_STATE["error"] = str(e)
     finally:
@@ -1032,7 +1053,8 @@ def _run_rewind_kecil_worker():
 
 @app.route("/api/produksi/rewind-kecil/run", methods=["POST"])
 def produksi_run_rewind_kecil():
-    """Refresh hanya Rewind Kecil. Tidak memanggil run_all.py."""
+    """Refresh Waste Rewind: hitung ulang REWIND_PY dari data yang sudah ada.
+    Tidak import data mentah (lihat _run_rewind_kecil_worker)."""
     with REWIND_KECIL_RUN_STATE_LOCK:
         if REWIND_KECIL_RUN_STATE["running"]:
             return jsonify({
@@ -1057,7 +1079,7 @@ def produksi_run_rewind_kecil():
 
     return jsonify({
         "success": True,
-        "message": "import_rewind_kecil.py mulai dijalankan."
+        "message": "Refresh Waste Rewind mulai dijalankan."
     })
 
 
@@ -1468,8 +1490,9 @@ def get_waste_rewind():
 #      daftar ini (Persentase_Waste_(%), dst) SELALU kosong sampai diisi
 #      manual lagi setelah refresh.
 #   4. Dipanggil dari _run_rewind_kecil_worker() (tombol Refresh di halaman
-#      Waste Rewind), SETELAH import_rewind_kecil.py sukses -- jadi satu
-#      tombol Refresh yang sama yang menjalankan keduanya. Setelah ini,
+#      Waste Rewind). import_rewind_kecil.py TIDAK lagi dijalankan dari sini
+#      -- REWIND_PY_RAW diisi lewat Refresh Semua / Jalankan Satu Script di
+#      halaman Input Data Produksi (hindari limit 429). Setelah ini,
 #      _sync_bahan_awal_printing_into_rewind_py() jalan lagi buat isi
 #      ulang kolom Bahan_Awal_Printing_(Meter) di baris-baris yang baru
 #      ditulis.
