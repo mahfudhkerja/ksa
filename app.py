@@ -973,7 +973,6 @@ def _run_rewind_kecil_worker():
         konversi_updated = None
         meter_hilang_updated = None
         revisi_applied = None
-        waste_computed = None
         _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
         try:
             spk_jo_added = _sync_rewind_kecil_spk_jo_into_rewind_py()
@@ -1042,17 +1041,16 @@ def _run_rewind_kecil_worker():
                     f"di {WASTE_REWIND_SHEET_NAME}] {mh_err}\n"
                 )
             err = err or str(mh_err)
-        # PALING AKHIR (supaya tidak ditimpa sync-sync di atas): terapkan revisi
-        # manual (REWIND_PY_REVISI) lalu hitung 4 kolom waste untuk baris yang
-        # belum Finish. Lihat _finalize_rewind_py().
+        # PALING AKHIR: terapkan revisi manual (REWIND_PY_REVISI) per sel yang
+        # berbeda, supaya tidak ditimpa sync-sync di atas.
         try:
-            revisi_applied, waste_computed = _finalize_rewind_py()
-        except Exception as fz_err:
+            revisi_applied = _apply_rewind_revisi_into_rewind_py()
+        except Exception as rv_err:
             with REWIND_KECIL_RUN_STATE_LOCK:
                 REWIND_KECIL_RUN_STATE["log"] += (
-                    f"\n[GAGAL TERAPKAN REVISI / HITUNG WASTE di {WASTE_REWIND_SHEET_NAME}] {fz_err}\n"
+                    f"\n[GAGAL TERAPKAN REVISI dari {WASTE_REWIND_REVISI_SHEET}] {rv_err}\n"
                 )
-            err = err or str(fz_err)
+            err = err or str(rv_err)
 
         with REWIND_KECIL_RUN_STATE_LOCK:
             REWIND_KECIL_RUN_STATE["returncode"] = 0
@@ -1066,7 +1064,6 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["konversi_updated"] = konversi_updated
             REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = meter_hilang_updated
             REWIND_KECIL_RUN_STATE["revisi_applied"] = revisi_applied
-            REWIND_KECIL_RUN_STATE["waste_computed"] = waste_computed
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
         with REWIND_KECIL_RUN_STATE_LOCK:
@@ -1103,7 +1100,6 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["konversi_updated"] = None
         REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = None
         REWIND_KECIL_RUN_STATE["revisi_applied"] = None
-        REWIND_KECIL_RUN_STATE["waste_computed"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
     thread = threading.Thread(target=_run_rewind_kecil_worker, daemon=True)
@@ -1480,10 +1476,7 @@ def get_waste_rewind():
 #      Revisi. Baris dicari berdasarkan pasangan (SPK, NO_JO) -- pasangan itu
 #      unik di REWIND_PY (lihat _sync_rewind_kecil_spk_jo_into_rewind_py).
 #
-#   Hitung Waste     -> (per baris, tombol di modal Detail; dipakai kalau perlu hitung
-#        ulang setelah revisi. Refresh Waste Rewind juga menghitungnya otomatis
-#        untuk semua baris yang belum Finish -- lihat _finalize_rewind_py.)
-#        Mengisi 4 kolom di REWIND_PY:
+#   Hitung Waste     -> isi 4 kolom di REWIND_PY:
 #        Waste_Slitting_Meter                    = Bahan_Awal_Printing_(Meter) - Hasil_Slitting_(Meter)
 #        Persentase_Waste_(%)                    = |Waste_Slitting_Meter| / Bahan_Awal_Printing_(Meter)
 #        Waste_Slitting_After_Rewind_Meter       = Bahan_Awal_Printing_(Meter)
@@ -1497,7 +1490,7 @@ def get_waste_rewind():
 #        SPK+NO_JO dari REWIND_PY_FINISH.
 #   Revisi           -> user memilih/mengubah kolom di modal, HANYA kolom yang
 #        berubah dikirim ke REWIND_PY_REVISI (append = riwayat) dan langsung
-#        ditulis ke REWIND_PY. Di refresh, _finalize_rewind_py()
+#        ditulis ke REWIND_PY. Di refresh, _apply_rewind_revisi_into_rewind_py()
 #        menerapkan lagi sel revisi yang beda dari data hasil refresh.
 #
 # Header REWIND_PY_FINISH / REWIND_PY_REVISI dicocokkan PER NAMA KOLOM
@@ -1899,7 +1892,7 @@ def waste_rewind_revisi():
     Cuma kolom yang benar-benar berubah yang dikirim ke REWIND_PY_REVISI
     (bersama Jam, Nama_User, JO, SPK, NO_JO), lalu nilai barunya juga
     langsung ditulis ke REWIND_PY supaya tampilan konsisten. Saat refresh,
-    kolom-kolom ini diterapkan lagi (lihat _finalize_rewind_py).
+    kolom-kolom ini diterapkan lagi (lihat _apply_rewind_revisi_into_rewind_py).
     Ditolak kalau baris sudah Finish."""
     spk, no_jo, user = _wrw_body()
     body = request.get_json(silent=True) or {}
@@ -2031,107 +2024,208 @@ def waste_rewind_hapus_revisi():
         return _wrw_error_response(e)
 
 
-def _finalize_rewind_py():
+
+# --------------------------------------------------------------------------
+# 6d.2 WASTE REWIND — CEK STOK (tombol di modal Detail). Read-only, jalan
+#      di baris Finish ATAUPUN belum (tidak dikunci seperti Hitung Waste/
+#      Revisi -- lihat catatan "kalau sudah finish masih bisa cek stok").
+#
+#      Sumber, PERSIS gaya "Tanya JO (Chatbot)" -> Stok Gudang:
+#        - Validasi (VAL_1) + Barang Jadi Baru/Lama (BJB_KATEGORI/BJL_KATEGORI)
+#          -- dicari lewat NAMA PRODUK, pakai chatbot_engine.query_stok_gudang()
+#          apa adanya (sama persis logika/kolom yang dipakai chatbot), supaya
+#          tidak ada dua cara beda buat pertanyaan yang sama.
+#        - Form Serah Terima (FORM_ST_1) -- TIDAK ada di chatbot_engine, jadi
+#          dicari sendiri di sini, lewat SUFFIX NO_JO (logika sama dengan
+#          _sync_kg_bruto_into_rewind_py: _fstl_suffix_key() dicocokkan ke
+#          import_engine._numeric_key_prefix(NO_JO)), bukan nama produk --
+#          FORM_ST_1 tidak punya kolom nama produk yang bisa diandalkan.
+#          Tabelnya ditampilkan APA ADANYA (semua kolom asli sheet, urut
+#          sesuai header), bukan proyeksi ke daftar kolom tetap.
+#
+#      VAL_1 & FORM_ST_1 ada di spreadsheet STOK_SPREADSHEET_ID (BUKAN
+#      SPREADSHEET_ID/FSTL_SPREADSHEET_ID -- ID persis yang diberikan user
+#      untuk fitur ini), dibuka lewat klien gspread sendiri (_stok_spreadsheet,
+#      sama polanya dengan chatbot_engine._get_gudang_spreadsheet), supaya
+#      tidak salah asumsi ID mana yang dipakai lingkungan produksi.
+# --------------------------------------------------------------------------
+STOK_SPREADSHEET_ID = "1FRWpza_fa65jt8-n1-rN4rFFrfNBLixRxOLS_uUgYYU"
+_stok_spreadsheet_handle = {"sh": None}
+_stok_spreadsheet_lock = threading.Lock()
+
+# Kolom yang ditampilkan untuk tabel Validasi & Gudang BJB/BJL, PERSIS urutan
+# & nama kolom yang dipakai chatbot_engine (lihat catatan_format di
+# query_stok_gudang) -- diambil per baris lewat chatbot_engine._col() supaya
+# toleran nama header yang sedikit beda (exact match dulu, baru startswith).
+WRW_STOK_VALIDASI_COLUMNS = ("AREA", "JO", "NAMA_PRODUK", "JUMLAH", "JUMLAH_MASUK_REWIND", "KETERANGAN")
+WRW_STOK_KATEGORI_COLUMNS = (
+    "CUSTOMER", "UKURAN_PRODUK", "PRODUK", "SISA_STOCK_AKHIR", "BERAT_ROLL",
+    "JO_DAN_STATUS", "KETERANGAN", "JO", "STATUS", "KATEGORI",
+)
+
+
+def _stok_spreadsheet():
+    global _stok_spreadsheet_handle
+    with _stok_spreadsheet_lock:
+        if _stok_spreadsheet_handle["sh"] is not None:
+            return _stok_spreadsheet_handle["sh"]
+    client = get_client()
+    sh = client.open_by_key(STOK_SPREADSHEET_ID)
+    with _stok_spreadsheet_lock:
+        _stok_spreadsheet_handle["sh"] = sh
+    return sh
+
+
+def _wrw_stok_get_sheet(sheet_name):
+    """get_sheet_fn buat chatbot_engine.query_stok_gudang() -- VAL_1 dibaca
+    dari STOK_SPREADSHEET_ID, BUKAN spreadsheet master (get_sheet())."""
+    return _stok_spreadsheet().worksheet(sheet_name)
+
+
+def _wrw_stok_project_rows(baris, columns):
+    """List of dict (baris mentah, kolom apa adanya dari sheet) -> list of
+    dict cuma berisi `columns`, per baris, lewat chatbot_engine._col() (exact
+    match dulu, baru startswith)."""
+    return [{c: (chatbot_engine._col(r, c) or "") for c in columns} for r in (baris or [])]
+
+
+def _wrw_cek_stok_form_st(no_jo):
+    """Cari baris FORM_ST_1 yang SUFFIX kolom JO-nya sama dengan NO_JO (sama
+    persis logika _sync_kg_bruto_into_rewind_py). Balikin SEMUA kolom asli
+    sheet apa adanya (FORM_ST_1 tidak dicakup chatbot_engine, jadi tidak ada
+    daftar kolom baku buat diproyeksikan)."""
+    ws = _wrw_stok_get_sheet(FORM_ST1_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "header": [], "rows": [], "pesan": f"Sheet {FORM_ST1_SHEET_NAME} kosong."}
+    header = [str(h).strip() for h in values[0]]
+    col_jo = _fstl_find_col(header, "JO")
+    if col_jo is None:
+        return {"ditemukan": False, "header": header, "rows": [], "pesan": f"Kolom JO tidak ketemu di {FORM_ST1_SHEET_NAME}."}
+    no_jo = str(no_jo or "").strip()
+    if not no_jo.isdigit():
+        return {"ditemukan": False, "header": header, "rows": [],
+                "pesan": f"NO_JO '{no_jo}' bukan angka murni, tidak bisa dicocokkan ke {FORM_ST1_SHEET_NAME}."}
+    target = import_engine._numeric_key_prefix(no_jo)
+    rows = []
+    for row in values[1:]:
+        cell = row[col_jo].strip() if col_jo < len(row) else ""
+        if not cell or cell == "-":
+            continue
+        if _fstl_suffix_key(cell) == target:
+            d = {h: (row[i] if i < len(row) else "") for i, h in enumerate(header) if h}
+            rows.append(d)
+    if not rows:
+        return {"ditemukan": False, "header": header, "rows": [],
+                "pesan": f"Tidak ditemukan baris dengan suffix JO '{no_jo}' di {FORM_ST1_SHEET_NAME}."}
+    return {"ditemukan": True, "header": header, "rows": rows, "pesan": None}
+
+
+@app.route("/api/waste-rewind/cek-stok", methods=["POST"])
+def waste_rewind_cek_stok():
+    spk, no_jo, _user = _wrw_body()
+    try:
+        _sh, _ws, header, _row_no, row = _wrw_load_target(spk, no_jo)
+        find = import_engine._find_col_index
+        c_nama = find(header, "Nama_Produk")
+        c_nojo = find(header, "NO_JO")
+        nama_produk = row[c_nama].strip() if c_nama is not None and c_nama < len(row) else ""
+        no_jo_val = row[c_nojo].strip() if c_nojo is not None and c_nojo < len(row) else str(no_jo)
+        if not nama_produk:
+            raise ValueError("Nama_Produk kosong di baris ini, tidak bisa cari stok.")
+
+        hasil = chatbot_engine.query_stok_gudang(_wrw_stok_get_sheet, produk=nama_produk)
+        val1 = hasil.get("validasi") or {}
+        bjb = hasil.get("bjb") or {}
+        bjl = hasil.get("bjl") or {}
+
+        validasi_out = {
+            "ditemukan": bool(val1.get("ditemukan")),
+            "pesan": val1.get("error") or (None if val1.get("ditemukan") else "Tidak ditemukan di VAL_1."),
+            "rows": _wrw_stok_project_rows(val1.get("baris"), WRW_STOK_VALIDASI_COLUMNS),
+            "total_stok": val1.get("total_stok", ""),
+        }
+
+        def _kategori_out(k):
+            return {
+                "ditemukan": bool(k.get("ditemukan")),
+                "pesan": k.get("error") or k.get("pesan"),
+                "rows": _wrw_stok_project_rows(k.get("baris"), WRW_STOK_KATEGORI_COLUMNS),
+                "total_stok_utuh": k.get("total_stok_utuh", ""),
+                "perlu_review": k.get("perlu_review", ""),
+            }
+
+        form_st_out = _wrw_cek_stok_form_st(no_jo_val)
+
+        return jsonify({
+            "success": True,
+            "nama_produk": nama_produk,
+            "no_jo": no_jo_val,
+            "validasi": validasi_out,
+            "form_st": form_st_out,
+            "bjb": _kategori_out(bjb),
+            "bjl": _kategori_out(bjl),
+        })
+    except Exception as e:
+        return _wrw_error_response(e)
+
+
+def _apply_rewind_revisi_into_rewind_py():
     """LANGKAH TERAKHIR refresh Waste Rewind (setelah semua sync lain, karena
-    sync lain menghitung ulang kolom turunan dari data mentah). Satu kali baca
-    REWIND_PY + REWIND_PY_REVISI, satu kali tulis:
-
-      1) REVISI: untuk tiap baris di REWIND_PY_REVISI (urut dari atas -> yang
-         lebih baru menimpa), kolom revisi yang TERISI dan BEDA dari
-         REWIND_PY dipakai (per sel, bukan seluruh baris). Kolom identitas
-         dan Status tidak pernah ditimpa.
-      2) HITUNG WASTE: untuk baris yang BELUM Finish, isi 4 kolom
-         (Waste_Slitting_Meter, Persentase_Waste_(%), Waste_Slitting_After_Rewind_Meter,
-         Waste_Slitting_After_Rewind_Presentase) dengan rumus yang sama dengan
-         tombol Hitung Waste -- memakai nilai SETELAH revisi (langkah 1).
-         Dilewati: baris Finish (nilainya terkunci dari snapshot FINISH), sel
-         waste yang punya revisi (revisi menang), dan baris yang belum punya
-         Bahan Awal / Hasil Slitting (Meter) > 0 (belum ada data slitting,
-         kalau dihitung malah jadi waste 100%).
-
-    Balikin (jumlah sel yang diubah oleh revisi, jumlah baris waste yang diisi)."""
+    sync lain menghitung ulang kolom turunan dari data mentah). Baca
+    REWIND_PY_REVISI; untuk tiap baris revisi (urut dari atas -> yang lebih
+    baru menimpa), tiap kolom revisi yang TERISI dan BEDA dari nilai di
+    REWIND_PY dipakai (per sel, bukan seluruh baris). Kolom identitas/Status
+    tidak pernah ditimpa. Balikin jumlah sel yang diubah."""
     sh = _waste_rewind_spreadsheet()
+    try:
+        ws_rev = sh.worksheet(WASTE_REWIND_REVISI_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        return 0
+    rev = ws_rev.get_all_values()
+    if len(rev) < 2:
+        return 0
+    rev_header = [str(h).strip() for h in rev[0]]
     ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
     values = ws.get_all_values()
     if len(values) < 2:
-        return 0, 0
+        return 0
     header = [str(h).strip() for h in values[0]]
     find = import_engine._find_col_index
-    parse = import_engine._parse_flexible_number
-    c_spk, c_nojo, c_status = find(header, "SPK"), find(header, "NO_JO"), find(header, "Status")
-    if c_spk is None or c_nojo is None:
-        return 0, 0
+    norm = import_engine._norm
+    rc_spk, rc_nojo = find(rev_header, "SPK"), find(rev_header, "NO_JO")
+    c_spk, c_nojo = find(header, "SPK"), find(header, "NO_JO")
+    if None in (rc_spk, rc_nojo, c_spk, c_nojo):
+        return 0
 
-    work = [_wrw_pad(r, len(header)) for r in values]   # salinan kerja; indeks 0 = header
-    changed = {}                                        # (no_baris, kolom) -> nilai baru
-    revised_cols_by_row = {}                            # no_baris -> {kolom yang punya revisi}
-
-    # ---- 1) revisi
     row_by_key = {}
-    for i in range(2, len(work) + 1):
-        r = work[i - 1]
+    for i, row in enumerate(values[1:], start=2):
+        r = _wrw_pad(row, len(header))
         row_by_key[(str(r[c_spk]).strip(), str(r[c_nojo]).strip())] = i
-    try:
-        rev = sh.worksheet(WASTE_REWIND_REVISI_SHEET).get_all_values()
-    except gspread.exceptions.WorksheetNotFound:
-        rev = []
-    if len(rev) >= 2:
-        rev_header = [str(h).strip() for h in rev[0]]
-        rc_spk, rc_nojo = find(rev_header, "SPK"), find(rev_header, "NO_JO")
-        if rc_spk is not None and rc_nojo is not None:
-            col_map = _wrw_revisi_col_map(rev_header, header)
-            desired = {}
-            for row in rev[1:]:
-                r = _wrw_pad(row, len(rev_header))
-                rn = row_by_key.get((str(r[rc_spk]).strip(), str(r[rc_nojo]).strip()))
-                if rn is None:
-                    continue
-                for j, c in col_map:
-                    v = str(r[j]).strip()
-                    if v != "":
-                        desired[(rn, c)] = v
-            for (rn, c), v in desired.items():
-                revised_cols_by_row.setdefault(rn, set()).add(c)
-                if not _wrw_same_value(work[rn - 1][c], v):
-                    work[rn - 1][c] = v
-                    changed[(rn, c)] = v
-    revisi_cells = len(changed)
 
-    # ---- 2) hitung waste (baris yang belum Finish)
-    waste_rows = 0
-    need = ("Bahan_Awal_Printing_(Meter)", "Hasil_Slitting_(Meter)", "Meter_Jumbo_Hilang_Rewind") + _WRW_CALC_COLS
-    cols = {n: find(header, n) for n in need}
-    if c_status is not None and all(c is not None for c in cols.values()):
-        for rn in range(2, len(work) + 1):
-            row = work[rn - 1]
-            if str(row[c_status]).strip().lower() == "finish":
-                continue
-            bahan = parse(row[cols["Bahan_Awal_Printing_(Meter)"]])
-            hasil = parse(row[cols["Hasil_Slitting_(Meter)"]])
-            jumbo = parse(row[cols["Meter_Jumbo_Hilang_Rewind"]])
-            if bahan is None or bahan <= 0 or hasil is None or hasil <= 0:
-                continue
-            res = hitung_waste_rewind(bahan, hasil, jumbo)
-            protected = revised_cols_by_row.get(rn, set())
-            row_changed = False
-            for n in _WRW_CALC_COLS:
-                c = cols[n]
-                if c in protected:
-                    continue
-                if not _wrw_same_value(row[c], res[n]):
-                    row[c] = res[n]
-                    changed[(rn, c)] = res[n]
-                    row_changed = True
-            if row_changed:
-                waste_rows += 1
+    col_map = _wrw_revisi_col_map(rev_header, header)  # (kolom di REVISI, kolom di REWIND_PY)
 
-    if changed:
-        ws.batch_update(
-            [{"range": gspread.utils.rowcol_to_a1(rn, c + 1), "values": [[v]]} for (rn, c), v in changed.items()],
-            value_input_option="USER_ENTERED",
-        )
+    desired = {}
+    for row in rev[1:]:
+        r = _wrw_pad(row, len(rev_header))
+        rn = row_by_key.get((str(r[rc_spk]).strip(), str(r[rc_nojo]).strip()))
+        if rn is None:
+            continue
+        for j, c in col_map:
+            v = str(r[j]).strip()
+            if v != "":
+                desired[(rn, c)] = v
+
+    updates = []
+    for (rn, c), v in desired.items():
+        cur = _wrw_pad(values[rn - 1], len(header))[c]
+        if _wrw_same_value(cur, v):
+            continue
+        updates.append({"range": gspread.utils.rowcol_to_a1(rn, c + 1), "values": [[v]]})
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
         _wrw_invalidate_cache()
-    return revisi_cells, waste_rows
+    return len(updates)
 
 
 def _read_rewind_finish_restore_map():

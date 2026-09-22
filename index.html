@@ -580,17 +580,6 @@
   .wrw-act.calc:hover:not([disabled]){background:#1c3f66;}
   .wrw-act.finish{background:#2e9e5b; border-color:#2e9e5b; color:#fff;}
   .wrw-act.finish:hover:not([disabled]){background:#25834b;}
-  .wrw-select{
-    height:44px; box-sizing:border-box; border:1.5px solid var(--line); border-radius:10px;
-    padding:0 34px 0 12px; background:#fff; color:var(--ink); font-family:inherit; font-size:13px;
-    cursor:pointer; outline:none; transition:border-color .15s ease, box-shadow .15s ease;
-  }
-  .wrw-select:focus{border-color:var(--blue); box-shadow:0 0 0 4px var(--blue-50);}
-  .wrw-count{font-size:12px; color:var(--ink-soft); font-weight:600; white-space:nowrap;}
-  .wrw-fin-badge{
-    display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
-    background:#e3f6ea; color:#1f7a45; font-size:10px; font-weight:800; white-space:nowrap;
-  }
   .wrw-act.danger{border-color:#c0392b; color:#c0392b;}
   .wrw-act.danger:hover:not([disabled]){background:#fdecea;}
   .wrw-act[disabled]{opacity:.55; cursor:not-allowed;}
@@ -612,6 +601,46 @@
   .wrw-detail-item.revised .val input{padding-right:24px;}
   .wrw-rev-star{color:#d9480f; font-weight:900;}
   .wrw-rev-legend{margin-right:auto; font-size:11.5px; color:#8a4b12; font-weight:700;}
+  .wrw-act.stok{background:#6c4fb6; border-color:#6c4fb6; color:#fff;}
+  .wrw-act.stok:hover:not([disabled]){background:#5a3f9c;}
+
+  /* ---- Modal Cek Stok ---- */
+  #wrwStokOverlay{
+    display:none; position:fixed; inset:0; z-index:1300; background:rgba(15,25,40,.55);
+    align-items:center; justify-content:center; padding:16px; backdrop-filter:blur(2px);
+  }
+  .wrw-stok-modal{
+    width:min(1100px,98vw); max-height:92vh; overflow:hidden;
+    background:#fff; border-radius:16px; box-shadow:0 25px 70px -20px rgba(10,25,50,.45);
+    display:flex; flex-direction:column; border:1px solid #e7ecf2;
+  }
+  .wrw-stok-body{overflow:auto; padding:18px; flex:1;}
+  .wrw-stok-section{margin-bottom:22px;}
+  .wrw-stok-section:last-child{margin-bottom:4px;}
+  .wrw-stok-section h4{
+    margin:0 0 8px; font-size:13px; font-weight:800; color:#244f80;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .wrw-stok-badge{
+    font-size:10.5px; font-weight:800; padding:2px 9px; border-radius:999px;
+    background:#eef4fb; color:#244f80;
+  }
+  .wrw-stok-badge.warn{background:#fdecea; color:#c0392b;}
+  .wrw-stok-table-wrap{overflow-x:auto; border:1px solid #e7ecf2; border-radius:10px;}
+  .wrw-stok-table{width:100%; border-collapse:collapse; font-size:11.5px; white-space:nowrap;}
+  .wrw-stok-table th{
+    background:#f5f8fb; color:#36516d; font-weight:800; text-align:left;
+    padding:8px 10px; border-bottom:1px solid #e7ecf2; position:sticky; top:0;
+  }
+  .wrw-stok-table td{padding:7px 10px; border-bottom:1px solid #edf1f5; color:var(--ink);}
+  .wrw-stok-table tr:last-child td{border-bottom:none;}
+  .wrw-stok-empty{padding:14px; font-size:12px; color:var(--ink-soft); font-style:italic;}
+  .wrw-stok-totals{
+    display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; font-size:12px; font-weight:700; color:#244f80;
+  }
+  .wrw-stok-totals span b{color:#0f2a4a;}
+  .wrw-stok-loading, .wrw-stok-error{padding:30px 10px; text-align:center; font-size:13px; color:var(--ink-soft);}
+  .wrw-stok-error{color:#c0392b;}
   .wrw-detail-item.changed .val{background:#fff8e1;}
   .wrw-detail-item.changed .val input{border-color:#e0a800; background:#fffdf4;}
   .wrw-detail-item.locked .lbl::after{content:" 🔒"; font-weight:400;}
@@ -708,6 +737,16 @@
       </div>
       <div class="wrw-detail-grid" id="wrwDetailGrid"></div>
       <div class="wrw-modal-foot" id="wrwModalFoot"></div>
+    </div>
+  </div>
+
+  <div id="wrwStokOverlay" onclick="if(event.target===this)closeWrwCekStok()">
+    <div class="wrw-stok-modal">
+      <div class="wrw-modal-head">
+        <div><h3>📦 Cek Stok</h3><div id="wrwStokSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+        <button class="wrw-modal-close" onclick="closeWrwCekStok()">✕</button>
+      </div>
+      <div class="wrw-stok-body" id="wrwStokBody"></div>
     </div>
   </div>
 
@@ -1147,20 +1186,9 @@
               </div>
               <div class="wrw-toolbar">
                 <div class="wrw-search"><span class="ic">🔍</span><input id="wrwSearch" placeholder="Cari JO / SPK / Produk..." oninput="renderWasteRewind()"></div>
-                <select class="wrw-select" id="wrwFilterStatus" onchange="renderWasteRewind()" title="Filter status Finish per SPK/JO">
-                  <option value="">Semua status</option>
-                  <option value="finish">✔ Sudah Finish</option>
-                  <option value="belum">Belum Finish</option>
-                </select>
-                <select class="wrw-select" id="wrwSort" onchange="renderWasteRewind()" title="Urutkan berdasarkan persentase waste">
-                  <option value="">Urutan default</option>
-                  <option value="sl">Persentase SL terbesar</option>
-                  <option value="slrw">Persentase SL-RW terbesar</option>
-                </select>
-                <button class="btn-danger-outline" onclick="wrwResetFilters()">✖ Reset</button>
-                <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada + hitung waste untuk baris yang belum Finish (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
+                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';renderWasteRewind()">✖ Reset</button>
+                <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
-              <div class="wrw-count" id="wrwCount" style="margin:-4px 0 8px;"></div>
               <div class="rwk-status" id="wrwRefreshStatus" style="display:none;"></div>
               <pre id="wrwRefreshLog" class="run-log" style="display:none;"></pre>
               <div class="table-wrap">
@@ -2260,9 +2288,8 @@
         const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
         const mhNote = (st.meter_hilang_updated ?? 0) > 0 ? `, ${st.meter_hilang_updated} sel Meter Hilang diperbarui` : "";
         const rvNote = (st.revisi_applied ?? 0) > 0 ? `, ${st.revisi_applied} sel revisi diterapkan` : "";
-        const wsNote = (st.waste_computed ?? 0) > 0 ? `, waste dihitung untuk ${st.waste_computed} baris` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+rvNote+wsNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+rvNote+wsNote).replace(/^, /,"")+")" : ""}`, "success");
+        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+rvNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+rvNote).replace(/^, /,"")+")" : ""}`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
@@ -2352,41 +2379,16 @@
     head.innerHTML = wasteRewindVisibleHeaders.map(h=>`<th>${escHtml(aliasWrwHeader(h))}</th>`).join("")+`<th>DETAIL</th>`;
     makeColumnsResizable("wrwTable", wrwColWidths);
   }
-  // "7,52%" -> 7.52 ; kosong/tidak valid -> -Infinity (jatuh ke paling bawah saat urut terbesar)
-  function wrwPct(v){
-    const n = parseFloat(String(v??"").replace("%","").trim().replace(/\./g,"").replace(",","."));
-    return isNaN(n) ? -Infinity : n;
-  }
-  function wrwResetFilters(){
-    document.getElementById("wrwSearch").value="";
-    document.getElementById("wrwFilterStatus").value="";
-    document.getElementById("wrwSort").value="";
-    renderWasteRewind();
-  }
   function renderWasteRewind(){
     const body=document.getElementById("wrwBody"); if(!body) return;
     const kw=(document.getElementById("wrwSearch")?.value||"").toLowerCase();
-    const fStatus=document.getElementById("wrwFilterStatus")?.value||"";
-    const sortBy=document.getElementById("wrwSort")?.value||"";
-    let rows=wasteRewindRows.filter(r=>{
-      if(fStatus==="finish" && !wrwIsFinished(r)) return false;
-      if(fStatus==="belum" && wrwIsFinished(r)) return false;
-      return !kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw));
-    });
-    const sortCol = {sl:"Persentase_Waste_(%)", slrw:"Waste_Slitting_After_Rewind_Presentase"}[sortBy];
-    if(sortCol) rows = rows.map((r,i)=>[r,i]).sort((a,b)=>(wrwPct(b[0][sortCol])-wrwPct(a[0][sortCol])) || (a[1]-b[1])).map(x=>x[0]);  // terbesar dulu, kosong paling bawah, urutan asli dijaga
-    const cnt=document.getElementById("wrwCount");
-    if(cnt){
-      const nFin = wasteRewindRows.filter(wrwIsFinished).length;
-      cnt.textContent = `Menampilkan ${rows.length} dari ${wasteRewindRows.length} data · ${nFin} sudah Finish, ${wasteRewindRows.length-nFin} belum`;
-    }
+    const rows=wasteRewindRows.filter(r=>!kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw)));
     if(!rows.length){ body.innerHTML=emptyState(wasteRewindVisibleHeaders.length+1,"Tidak ada data Waste Rewind"); return; }
     body.innerHTML=rows.map((r,i)=>{ const revCols = wrwRevisedCols(r); return `<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
       wasteRewindVisibleHeaders.map(h=>{
         const danger = WRW_DANGER_IF_ZERO_HEADERS.includes(h) && wrwIsZeroOrEmpty(r[h]);
         const star = revCols.includes(h) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : "";
-        const fin = (h==="JO" && wrwIsFinished(r)) ? ' <span class="wrw-fin-badge" title="Sudah Finish">✔ Finish</span>' : "";
-        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}${star}${fin}</td>`;
+        return `<td${danger?' class="wrw-cell-danger"':''}>${escHtml(r[h]??"")}${star}</td>`;
       }).join("")+`<td><button class="wrw-detail-btn" onclick="openWasteRewindDetail(${wasteRewindRows.indexOf(r)})">🔎 Detail</button></td></tr>`; }).join("");
   }
   let wrwDetailIdx = -1;
@@ -2448,6 +2450,7 @@
     const hasRev = wrwRevisedCols(row).length > 0;
     const lockTip = 'title="Sudah Finish: terkunci. Minta Admin melepas status Finish dulu."';
     foot.innerHTML =
+      `<button class="wrw-act stok" onclick="wrwOpenCekStok()" title="Cek stok Validasi, Form Serah Terima, Gudang BJB & BJL (jalan walau sudah Finish)">📦 Cek Stok</button>`+
       (hasRev ? `<span class="wrw-rev-legend">* = hasil revisi</span>`+
                 (fin ? `<button class="wrw-act danger" disabled ${lockTip}>🔒 Hapus Revisi</button>`
                      : `<button class="wrw-act danger" onclick="wrwDeleteRevisi(this)" title="Hapus revisi & kembali ke data default">🗑️ Hapus Revisi</button>`) : "")+
@@ -2500,6 +2503,57 @@
     if(kind==="unfinish" && !confirm(`Lepas status Finish untuk ${ident}?\n\nBaris ini akan dihapus dari sheet REWIND_PY_FINISH.`)) return;
     return wrwPost(kind, btn);
   }
+  // ---- Modal Cek Stok: Validasi (VAL_1), Form Serah Terima (FORM_ST_1),
+  // Gudang BJB & BJL (BJB_KATEGORI/BJL_KATEGORI). Read-only -- sengaja TIDAK
+  // dikunci walau baris sudah Finish (lihat tombol di renderWrwFooter).
+  function wrwEscAttr(s){ return escHtml(String(s??"")); }
+  function wrwStokTable(section){
+    if(!section) return `<div class="wrw-stok-empty">Tidak ada data.</div>`;
+    const rows = section.rows || [];
+    if(!rows.length){
+      return `<div class="wrw-stok-empty">${escHtml(section.pesan || "Tidak ditemukan.")}</div>`;
+    }
+    const cols = Object.keys(rows[0]);
+    return `<div class="wrw-stok-table-wrap"><table class="wrw-stok-table">`+
+      `<thead><tr>${cols.map(c=>`<th>${escHtml(aliasWrwHeader(c))}</th>`).join("")}</tr></thead>`+
+      `<tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${escHtml(r[c]??"")||"-"}</td>`).join("")}</tr>`).join("")}</tbody>`+
+      `</table></div>`;
+  }
+  function wrwStokSectionHtml(title, section, totals){
+    const badge = section && section.ditemukan
+      ? `<span class="wrw-stok-badge">${(section.rows||[]).length} baris</span>`
+      : `<span class="wrw-stok-badge warn">Tidak ditemukan</span>`;
+    const totalsHtml = (section && section.ditemukan && totals && totals.length)
+      ? `<div class="wrw-stok-totals">${totals.map(t=>`<span>${escHtml(t[0])}: <b>${escHtml(t[1]||"-")}</b></span>`).join("")}</div>` : "";
+    return `<div class="wrw-stok-section"><h4>${title} ${badge}</h4>${wrwStokTable(section)}${totalsHtml}</div>`;
+  }
+  function renderWrwStokBody(data){
+    const body = document.getElementById("wrwStokBody");
+    body.innerHTML =
+      wrwStokSectionHtml("✅ Validasi (VAL_1)", data.validasi, [["Total Stok", data.validasi?.total_stok]]) +
+      wrwStokSectionHtml("🤝 Form Serah Terima (FORM_ST_1)", data.form_st, []) +
+      wrwStokSectionHtml("📗 Gudang Barang Jadi Baru (BJB)", data.bjb, [["Total Stok Utuh", data.bjb?.total_stok_utuh], ["Perlu Review", data.bjb?.perlu_review]]) +
+      wrwStokSectionHtml("📙 Gudang Barang Jadi Lama (BJL)", data.bjl, [["Total Stok Utuh", data.bjl?.total_stok_utuh], ["Perlu Review", data.bjl?.perlu_review]]);
+  }
+  async function wrwOpenCekStok(){
+    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
+    document.getElementById("wrwStokSub").innerText = `JO: ${row["JO"]||"-"} · Produk: ${row["Nama_Produk"]||"-"}`;
+    document.getElementById("wrwStokBody").innerHTML = `<div class="wrw-stok-loading">⏳ Memuat data stok...</div>`;
+    document.getElementById("wrwStokOverlay").style.display = "flex";
+    try{
+      const res = await fetch(`${API_BASE}/api/waste-rewind/cek-stok`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ spk: row["SPK"], no_jo: row["NO_JO"], user: wrwCurrentUserName() })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat data stok");
+      renderWrwStokBody(data);
+    }catch(e){
+      document.getElementById("wrwStokBody").innerHTML = `<div class="wrw-stok-error">⚠️ ${escHtml(e.message)}</div>`;
+    }
+  }
+  function closeWrwCekStok(){ document.getElementById("wrwStokOverlay").style.display = "none"; }
+
   function wrwSendRevisi(btn){
     const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
     const ch = wrwCollectChanges();
