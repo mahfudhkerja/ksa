@@ -626,8 +626,15 @@
     background:#eef4fb; color:#244f80;
   }
   .wrw-stok-badge.warn{background:#fdecea; color:#c0392b;}
-  .wrw-stok-table-wrap{overflow-x:auto; border:1px solid #e7ecf2; border-radius:10px;}
-  .wrw-stok-table{width:100%; border-collapse:collapse; font-size:11.5px; white-space:nowrap;}
+  .wrw-stok-table-wrap{overflow-x:auto; border:1px solid #e7ecf2; border-radius:10px; max-width:100%;}
+  /* DULU width:100% -- itu yang bikin kolom dipaksa muat di lebar
+     container sementara teksnya nowrap, jadi teks "bocor"/numpuk ke sel
+     sebelah (nabrak). Sekarang table-layout:auto + width:max-content:
+     tiap kolom lebarnya ngikut isi paling panjang (nggak dipaksa
+     kompres), dan kalau totalnya lebih lebar dari container, wrapper di
+     atas (overflow-x:auto) yang jadi discroll ke samping -- bukan
+     kolomnya yang diperkecil paksa. */
+  .wrw-stok-table{width:max-content; min-width:100%; table-layout:auto; border-collapse:collapse; font-size:11.5px; white-space:nowrap;}
   .wrw-stok-table th{
     background:#f5f8fb; color:#36516d; font-weight:800; text-align:left;
     padding:8px 10px; border-bottom:1px solid #e7ecf2; position:sticky; top:0;
@@ -2337,6 +2344,26 @@
     "Persentase_Waste_(%)": "Persentase SL",
     "Waste_Slitting_After_Rewind_Meter": "Waste Meter SL-RW",
     "Waste_Slitting_After_Rewind_Presentase": "Persentase SL-RW",
+    // Header modal "Cek Stok" (VAL_1 / FORM_ST_1 / BJB_KATEGORI / BJL_KATEGORI)
+    // -- key-nya PERSIS nama field yang dikirim backend (lihat
+    // WRW_STOK_*_COLUMNS di app.py), cuma dipercantik buat ditampilkan.
+    "AREA": "Area",
+    "NAMA_PRODUK": "Nama Produk",
+    "JUMLAH": "Jumlah",
+    "JUMLAH_MASUK_REWIND": "Jumlah Masuk Rewind",
+    "TANGGAL": "Tanggal",
+    "JUMLAH_MASUK_GBJ": "Jumlah Masuk GBJ",
+    "BERAT/KG": "Berat/Kg",
+    "STATUS": "Status",
+    "MASUK_REWIND": "Masuk Rewind",
+    "HASIL_RIWEN": "Hasil Riwen",
+    "DARI_SLITTING": "Dari Slitting",
+    "UKURAN_PRODUK": "Ukuran Produk",
+    "PRODUK": "Produk",
+    "SISA_STOCK_AKHIR": "Sisa Stock Akhir",
+    "JO_DAN_STATUS": "JO & Status",
+    "KETERANGAN": "Keterangan",
+    "KATEGORI": "Kategori",
   };
   function aliasWrwHeader(h){ return WRW_HEADER_ALIAS[h] || String(h).replace(/_/g," "); }
   // Kolom yang di-highlight merah kalau nilainya 0 atau kosong.

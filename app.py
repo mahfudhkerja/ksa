@@ -148,6 +148,12 @@ SCRIPT_LABELS = {
 }
 
 app = Flask(__name__)
+# PENTING: Flask defaultnya SORT_KEYS alphabetical buat semua jsonify() --
+# ini yang bikin urutan kolom di modal Cek Stok (dan tabel lain yang
+# ngambil kolom dari Object.keys(row) di frontend) jadi kacau (alfabetis,
+# bukan urutan yang kita susun di WRW_STOK_*_COLUMNS dkk). Dimatikan biar
+# urutan key di dict Python (row_out = {...}) yang nentuin urutan kolom.
+app.json.sort_keys = False
 CORS(app)  # izinkan dipanggil dari frontend berbeda origin (mis. Figma / GitHub Pages)
 
 
@@ -2044,8 +2050,9 @@ def waste_rewind_hapus_revisi():
 #          ditampilkan kalau kolom JUMLAH atau JUMLAH_MASUK_REWIND ada
 #          isinya (teks/angka apa saja, bukan cuma "-"/kosong).
 #        - Form Serah Terima (FORM_ST_1) : suffix JO SAJA (tanpa tahun).
-#          Baris DISEMBUNYIKAN kalau MASUK_REWIND ada isinya TAPI
-#          HASIL_RIWEN kosong/"-" (masih diproses, belum ada hasil).
+#          Baris DITAMPILKAN HANYA kalau MASUK_REWIND ada isinya (bukan
+#          "-") DAN HASIL_RIWEN kosong/"-" (masih di-antrian rewind,
+#          belum ada hasilnya) -- baris lain disembunyikan.
 #        - Gudang Barang Jadi Baru/Lama (BJB_KATEGORI/BJL_KATEGORI): suffix
 #          JO **+ TAHUN** (soalnya nomor JO bisa kepakai ulang di tahun
 #          beda -- JO 3034 tahun 2026 != JO 3034 tahun lain). Baris tanpa
@@ -2221,8 +2228,10 @@ def _wrw_cek_stok_val1(target_suffix):
 
 
 def _wrw_cek_stok_form_st(target_suffix):
-    """FORM_ST_1 (gspread A) -- cocok suffix JO saja. Baris disembunyikan
-    kalau MASUK_REWIND ada isinya TAPI HASIL_RIWEN kosong/"-"."""
+    """FORM_ST_1 (gspread A) -- cocok suffix JO saja. Baris ditampilkan
+    HANYA kalau MASUK_REWIND ada isinya (bukan "-") DAN HASIL_RIWEN kosong
+    atau "-" (masih di-antrian rewind, belum ada hasilnya) -- baris lain
+    (MASUK_REWIND kosong, atau HASIL_RIWEN sudah keisi) disembunyikan."""
     ws = _stok_spreadsheet_a().worksheet(FORM_ST1_SHEET_NAME)
     values = ws.get_all_values()
     if not values:
@@ -2240,8 +2249,8 @@ def _wrw_cek_stok_form_st(target_suffix):
             continue
         masuk_rewind = _stok_cell(row, cols["MASUK_REWIND"])
         hasil_riwen = _stok_cell(row, cols["HASIL_RIWEN"])
-        if _stok_has_content(masuk_rewind) and not _stok_has_content(hasil_riwen):
-            continue  # masih diproses, belum ada HASIL_RIWEN -- gausah ditampilkan
+        if not (_stok_has_content(masuk_rewind) and not _stok_has_content(hasil_riwen)):
+            continue  # bukan baris "masih di-antrian rewind" -- gausah ditampilkan
         rows_out.append({
             "TANGGAL": _stok_cell(row, cols["TANGGAL"]),
             "JO": jo_cell,
