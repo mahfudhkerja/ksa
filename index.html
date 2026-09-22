@@ -320,6 +320,12 @@
   .chat-send-btn:hover:not(:disabled){ transform:scale(1.07); }
   .chat-send-btn:active:not(:disabled){ transform:scale(.93); }
   .chat-send-btn:disabled{ background:var(--line-soft); color:var(--ink-faint); box-shadow:none; cursor:default; }
+  /* Indikator "lagi ngambil data" di bubble chatbot (mis. pas ngecek stock via chat) -- titik mantul, ganti teks statis "Mengecek data..." yang kesannya jadul. */
+  .chat-typing{display:inline-flex; align-items:center; gap:4px; padding:3px 2px;}
+  .chat-typing span{width:6px; height:6px; border-radius:50%; background:var(--ink-faint); animation:chatTypingBounce 1.1s infinite ease-in-out;}
+  .chat-typing span:nth-child(2){animation-delay:.15s;}
+  .chat-typing span:nth-child(3){animation-delay:.3s;}
+  @keyframes chatTypingBounce{0%,60%,100%{transform:translateY(0); opacity:.45;} 30%{transform:translateY(-4px); opacity:1;}}
   .chat-table-wrap{ overflow-x:auto; margin:6px 0; border-radius:10px; border:1px solid var(--line); }
   table.chat-table{ border-collapse:collapse; width:100%; font-size:12.5px; white-space:normal; }
   table.chat-table th, table.chat-table td{ padding:7px 10px; border-bottom:1px solid var(--line); text-align:left; }
@@ -408,8 +414,8 @@
   .fstl-field input:focus:not([type="checkbox"]), .fstl-field textarea:focus{outline:none; border-color:var(--fv); box-shadow:0 0 0 4px var(--fv-soft);}
   .fstl-field-row{display:flex; gap:10px; align-items:center;}
   .fstl-field-row input{flex:1;}
-  .fstl-btn-check{background:var(--fink); color:white; border:none; border-radius:13px; padding:0 18px; height:44px; font-weight:800; font-size:12px; cursor:pointer; white-space:nowrap; font-family:'Plus Jakarta Sans',sans-serif; flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; gap:6px;}
-  .fstl-btn-check:hover{background:var(--fv-deep);}
+  .fstl-btn-check{background:var(--blue-dark); color:white; border:none; border-radius:13px; padding:0 18px; height:44px; font-weight:800; font-size:12px; cursor:pointer; white-space:nowrap; font-family:'Plus Jakarta Sans',sans-serif; flex-shrink:0; display:inline-flex; align-items:center; justify-content:center; gap:6px;}
+  .fstl-btn-check:hover{background:var(--blue-deep);}
   .fstl-btn-check:disabled{opacity:.7; cursor:wait;}
   .fstl-btn-ambil{background:none; border:none; color:var(--fv); font-weight:800; font-size:12.5px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; padding:4px 2px; font-family:'Plus Jakarta Sans',sans-serif; transition:color .15s ease, transform .15s ease;}
   .fstl-btn-ambil:hover{color:var(--fv-deep); transform:translateY(-1px);}
@@ -477,12 +483,19 @@
     position:absolute; left:14px; top:50%; transform:translateY(-50%);
     font-size:14px; opacity:.65; pointer-events:none;
   }
+  .wrw-filter-group{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+  .wrw-sort-select{
+    height:41px; box-sizing:border-box; border:1.5px solid var(--line); border-radius:10px;
+    padding:0 12px; background:#fff; color:var(--ink); font-family:inherit; font-size:12.5px;
+    cursor:pointer; transition:border-color .15s ease, box-shadow .15s ease;
+  }
+  .wrw-sort-select:focus{outline:none; border-color:var(--blue-light); box-shadow:0 0 0 4px var(--blue-50);}
   .wrw-table{
-    width:100%; min-width:0; border-collapse:separate; border-spacing:0;
-    font-size:11px; color:var(--ink); table-layout:fixed;
+    width:100%; min-width:960px; border-collapse:separate; border-spacing:0;
+    font-size:11px; color:var(--ink); table-layout:auto;
   }
   .wrw-table thead th{
-    background:#244f80; color:#fff; padding:8px 4px;
+    background:#244f80; color:#fff; padding:8px 6px;
     font-size:10px; font-weight:800; letter-spacing:.01em;
     text-align:center; vertical-align:middle;
     white-space:normal; overflow-wrap:normal; word-break:normal; hyphens:none;
@@ -491,28 +504,29 @@
   .wrw-table thead th:first-child{border-radius:10px 0 0 0;}
   .wrw-table thead th:last-child{border-radius:0 10px 0 0;}
   .wrw-table tbody td{
-    padding:8px 4px; border-bottom:1px solid #edf1f5;
+    padding:8px 6px; border-bottom:1px solid #edf1f5;
     vertical-align:top; white-space:normal;
-    overflow-wrap:anywhere; word-break:break-word; line-height:1.3;
+    overflow-wrap:break-word; word-break:normal; line-height:1.35;
     background:#fff; font-size:11px;
   }
   .wrw-table tbody tr:hover td{background:#f8fbff;}
   .wrw-table tbody td:last-child{text-align:center; vertical-align:middle; overflow-wrap:normal; word-break:normal;}
-  /* table-layout:fixed -- lebar kolom dalam PERSEN, totalnya 100%, supaya
-     tabel selalu pas dengan lebar container (tidak pernah perlu geser ke
-     kanan). Isi yang tidak muat akan wrap ke bawah (baris jadi lebih
-     tinggi), bukan bikin tabel melebar. */
-  .wrw-table th:nth-child(1),  .wrw-table td:nth-child(1) {width:11%;}
-  .wrw-table th:nth-child(2),  .wrw-table td:nth-child(2) {width:6%;}
-  .wrw-table th:nth-child(3),  .wrw-table td:nth-child(3) {width:6%;}
-  .wrw-table th:nth-child(4),  .wrw-table td:nth-child(4) {width:19%;}
-  .wrw-table th:nth-child(5),  .wrw-table td:nth-child(5) {width:8%;}
-  .wrw-table th:nth-child(6),  .wrw-table td:nth-child(6) {width:8%;}
-  .wrw-table th:nth-child(7),  .wrw-table td:nth-child(7) {width:9%;}
-  .wrw-table th:nth-child(8),  .wrw-table td:nth-child(8) {width:8%;}
-  .wrw-table th:nth-child(9),  .wrw-table td:nth-child(9) {width:8%;}
-  .wrw-table th:nth-child(10), .wrw-table td:nth-child(10){width:9%;}
-  .wrw-table th:last-child,    .wrw-table td:last-child   {width:8%;}
+  /* table-layout:auto + min-width per kolom -- kolom menyesuaikan isi
+     tulisan (nggak dipaksa muat ke persentase sempit yang bikin teks
+     numpuk/nabrak pas di-wrap). Kalau total lebar kolom lebih besar dari
+     container, tabel di-scroll horizontal lewat .wrw-table-wrap
+     (overflow:auto), bukan maksa nge-cramp isi kolom. */
+  .wrw-table th:nth-child(1),  .wrw-table td:nth-child(1) {min-width:90px;}
+  .wrw-table th:nth-child(2),  .wrw-table td:nth-child(2) {min-width:70px;}
+  .wrw-table th:nth-child(3),  .wrw-table td:nth-child(3) {min-width:70px;}
+  .wrw-table th:nth-child(4),  .wrw-table td:nth-child(4) {min-width:170px;}
+  .wrw-table th:nth-child(5),  .wrw-table td:nth-child(5) {min-width:90px;}
+  .wrw-table th:nth-child(6),  .wrw-table td:nth-child(6) {min-width:90px;}
+  .wrw-table th:nth-child(7),  .wrw-table td:nth-child(7) {min-width:90px;}
+  .wrw-table th:nth-child(8),  .wrw-table td:nth-child(8) {min-width:100px;}
+  .wrw-table th:nth-child(9),  .wrw-table td:nth-child(9) {min-width:100px;}
+  .wrw-table th:nth-child(10), .wrw-table td:nth-child(10){min-width:100px;}
+  .wrw-table th:last-child,    .wrw-table td:last-child   {min-width:90px;}
   .wrw-detail-btn{
     border:1.3px solid #3572b6; background:#fff; color:#1e4573;
     border-radius:8px; padding:6px 4px; font-family:inherit;
@@ -601,46 +615,6 @@
   .wrw-detail-item.revised .val input{padding-right:24px;}
   .wrw-rev-star{color:#d9480f; font-weight:900;}
   .wrw-rev-legend{margin-right:auto; font-size:11.5px; color:#8a4b12; font-weight:700;}
-  .wrw-act.stok{background:#6c4fb6; border-color:#6c4fb6; color:#fff;}
-  .wrw-act.stok:hover:not([disabled]){background:#5a3f9c;}
-
-  /* ---- Modal Cek Stok ---- */
-  #wrwStokOverlay{
-    display:none; position:fixed; inset:0; z-index:1300; background:rgba(15,25,40,.55);
-    align-items:center; justify-content:center; padding:16px; backdrop-filter:blur(2px);
-  }
-  .wrw-stok-modal{
-    width:min(1100px,98vw); max-height:92vh; overflow:hidden;
-    background:#fff; border-radius:16px; box-shadow:0 25px 70px -20px rgba(10,25,50,.45);
-    display:flex; flex-direction:column; border:1px solid #e7ecf2;
-  }
-  .wrw-stok-body{overflow:auto; padding:18px; flex:1;}
-  .wrw-stok-section{margin-bottom:22px;}
-  .wrw-stok-section:last-child{margin-bottom:4px;}
-  .wrw-stok-section h4{
-    margin:0 0 8px; font-size:13px; font-weight:800; color:#244f80;
-    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-  }
-  .wrw-stok-badge{
-    font-size:10.5px; font-weight:800; padding:2px 9px; border-radius:999px;
-    background:#eef4fb; color:#244f80;
-  }
-  .wrw-stok-badge.warn{background:#fdecea; color:#c0392b;}
-  .wrw-stok-table-wrap{overflow-x:auto; border:1px solid #e7ecf2; border-radius:10px;}
-  .wrw-stok-table{width:100%; border-collapse:collapse; font-size:11.5px; white-space:nowrap;}
-  .wrw-stok-table th{
-    background:#f5f8fb; color:#36516d; font-weight:800; text-align:left;
-    padding:8px 10px; border-bottom:1px solid #e7ecf2; position:sticky; top:0;
-  }
-  .wrw-stok-table td{padding:7px 10px; border-bottom:1px solid #edf1f5; color:var(--ink);}
-  .wrw-stok-table tr:last-child td{border-bottom:none;}
-  .wrw-stok-empty{padding:14px; font-size:12px; color:var(--ink-soft); font-style:italic;}
-  .wrw-stok-totals{
-    display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; font-size:12px; font-weight:700; color:#244f80;
-  }
-  .wrw-stok-totals span b{color:#0f2a4a;}
-  .wrw-stok-loading, .wrw-stok-error{padding:30px 10px; text-align:center; font-size:13px; color:var(--ink-soft);}
-  .wrw-stok-error{color:#c0392b;}
   .wrw-detail-item.changed .val{background:#fff8e1;}
   .wrw-detail-item.changed .val input{border-color:#e0a800; background:#fffdf4;}
   .wrw-detail-item.locked .lbl::after{content:" 🔒"; font-weight:400;}
@@ -737,16 +711,6 @@
       </div>
       <div class="wrw-detail-grid" id="wrwDetailGrid"></div>
       <div class="wrw-modal-foot" id="wrwModalFoot"></div>
-    </div>
-  </div>
-
-  <div id="wrwStokOverlay" onclick="if(event.target===this)closeWrwCekStok()">
-    <div class="wrw-stok-modal">
-      <div class="wrw-modal-head">
-        <div><h3>📦 Cek Stok</h3><div id="wrwStokSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
-        <button class="wrw-modal-close" onclick="closeWrwCekStok()">✕</button>
-      </div>
-      <div class="wrw-stok-body" id="wrwStokBody"></div>
     </div>
   </div>
 
@@ -1186,7 +1150,17 @@
               </div>
               <div class="wrw-toolbar">
                 <div class="wrw-search"><span class="ic">🔍</span><input id="wrwSearch" placeholder="Cari JO / SPK / Produk..." oninput="renderWasteRewind()"></div>
-                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';renderWasteRewind()">✖ Reset</button>
+                <div class="wrw-filter-group" id="wrwFilterGroup">
+                  <button type="button" class="us-filter-chip active" data-filter="all" onclick="setWrwStatusFilter('all')">Semua</button>
+                  <button type="button" class="us-filter-chip" data-filter="open" onclick="setWrwStatusFilter('open')">⏳ Belum Selesai</button>
+                  <button type="button" class="us-filter-chip" data-filter="finish" onclick="setWrwStatusFilter('finish')">✅ Selesai</button>
+                </div>
+                <select id="wrwSortSelect" class="wrw-sort-select" onchange="renderWasteRewind()">
+                  <option value="">Urutan Default</option>
+                  <option value="desc">Persentase: Terbesar → Terkecil</option>
+                  <option value="asc">Persentase: Terkecil → Terbesar</option>
+                </select>
+                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';setWrwStatusFilter('all');document.getElementById('wrwSortSelect').value='';renderWasteRewind()">✖ Reset</button>
                 <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
               <div class="rwk-status" id="wrwRefreshStatus" style="display:none;"></div>
@@ -1537,7 +1511,8 @@
     if(!message) return;
     chatAppend("user", message);
     input.value = "";
-    const thinking = chatAppend("bot", "Mengecek data...");
+    const thinking = chatAppend("bot", "");
+    thinking.innerHTML = `<span class="chat-typing"><span></span><span></span><span></span></span>`;
     try{
       const res = await fetch(`${API_BASE}/api/chatbot/ask`, {
         method: "POST",
@@ -2348,6 +2323,21 @@
     const n=parseFloat(s.replace(",", "."));
     return !isNaN(n) && n===0;
   }
+  // Angka buat keperluan sort (kolom Persentase_Waste_(%)) -- format Indonesia (koma = desimal).
+  function wrwParseNum(v){
+    const s=String(v??"").trim();
+    if(s==="") return NaN;
+    return parseFloat(s.replace(",", "."));
+  }
+  // Filter status: "all" | "open" (belum finish) | "finish" (sudah finish).
+  let wrwStatusFilter = "all";
+  function setWrwStatusFilter(f){
+    wrwStatusFilter = f;
+    document.querySelectorAll("#wrwFilterGroup .us-filter-chip").forEach(b=>{
+      b.classList.toggle("active", b.dataset.filter === f);
+    });
+    renderWasteRewind();
+  }
   let wasteRewindHeaders = [], wasteRewindRows = [];
   let wasteRewindRevised = {};   // {"SPK||NO_JO": [nama kolom hasil revisi]} dari server
   function wrwPairKey(row){ return `${String(row["SPK"]??"").trim()}||${String(row["NO_JO"]??"").trim()}`; }
@@ -2382,7 +2372,21 @@
   function renderWasteRewind(){
     const body=document.getElementById("wrwBody"); if(!body) return;
     const kw=(document.getElementById("wrwSearch")?.value||"").toLowerCase();
-    const rows=wasteRewindRows.filter(r=>!kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw)));
+    let rows=wasteRewindRows.filter(r=>{
+      const matchKw = !kw || wasteRewindHeaders.some(h=>String(r[h]??"").toLowerCase().includes(kw));
+      const matchStatus = wrwStatusFilter==="all" || (wrwStatusFilter==="finish" ? wrwIsFinished(r) : !wrwIsFinished(r));
+      return matchKw && matchStatus;
+    });
+    const sortDir = document.getElementById("wrwSortSelect")?.value || "";
+    if(sortDir){
+      rows = rows.slice().sort((a,b)=>{
+        const na = wrwParseNum(a["Persentase_Waste_(%)"]);
+        const nb = wrwParseNum(b["Persentase_Waste_(%)"]);
+        const va = isNaN(na) ? -Infinity : na;
+        const vb = isNaN(nb) ? -Infinity : nb;
+        return sortDir==="desc" ? vb-va : va-vb;
+      });
+    }
     if(!rows.length){ body.innerHTML=emptyState(wasteRewindVisibleHeaders.length+1,"Tidak ada data Waste Rewind"); return; }
     body.innerHTML=rows.map((r,i)=>{ const revCols = wrwRevisedCols(r); return `<tr class="row-in" style="animation-delay:${Math.min(i*12,250)}ms">`+
       wasteRewindVisibleHeaders.map(h=>{
@@ -2450,7 +2454,6 @@
     const hasRev = wrwRevisedCols(row).length > 0;
     const lockTip = 'title="Sudah Finish: terkunci. Minta Admin melepas status Finish dulu."';
     foot.innerHTML =
-      `<button class="wrw-act stok" onclick="wrwOpenCekStok()" title="Cek stok Validasi, Form Serah Terima, Gudang BJB & BJL (jalan walau sudah Finish)">📦 Cek Stok</button>`+
       (hasRev ? `<span class="wrw-rev-legend">* = hasil revisi</span>`+
                 (fin ? `<button class="wrw-act danger" disabled ${lockTip}>🔒 Hapus Revisi</button>`
                      : `<button class="wrw-act danger" onclick="wrwDeleteRevisi(this)" title="Hapus revisi & kembali ke data default">🗑️ Hapus Revisi</button>`) : "")+
@@ -2503,57 +2506,6 @@
     if(kind==="unfinish" && !confirm(`Lepas status Finish untuk ${ident}?\n\nBaris ini akan dihapus dari sheet REWIND_PY_FINISH.`)) return;
     return wrwPost(kind, btn);
   }
-  // ---- Modal Cek Stok: Validasi (VAL_1), Form Serah Terima (FORM_ST_1),
-  // Gudang BJB & BJL (BJB_KATEGORI/BJL_KATEGORI). Read-only -- sengaja TIDAK
-  // dikunci walau baris sudah Finish (lihat tombol di renderWrwFooter).
-  function wrwEscAttr(s){ return escHtml(String(s??"")); }
-  function wrwStokTable(section){
-    if(!section) return `<div class="wrw-stok-empty">Tidak ada data.</div>`;
-    const rows = section.rows || [];
-    if(!rows.length){
-      return `<div class="wrw-stok-empty">${escHtml(section.pesan || "Tidak ditemukan.")}</div>`;
-    }
-    const cols = Object.keys(rows[0]);
-    return `<div class="wrw-stok-table-wrap"><table class="wrw-stok-table">`+
-      `<thead><tr>${cols.map(c=>`<th>${escHtml(aliasWrwHeader(c))}</th>`).join("")}</tr></thead>`+
-      `<tbody>${rows.map(r=>`<tr>${cols.map(c=>`<td>${escHtml(r[c]??"")||"-"}</td>`).join("")}</tr>`).join("")}</tbody>`+
-      `</table></div>`;
-  }
-  function wrwStokSectionHtml(title, section, totals){
-    const badge = section && section.ditemukan
-      ? `<span class="wrw-stok-badge">${(section.rows||[]).length} baris</span>`
-      : `<span class="wrw-stok-badge warn">Tidak ditemukan</span>`;
-    const totalsHtml = (section && section.ditemukan && totals && totals.length)
-      ? `<div class="wrw-stok-totals">${totals.map(t=>`<span>${escHtml(t[0])}: <b>${escHtml(t[1]||"-")}</b></span>`).join("")}</div>` : "";
-    return `<div class="wrw-stok-section"><h4>${title} ${badge}</h4>${wrwStokTable(section)}${totalsHtml}</div>`;
-  }
-  function renderWrwStokBody(data){
-    const body = document.getElementById("wrwStokBody");
-    body.innerHTML =
-      wrwStokSectionHtml("✅ Validasi (VAL_1)", data.validasi, [["Total Stok", data.validasi?.total_stok]]) +
-      wrwStokSectionHtml("🤝 Form Serah Terima (FORM_ST_1)", data.form_st, []) +
-      wrwStokSectionHtml("📗 Gudang Barang Jadi Baru (BJB)", data.bjb, [["Total Stok Utuh", data.bjb?.total_stok_utuh], ["Perlu Review", data.bjb?.perlu_review]]) +
-      wrwStokSectionHtml("📙 Gudang Barang Jadi Lama (BJL)", data.bjl, [["Total Stok Utuh", data.bjl?.total_stok_utuh], ["Perlu Review", data.bjl?.perlu_review]]);
-  }
-  async function wrwOpenCekStok(){
-    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
-    document.getElementById("wrwStokSub").innerText = `JO: ${row["JO"]||"-"} · Produk: ${row["Nama_Produk"]||"-"}`;
-    document.getElementById("wrwStokBody").innerHTML = `<div class="wrw-stok-loading">⏳ Memuat data stok...</div>`;
-    document.getElementById("wrwStokOverlay").style.display = "flex";
-    try{
-      const res = await fetch(`${API_BASE}/api/waste-rewind/cek-stok`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ spk: row["SPK"], no_jo: row["NO_JO"], user: wrwCurrentUserName() })
-      });
-      const data = await res.json();
-      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat data stok");
-      renderWrwStokBody(data);
-    }catch(e){
-      document.getElementById("wrwStokBody").innerHTML = `<div class="wrw-stok-error">⚠️ ${escHtml(e.message)}</div>`;
-    }
-  }
-  function closeWrwCekStok(){ document.getElementById("wrwStokOverlay").style.display = "none"; }
-
   function wrwSendRevisi(btn){
     const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
     const ch = wrwCollectChanges();
