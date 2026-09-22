@@ -483,7 +483,6 @@
     position:absolute; left:14px; top:50%; transform:translateY(-50%);
     font-size:14px; opacity:.65; pointer-events:none;
   }
-  .wrw-filter-group{display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
   .wrw-sort-select{
     height:41px; box-sizing:border-box; border:1.5px solid var(--line); border-radius:10px;
     padding:0 12px; background:#fff; color:var(--ink); font-family:inherit; font-size:12.5px;
@@ -1150,17 +1149,17 @@
               </div>
               <div class="wrw-toolbar">
                 <div class="wrw-search"><span class="ic">🔍</span><input id="wrwSearch" placeholder="Cari JO / SPK / Produk..." oninput="renderWasteRewind()"></div>
-                <div class="wrw-filter-group" id="wrwFilterGroup">
-                  <button type="button" class="us-filter-chip active" data-filter="all" onclick="setWrwStatusFilter('all')">Semua</button>
-                  <button type="button" class="us-filter-chip" data-filter="open" onclick="setWrwStatusFilter('open')">⏳ Belum Selesai</button>
-                  <button type="button" class="us-filter-chip" data-filter="finish" onclick="setWrwStatusFilter('finish')">✅ Selesai</button>
-                </div>
+                <select id="wrwStatusSelect" class="wrw-sort-select" onchange="setWrwStatusFilter(this.value)">
+                  <option value="all">Status: Semua</option>
+                  <option value="open">⏳ Belum Selesai</option>
+                  <option value="finish">✅ Selesai</option>
+                </select>
                 <select id="wrwSortSelect" class="wrw-sort-select" onchange="renderWasteRewind()">
                   <option value="">Urutan Default</option>
                   <option value="desc">Persentase: Terbesar → Terkecil</option>
                   <option value="asc">Persentase: Terkecil → Terbesar</option>
                 </select>
-                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';setWrwStatusFilter('all');document.getElementById('wrwSortSelect').value='';renderWasteRewind()">✖ Reset</button>
+                <button class="btn-danger-outline" onclick="document.getElementById('wrwSearch').value='';document.getElementById('wrwStatusSelect').value='all';wrwStatusFilter='all';document.getElementById('wrwSortSelect').value='';renderWasteRewind()">✖ Reset</button>
                 <button class="btn-outline" id="wrwRefreshBtn" onclick="refreshWasteRewindFull()" title="Hitung ulang REWIND_PY dari data mentah yang sudah ada (tidak import data baru — import lewat Input Data Produksi)"><svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg> Refresh</button>
               </div>
               <div class="rwk-status" id="wrwRefreshStatus" style="display:none;"></div>
@@ -2262,9 +2261,10 @@
         const bahanNote = (st.bahan_awal_updated ?? 0) > 0 ? `, ${st.bahan_awal_updated} sel Bahan_Awal_Printing diperbarui` : "";
         const konvNote = (st.konversi_updated ?? 0) > 0 ? `, ${st.konversi_updated} sel Meter Jumbo Awal/Akhir diperbarui` : "";
         const mhNote = (st.meter_hilang_updated ?? 0) > 0 ? `, ${st.meter_hilang_updated} sel Meter Hilang diperbarui` : "";
+        const whNote = (st.waste_hitung_updated ?? 0) > 0 ? `, ${st.waste_hitung_updated} sel waste (Persentase SL/SL-RW) dihitung ulang` : "";
         const rvNote = (st.revisi_applied ?? 0) > 0 ? `, ${st.revisi_applied} sel revisi diterapkan` : "";
         await loadWasteRewind(true, {silentToast: true}); // baca ulang REWIND_PY dulu (matikan .spinning-nya loadWasteRewind sendiri)
-        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+rvNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+rvNote).replace(/^, /,"")+")" : ""}`, "success");
+        toast(`Waste Rewind diperbarui${(spkJoNote+bahanNote+konvNote+mhNote+whNote+rvNote) ? " ("+(spkJoNote+bahanNote+konvNote+mhNote+whNote+rvNote).replace(/^, /,"")+")" : ""}`, "success");
       }
       btn.disabled = false; btn.classList.remove("spinning");
     }catch(e){ /* diamkan, coba lagi di polling berikutnya */ }
@@ -2333,9 +2333,6 @@
   let wrwStatusFilter = "all";
   function setWrwStatusFilter(f){
     wrwStatusFilter = f;
-    document.querySelectorAll("#wrwFilterGroup .us-filter-chip").forEach(b=>{
-      b.classList.toggle("active", b.dataset.filter === f);
-    });
     renderWasteRewind();
   }
   let wasteRewindHeaders = [], wasteRewindRows = [];
@@ -2454,13 +2451,28 @@
     const hasRev = wrwRevisedCols(row).length > 0;
     const lockTip = 'title="Sudah Finish: terkunci. Minta Admin melepas status Finish dulu."';
     foot.innerHTML =
-      (hasRev ? `<span class="wrw-rev-legend">* = hasil revisi</span>`+
+      `<button class="wrw-act" style="margin-right:auto" onclick="wrwCekStok()" title="Buka halaman Stock Bahan Baku, difilter ke JO ini">📦 Cek Stok</button>`+
+      (hasRev ? `<span class="wrw-rev-legend" style="margin-right:0">* = hasil revisi</span>`+
                 (fin ? `<button class="wrw-act danger" disabled ${lockTip}>🔒 Hapus Revisi</button>`
                      : `<button class="wrw-act danger" onclick="wrwDeleteRevisi(this)" title="Hapus revisi & kembali ke data default">🗑️ Hapus Revisi</button>`) : "")+
       (fin ? `<button class="wrw-act" disabled ${lockTip}>🔒 Revisi</button>`
            : `<button class="wrw-act" onclick="wrwStartRevisi()">✏️ Revisi</button>`)+
       `<button class="wrw-act calc" ${fin?'disabled title="Sudah Finish: waste terkunci"':""} onclick="wrwDoAction('hitung',this)">🧮 Hitung Waste</button>`+
       finishBtn;
+  }
+  // Tombol "Cek Stok" di modal Detail Waste Rewind -- lompat ke halaman
+  // Stock Bahan Baku, sudah otomatis difilter ke NO JO baris yang lagi
+  // dibuka, biar nggak perlu cari manual satu-satu.
+  function wrwCekStok(){
+    const row = wasteRewindRows[wrwDetailIdx]; if(!row) return;
+    const jo = String(row["NO_JO"] ?? row["JO"] ?? "").trim();
+    closeWasteRewindDetail();
+    const inp = document.getElementById("txtCariStockBahan");
+    if(inp) inp.value = jo;
+    const grp = document.getElementById("g-bahan");
+    if(grp) grp.classList.add("open");
+    const navEl = document.querySelector('.nav-child[data-page="stockBahan"]');
+    if(navEl) go("stockBahan", navEl);
   }
   function openWasteRewindDetail(idx){
     if(!wasteRewindRows[idx]) return;
