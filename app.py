@@ -2030,95 +2030,304 @@ def waste_rewind_hapus_revisi():
 #      di baris Finish ATAUPUN belum (tidak dikunci seperti Hitung Waste/
 #      Revisi -- lihat catatan "kalau sudah finish masih bisa cek stok").
 #
-#      Sumber, PERSIS gaya "Tanya JO (Chatbot)" -> Stok Gudang:
-#        - Validasi (VAL_1) + Barang Jadi Baru/Lama (BJB_KATEGORI/BJL_KATEGORI)
-#          -- dicari lewat NAMA PRODUK, pakai chatbot_engine.query_stok_gudang()
-#          apa adanya (sama persis logika/kolom yang dipakai chatbot), supaya
-#          tidak ada dua cara beda buat pertanyaan yang sama.
-#        - Form Serah Terima (FORM_ST_1) -- TIDAK ada di chatbot_engine, jadi
-#          dicari sendiri di sini, lewat SUFFIX NO_JO (logika sama dengan
-#          _sync_kg_bruto_into_rewind_py: _fstl_suffix_key() dicocokkan ke
-#          import_engine._numeric_key_prefix(NO_JO)), bukan nama produk --
-#          FORM_ST_1 tidak punya kolom nama produk yang bisa diandalkan.
-#          Tabelnya ditampilkan APA ADANYA (semua kolom asli sheet, urut
-#          sesuai header), bukan proyeksi ke daftar kolom tetap.
+#      DIUBAH: sekarang SEMUA sumber dicocokkan lewat NOMOR JO (suffix
+#      angka di belakang, huruf nyangkut diabaikan -- _fstl_suffix_key()),
+#      BUKAN lewat Nama_Produk lagi seperti sebelumnya (chatbot_engine.
+#      query_stok_gudang() sudah tidak dipakai di endpoint ini karena itu
+#      cari berdasar produk). Baris sumber "JO" di sheet REWIND_PY (format
+#      lengkap, mis. "JO/26/VIII/18/3034") dipakai buat tahu suffix ANGKA
+#      (3034) sekaligus TAHUN (26 -> 2026) target-nya; "NO_JO" (cuma angka,
+#      mis. "3034") dipakai sebagai fallback suffix kalau kolom "JO" kosong.
 #
-#      VAL_1 & FORM_ST_1 ada di spreadsheet STOK_SPREADSHEET_ID (BUKAN
-#      SPREADSHEET_ID/FSTL_SPREADSHEET_ID -- ID persis yang diberikan user
-#      untuk fitur ini), dibuka lewat klien gspread sendiri (_stok_spreadsheet,
-#      sama polanya dengan chatbot_engine._get_gudang_spreadsheet), supaya
-#      tidak salah asumsi ID mana yang dipakai lingkungan produksi.
+#      Sumber & cara cocokkan:
+#        - Validasi (VAL_1)          : suffix JO SAJA (tanpa tahun). Baris
+#          ditampilkan kalau kolom JUMLAH atau JUMLAH_MASUK_REWIND ada
+#          isinya (teks/angka apa saja, bukan cuma "-"/kosong).
+#        - Form Serah Terima (FORM_ST_1) : suffix JO SAJA (tanpa tahun).
+#          Baris DISEMBUNYIKAN kalau MASUK_REWIND ada isinya TAPI
+#          HASIL_RIWEN kosong/"-" (masih diproses, belum ada hasil).
+#        - Gudang Barang Jadi Baru/Lama (BJB_KATEGORI/BJL_KATEGORI): suffix
+#          JO **+ TAHUN** (soalnya nomor JO bisa kepakai ulang di tahun
+#          beda -- JO 3034 tahun 2026 != JO 3034 tahun lain). Baris tanpa
+#          JO sama sekali (mis. "TIDAK ADA NO JO") otomatis tidak relevan
+#          karena tidak ada suffix buat dicocokkan. Tahun baris diambil
+#          dari teks JO_DAN_STATUS (macam2 format, lihat _stok_extract_tahun),
+#          fallback dari kolom JO itu sendiri kalau formatnya lengkap juga.
+#          Kalau tahun baris tidak bisa ditebak sama sekali, baris TETAP
+#          ditampilkan (lebih baik kelihatan lalu dicek manual daripada
+#          hilang) -- ini asumsi, longgarkan/ketatkan lagi kalau ternyata
+#          kebanyakan noise.
+#
+#      VAL_1 & FORM_ST_1 ada di spreadsheet STOK_SPREADSHEET_ID_A (gspread
+#      "A"), BJB_KATEGORI & BJL_KATEGORI ada di spreadsheet
+#      STOK_SPREADSHEET_ID_B (gspread "B", spreadsheet "Monitor Bahan
+#      Baku" -- sama dengan target import_form_st_2.py/import_val_2.py &
+#      classify_gudang_sheets.py, lihat bagian 6b/6d di atas).
 # --------------------------------------------------------------------------
-STOK_SPREADSHEET_ID = "1FRWpza_fa65jt8-n1-rN4rFFrfNBLixRxOLS_uUgYYU"
-_stok_spreadsheet_handle = {"sh": None}
-_stok_spreadsheet_lock = threading.Lock()
+STOK_SPREADSHEET_ID_A = "1FRWpza_fa65jt8-n1-rN4rFFrfNBLixRxOLS_uUgYYU"
+STOK_SPREADSHEET_ID_B = "1-ZyKSwXLzZaA6uNYRcpJNQZWX_ssYzvX45Z51xERipI"
 
-# Kolom yang ditampilkan untuk tabel Validasi & Gudang BJB/BJL, PERSIS urutan
-# & nama kolom yang dipakai chatbot_engine (lihat catatan_format di
-# query_stok_gudang) -- diambil per baris lewat chatbot_engine._col() supaya
-# toleran nama header yang sedikit beda (exact match dulu, baru startswith).
-WRW_STOK_VALIDASI_COLUMNS = ("AREA", "JO", "NAMA_PRODUK", "JUMLAH", "JUMLAH_MASUK_REWIND", "KETERANGAN")
+BJB_KATEGORI_SHEET_NAME = "BJB_KATEGORI"
+BJL_KATEGORI_SHEET_NAME = "BJL_KATEGORI"
+
+_stok_spreadsheet_handle_a = {"sh": None}
+_stok_spreadsheet_lock_a = threading.Lock()
+_stok_spreadsheet_handle_b = {"sh": None}
+_stok_spreadsheet_lock_b = threading.Lock()
+
+# Header yang ditampilkan ke frontend, PERSIS urutan & nama kolom yang
+# diminta (lihat wrwStokTable() di index.html -- ambil Object.keys(rows[0])
+# apa adanya jadi header tabel, jadi urutan dict di sini = urutan kolom).
+WRW_STOK_VALIDASI_COLUMNS = ("AREA", "JO", "NAMA_PRODUK", "JUMLAH", "JUMLAH_MASUK_REWIND")
+WRW_STOK_FORM_ST_COLUMNS = (
+    "TANGGAL", "JO", "NAMA_PRODUK", "JUMLAH_MASUK_GBJ", "BERAT/KG",
+    "STATUS", "MASUK_REWIND", "HASIL_RIWEN", "DARI_SLITTING",
+)
 WRW_STOK_KATEGORI_COLUMNS = (
-    "CUSTOMER", "UKURAN_PRODUK", "PRODUK", "SISA_STOCK_AKHIR", "BERAT_ROLL",
-    "JO_DAN_STATUS", "KETERANGAN", "JO", "STATUS", "KATEGORI",
+    "UKURAN_PRODUK", "PRODUK", "SISA_STOCK_AKHIR", "JO_DAN_STATUS",
+    "KETERANGAN", "JO", "STATUS", "KATEGORI",
 )
 
+# Keyword pencarian kolom per nama field di atas -- dipisah dari nama field
+# tampilan karena beberapa header asli sheet ejaannya bisa beda2 (mis.
+# "BERAT/KG" vs "BERAT_KG" vs "BERAT KG").
+_WRW_STOK_COL_KEYWORDS = {
+    "AREA": ("AREA",),
+    "JO": ("JO",),
+    "NAMA_PRODUK": ("NAMA_PRODUK", "NAMA PRODUK", "NAMA"),
+    "JUMLAH": ("JUMLAH",),
+    "JUMLAH_MASUK_REWIND": ("JUMLAH_MASUK_REWIND", "JUMLAH MASUK REWIND"),
+    "TANGGAL": ("TANGGAL",),
+    "JUMLAH_MASUK_GBJ": ("JUMLAH_MASUK_GBJ", "JUMLAH MASUK GBJ", "JUMLAH_MASUK"),
+    "BERAT/KG": ("BERAT/KG", "BERAT_KG", "BERAT KG", "BERAT"),
+    "STATUS": ("STATUS",),
+    "MASUK_REWIND": ("MASUK_REWIND", "MASUK REWIND"),
+    "HASIL_RIWEN": ("HASIL_RIWEN", "HASIL RIWEN"),
+    "DARI_SLITTING": ("DARI_SLITTING", "DARI SLITTING"),
+    "UKURAN_PRODUK": ("UKURAN_PRODUK", "UKURAN PRODUK"),
+    "PRODUK": ("PRODUK",),
+    "SISA_STOCK_AKHIR": ("SISA_STOCK_AKHIR", "SISA STOCK AKHIR"),
+    "JO_DAN_STATUS": ("JO_DAN_STATUS", "JO DAN STATUS"),
+    "KETERANGAN": ("KETERANGAN",),
+    "KATEGORI": ("KATEGORI",),
+}
 
-def _stok_spreadsheet():
-    global _stok_spreadsheet_handle
-    with _stok_spreadsheet_lock:
-        if _stok_spreadsheet_handle["sh"] is not None:
-            return _stok_spreadsheet_handle["sh"]
+
+def _stok_spreadsheet_a():
+    """Spreadsheet gspread "A" -- VAL_1 & FORM_ST_1."""
+    with _stok_spreadsheet_lock_a:
+        if _stok_spreadsheet_handle_a["sh"] is not None:
+            return _stok_spreadsheet_handle_a["sh"]
     client = get_client()
-    sh = client.open_by_key(STOK_SPREADSHEET_ID)
-    with _stok_spreadsheet_lock:
-        _stok_spreadsheet_handle["sh"] = sh
+    sh = client.open_by_key(STOK_SPREADSHEET_ID_A)
+    with _stok_spreadsheet_lock_a:
+        _stok_spreadsheet_handle_a["sh"] = sh
     return sh
 
 
-def _wrw_stok_get_sheet(sheet_name):
-    """get_sheet_fn buat chatbot_engine.query_stok_gudang() -- VAL_1 dibaca
-    dari STOK_SPREADSHEET_ID, BUKAN spreadsheet master (get_sheet())."""
-    return _stok_spreadsheet().worksheet(sheet_name)
+def _stok_spreadsheet_b():
+    """Spreadsheet gspread "B" -- BJB_KATEGORI & BJL_KATEGORI (spreadsheet
+    Monitor Bahan Baku, sama dengan target classify_gudang_sheets.py)."""
+    with _stok_spreadsheet_lock_b:
+        if _stok_spreadsheet_handle_b["sh"] is not None:
+            return _stok_spreadsheet_handle_b["sh"]
+    client = get_client()
+    sh = client.open_by_key(STOK_SPREADSHEET_ID_B)
+    with _stok_spreadsheet_lock_b:
+        _stok_spreadsheet_handle_b["sh"] = sh
+    return sh
 
 
-def _wrw_stok_project_rows(baris, columns):
-    """List of dict (baris mentah, kolom apa adanya dari sheet) -> list of
-    dict cuma berisi `columns`, per baris, lewat chatbot_engine._col() (exact
-    match dulu, baru startswith)."""
-    return [{c: (chatbot_engine._col(r, c) or "") for c in columns} for r in (baris or [])]
+def _stok_col(header, field_name):
+    """Cari index kolom (0-based) di `header` buat field logis `field_name`
+    (key di WRW_STOK_*_COLUMNS / _WRW_STOK_COL_KEYWORDS), lewat
+    _fstl_find_col() (exact match dulu, baru substring)."""
+    keywords = _WRW_STOK_COL_KEYWORDS.get(field_name, (field_name,))
+    return _fstl_find_col(header, *keywords)
 
 
-def _wrw_cek_stok_form_st(no_jo):
-    """Cari baris FORM_ST_1 yang SUFFIX kolom JO-nya sama dengan NO_JO (sama
-    persis logika _sync_kg_bruto_into_rewind_py). Balikin SEMUA kolom asli
-    sheet apa adanya (FORM_ST_1 tidak dicakup chatbot_engine, jadi tidak ada
-    daftar kolom baku buat diproyeksikan)."""
-    ws = _wrw_stok_get_sheet(FORM_ST1_SHEET_NAME)
+def _stok_cell(row, col_idx):
+    return row[col_idx].strip() if col_idx is not None and col_idx < len(row) else ""
+
+
+def _stok_has_content(text):
+    """True kalau sel ada isinya beneran (bukan kosong / "-")."""
+    t = str(text or "").strip()
+    return bool(t) and t != "-"
+
+
+_STOK_JO_YEAR_RE = re.compile(r"JO(?:-[A-Z]+)?\s*/\s*(\d{2})\s*/", re.IGNORECASE)
+_STOK_PAREN_YEAR_RE = re.compile(r"\((?:[A-Za-z]{3,9})?\s*(\d{4})\)")
+_STOK_BARE_YEAR_RE = re.compile(r"\b(20[0-3]\d)\b")
+
+
+def _stok_extract_tahun(text):
+    """Coba tebak TAHUN (4 digit, mis. 2026) dari sebuah teks JO/JO_DAN_STATUS.
+    Nyoba beberapa pola sekaligus soalnya penulisan JO_DAN_STATUS di
+    BJB_KATEGORI/BJL_KATEGORI (apalagi BJL) tidak konsisten:
+      - "JO/26/VIII/18/3034"        -> segmen ke-2 ("26") = tahun 2026
+      - "JO-DDCT/26/IX/2/3217"      -> sama, segmen ke-2 tetap tahun
+      - "JO 1161 (MAR2022)"         -> 4 digit tahun di dalam kurung
+      - "JO, 2506 2022"             -> 4 digit tahun lepas di teks
+    Balikin None kalau tidak ada pola yang cocok (biar baris TETAP
+    ditampilkan -- lihat catatan di komentar blok di atas)."""
+    text = str(text or "")
+    m = _STOK_JO_YEAR_RE.search(text)
+    if m:
+        return 2000 + int(m.group(1))
+    m = _STOK_PAREN_YEAR_RE.search(text)
+    if m:
+        return int(m.group(1))
+    m = _STOK_BARE_YEAR_RE.search(text)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _wrw_cek_stok_val1(target_suffix):
+    """VAL_1 (gspread A) -- cocok suffix JO saja, baris ditampilkan kalau
+    JUMLAH atau JUMLAH_MASUK_REWIND ada isinya."""
+    ws = _stok_spreadsheet_a().worksheet("VAL_1")
     values = ws.get_all_values()
     if not values:
-        return {"ditemukan": False, "header": [], "rows": [], "pesan": f"Sheet {FORM_ST1_SHEET_NAME} kosong."}
+        return {"ditemukan": False, "rows": [], "pesan": "Sheet VAL_1 kosong.", "total_stok": ""}
     header = [str(h).strip() for h in values[0]]
-    col_jo = _fstl_find_col(header, "JO")
+    cols = {f: _stok_col(header, f) for f in WRW_STOK_VALIDASI_COLUMNS}
+    col_jo = cols["JO"]
     if col_jo is None:
-        return {"ditemukan": False, "header": header, "rows": [], "pesan": f"Kolom JO tidak ketemu di {FORM_ST1_SHEET_NAME}."}
-    no_jo = str(no_jo or "").strip()
-    if not no_jo.isdigit():
-        return {"ditemukan": False, "header": header, "rows": [],
-                "pesan": f"NO_JO '{no_jo}' bukan angka murni, tidak bisa dicocokkan ke {FORM_ST1_SHEET_NAME}."}
-    target = import_engine._numeric_key_prefix(no_jo)
-    rows = []
+        return {"ditemukan": False, "rows": [], "pesan": "Kolom JO tidak ketemu di VAL_1.", "total_stok": ""}
+
+    rows_out = []
     for row in values[1:]:
-        cell = row[col_jo].strip() if col_jo < len(row) else ""
-        if not cell or cell == "-":
+        jo_cell = _stok_cell(row, col_jo)
+        if not jo_cell or _fstl_suffix_key(jo_cell) != target_suffix:
             continue
-        if _fstl_suffix_key(cell) == target:
-            d = {h: (row[i] if i < len(row) else "") for i, h in enumerate(header) if h}
-            rows.append(d)
-    if not rows:
-        return {"ditemukan": False, "header": header, "rows": [],
-                "pesan": f"Tidak ditemukan baris dengan suffix JO '{no_jo}' di {FORM_ST1_SHEET_NAME}."}
-    return {"ditemukan": True, "header": header, "rows": rows, "pesan": None}
+        jumlah = _stok_cell(row, cols["JUMLAH"])
+        jumlah_masuk_rewind = _stok_cell(row, cols["JUMLAH_MASUK_REWIND"])
+        if not (_stok_has_content(jumlah) or _stok_has_content(jumlah_masuk_rewind)):
+            continue
+        rows_out.append({
+            "AREA": _stok_cell(row, cols["AREA"]),
+            "JO": jo_cell,
+            "NAMA_PRODUK": _stok_cell(row, cols["NAMA_PRODUK"]),
+            "JUMLAH": jumlah,
+            "JUMLAH_MASUK_REWIND": jumlah_masuk_rewind,
+        })
+    if not rows_out:
+        return {"ditemukan": False, "rows": [],
+                "pesan": f"Tidak ditemukan baris VAL_1 dengan suffix JO '{target_suffix}' yang ada isi JUMLAH/JUMLAH_MASUK_REWIND.",
+                "total_stok": ""}
+    return {"ditemukan": True, "rows": rows_out, "pesan": None, "total_stok": ""}
+
+
+def _wrw_cek_stok_form_st(target_suffix):
+    """FORM_ST_1 (gspread A) -- cocok suffix JO saja. Baris disembunyikan
+    kalau MASUK_REWIND ada isinya TAPI HASIL_RIWEN kosong/"-"."""
+    ws = _stok_spreadsheet_a().worksheet(FORM_ST1_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet {FORM_ST1_SHEET_NAME} kosong."}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _stok_col(header, f) for f in WRW_STOK_FORM_ST_COLUMNS}
+    col_jo = cols["JO"]
+    if col_jo is None:
+        return {"ditemukan": False, "rows": [], "pesan": f"Kolom JO tidak ketemu di {FORM_ST1_SHEET_NAME}."}
+
+    rows_out = []
+    for row in values[1:]:
+        jo_cell = _stok_cell(row, col_jo)
+        if not jo_cell or jo_cell == "-" or _fstl_suffix_key(jo_cell) != target_suffix:
+            continue
+        masuk_rewind = _stok_cell(row, cols["MASUK_REWIND"])
+        hasil_riwen = _stok_cell(row, cols["HASIL_RIWEN"])
+        if _stok_has_content(masuk_rewind) and not _stok_has_content(hasil_riwen):
+            continue  # masih diproses, belum ada HASIL_RIWEN -- gausah ditampilkan
+        rows_out.append({
+            "TANGGAL": _stok_cell(row, cols["TANGGAL"]),
+            "JO": jo_cell,
+            "NAMA_PRODUK": _stok_cell(row, cols["NAMA_PRODUK"]),
+            "JUMLAH_MASUK_GBJ": _stok_cell(row, cols["JUMLAH_MASUK_GBJ"]),
+            "BERAT/KG": _stok_cell(row, cols["BERAT/KG"]),
+            "STATUS": _stok_cell(row, cols["STATUS"]),
+            "MASUK_REWIND": masuk_rewind,
+            "HASIL_RIWEN": hasil_riwen,
+            "DARI_SLITTING": _stok_cell(row, cols["DARI_SLITTING"]),
+        })
+    if not rows_out:
+        return {"ditemukan": False, "rows": [],
+                "pesan": f"Tidak ditemukan baris {FORM_ST1_SHEET_NAME} dengan suffix JO '{target_suffix}' yang relevan ditampilkan."}
+    return {"ditemukan": True, "rows": rows_out, "pesan": None}
+
+
+def _wrw_cek_stok_kategori(sheet_name, target_suffix, target_tahun):
+    """BJB_KATEGORI / BJL_KATEGORI (gspread B) -- cocok suffix JO **+
+    TAHUN** (lihat catatan panjang di komentar blok di atas). Balikin juga
+    total_stok_utuh (jumlah SISA_STOCK_AKHIR numerik dari baris yang
+    ketemu) & perlu_review (daftar baris yang KATEGORI-nya PERLU_REVIEW) --
+    ASUMSI definisi, sesuaikan lagi kalau beda dari yang dimaksud."""
+    try:
+        ws = _stok_spreadsheet_b().worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet {sheet_name} tidak ditemukan.",
+                "total_stok_utuh": "", "perlu_review": ""}
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet {sheet_name} kosong.",
+                "total_stok_utuh": "", "perlu_review": ""}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _stok_col(header, f) for f in WRW_STOK_KATEGORI_COLUMNS}
+    col_jo = cols["JO"]
+    if col_jo is None:
+        return {"ditemukan": False, "rows": [], "pesan": f"Kolom JO tidak ketemu di {sheet_name}.",
+                "total_stok_utuh": "", "perlu_review": ""}
+
+    rows_out = []
+    total_stok_utuh = 0.0
+    ada_angka = False
+    review_count = 0
+    for row in values[1:]:
+        jo_cell = _stok_cell(row, col_jo)
+        if not jo_cell or jo_cell == "-":
+            continue  # tidak ada JO -> tidak relevan (mis. "TIDAK ADA NO JO")
+        suffix = _fstl_suffix_key(jo_cell)
+        if not suffix or suffix != target_suffix:
+            continue
+        jo_dan_status = _stok_cell(row, cols["JO_DAN_STATUS"])
+        tahun_baris = _stok_extract_tahun(jo_dan_status) or _stok_extract_tahun(jo_cell)
+        if target_tahun and tahun_baris and tahun_baris != target_tahun:
+            continue  # suffix sama tapi tahunnya beda -> bukan JO yang sama
+
+        kategori = _stok_cell(row, cols["KATEGORI"])
+        sisa = _stok_cell(row, cols["SISA_STOCK_AKHIR"])
+        num = import_engine._parse_flexible_number(sisa) if sisa else None
+        if isinstance(num, (int, float)):
+            total_stok_utuh += num
+            ada_angka = True
+        if kategori.strip().upper() == "PERLU_REVIEW":
+            review_count += 1
+
+        rows_out.append({
+            "UKURAN_PRODUK": _stok_cell(row, cols["UKURAN_PRODUK"]),
+            "PRODUK": _stok_cell(row, cols["PRODUK"]),
+            "SISA_STOCK_AKHIR": sisa,
+            "JO_DAN_STATUS": jo_dan_status,
+            "KETERANGAN": _stok_cell(row, cols["KETERANGAN"]),
+            "JO": jo_cell,
+            "STATUS": _stok_cell(row, cols["STATUS"]),
+            "KATEGORI": kategori,
+        })
+    if not rows_out:
+        return {"ditemukan": False, "rows": [],
+                "pesan": f"Tidak ditemukan baris {sheet_name} dengan JO '{target_suffix}'"
+                         + (f" tahun {target_tahun}" if target_tahun else "") + ".",
+                "total_stok_utuh": "", "perlu_review": ""}
+    return {
+        "ditemukan": True,
+        "rows": rows_out,
+        "pesan": None,
+        "total_stok_utuh": total_stok_utuh if ada_angka else "",
+        "perlu_review": review_count,
+    }
 
 
 @app.route("/api/waste-rewind/cek-stok", methods=["POST"])
@@ -2129,42 +2338,38 @@ def waste_rewind_cek_stok():
         find = import_engine._find_col_index
         c_nama = find(header, "Nama_Produk")
         c_nojo = find(header, "NO_JO")
+        # sengaja pakai _fstl_find_col (exact match diprioritaskan) buat
+        # kolom "JO", BUKAN import_engine._find_col_index -- header sheet
+        # ini juga punya kolom "NO_JO" yang mengandung teks "JO" sebagai
+        # substring, jadi kalau pencariannya substring-based bisa salah
+        # kepilih kolom "NO_JO".
+        c_jo = _fstl_find_col(header, "JO")
         nama_produk = row[c_nama].strip() if c_nama is not None and c_nama < len(row) else ""
         no_jo_val = row[c_nojo].strip() if c_nojo is not None and c_nojo < len(row) else str(no_jo)
-        if not nama_produk:
-            raise ValueError("Nama_Produk kosong di baris ini, tidak bisa cari stok.")
+        jo_full = row[c_jo].strip() if c_jo is not None and c_jo < len(row) else ""
+        if not nama_produk and not no_jo_val and not jo_full:
+            raise ValueError("JO/Nama_Produk kosong di baris ini, tidak bisa cari stok.")
 
-        hasil = chatbot_engine.query_stok_gudang(_wrw_stok_get_sheet, produk=nama_produk)
-        val1 = hasil.get("validasi") or {}
-        bjb = hasil.get("bjb") or {}
-        bjl = hasil.get("bjl") or {}
+        target_suffix = _fstl_suffix_key(jo_full or no_jo_val)
+        target_tahun = _stok_extract_tahun(jo_full)
+        if not target_suffix:
+            raise ValueError(f"Tidak bisa membaca nomor JO dari baris ini (JO='{jo_full}', NO_JO='{no_jo_val}').")
 
-        validasi_out = {
-            "ditemukan": bool(val1.get("ditemukan")),
-            "pesan": val1.get("error") or (None if val1.get("ditemukan") else "Tidak ditemukan di VAL_1."),
-            "rows": _wrw_stok_project_rows(val1.get("baris"), WRW_STOK_VALIDASI_COLUMNS),
-            "total_stok": val1.get("total_stok", ""),
-        }
-
-        def _kategori_out(k):
-            return {
-                "ditemukan": bool(k.get("ditemukan")),
-                "pesan": k.get("error") or k.get("pesan"),
-                "rows": _wrw_stok_project_rows(k.get("baris"), WRW_STOK_KATEGORI_COLUMNS),
-                "total_stok_utuh": k.get("total_stok_utuh", ""),
-                "perlu_review": k.get("perlu_review", ""),
-            }
-
-        form_st_out = _wrw_cek_stok_form_st(no_jo_val)
+        validasi_out = _wrw_cek_stok_val1(target_suffix)
+        form_st_out = _wrw_cek_stok_form_st(target_suffix)
+        bjb_out = _wrw_cek_stok_kategori(BJB_KATEGORI_SHEET_NAME, target_suffix, target_tahun)
+        bjl_out = _wrw_cek_stok_kategori(BJL_KATEGORI_SHEET_NAME, target_suffix, target_tahun)
 
         return jsonify({
             "success": True,
             "nama_produk": nama_produk,
             "no_jo": no_jo_val,
+            "jo": jo_full or no_jo_val,
+            "tahun": target_tahun,
             "validasi": validasi_out,
             "form_st": form_st_out,
-            "bjb": _kategori_out(bjb),
-            "bjl": _kategori_out(bjl),
+            "bjb": bjb_out,
+            "bjl": bjl_out,
         })
     except Exception as e:
         return _wrw_error_response(e)
