@@ -59,6 +59,16 @@ def get_ai_client():
         _client = OpenAI(
             api_key=os.environ["OPENROUTER_API_KEY"],
             base_url="https://openrouter.ai/api/v1",
+            # SEBELUMNYA nggak dikasih timeout -- default OpenAI SDK bisa
+            # nunggu sampai 10 menit kalau OpenRouter/DeepSeek lemot/nyangkut.
+            # Itu jauh lebih lama dari worker timeout Render/gunicorn (biasanya
+            # ~30s), jadi request keburu dipaksa mati duluan sama hosting-nya
+            # (balikin halaman HTML error, bukan JSON) sebelum sempat masuk ke
+            # except Exception di app.py. Dibatasi di sini biar kalau memang
+            # lemot, gagalnya CEPAT dan masih sempat dibalikin sebagai JSON
+            # error yang jelas ke frontend.
+            timeout=25.0,
+            max_retries=1,
         )
     return _client
 

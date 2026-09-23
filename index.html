@@ -1670,16 +1670,39 @@
     input.value = "";
     const typing = chatAppendTyping();
     let answer;
+    // Batasin nunggu maksimal 45 detik -- lebih baik gagal cepat dengan
+    // pesan yang jelas daripada nge-hang lama terus akhirnya server/hosting
+    // yang motong koneksinya sendiri (baliknya jadi halaman HTML error,
+    // bukan JSON, dan bikin pesan errornya nggak jelas buat user).
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45000);
     try{
       const res = await fetch(`${API_BASE}/api/chatbot/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, session_id: chatSessionId }),
+        signal: controller.signal,
       });
-      const data = await res.json();
-      answer = data.answer || "Maaf, belum ada jawaban.";
+      // Cek content-type dulu SEBELUM di-parse sebagai JSON -- kalau
+      // server/hosting timeout duluan (mis. Render/gunicorn motong worker),
+      // yang balik itu halaman HTML error, bukan JSON dari Flask. Coba
+      // res.json() langsung ke HTML begitu bakal ngelempar error teknis
+      // ("Unexpected token '<'") yang nggak jelas buat user.
+      const ctype = res.headers.get("content-type") || "";
+      if(!ctype.includes("application/json")){
+        answer = res.status >= 500
+          ? "Server lagi bermasalah/lambat merespons (kemungkinan baru \"bangun\" dari idle, atau kelamaan proses). Coba tanya ulang sebentar lagi."
+          : `Server membalas format tak terduga (status ${res.status}). Coba tanya ulang.`;
+      }else{
+        const data = await res.json();
+        answer = data.answer || "Maaf, belum ada jawaban.";
+      }
     }catch(e){
-      answer = "Gagal menghubungi server: " + e.message;
+      answer = e.name === "AbortError"
+        ? "Server kelamaan menjawab (lebih dari 45 detik) — kemungkinan lagi \"bangun\" dari idle atau data yang dicari banyak. Coba tanya ulang."
+        : "Gagal menghubungi server: " + e.message;
+    }finally{
+      clearTimeout(timer);
     }
     typing.stop();
     // Ganti isi bubble "sedang mengetik" jadi jawaban asli dengan crossfade

@@ -197,11 +197,38 @@ def get_client():
         if _gspread_client is None:
             creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
             _gspread_client = gspread.authorize(creds)
+            # KETAHUAN DARI LOG PRODUKSI: request ke Google Sheets API bisa
+            # nge-hang di level socket (kelihatan dari traceback WORKER
+            # TIMEOUT -- macet di ssl.py/recv_into) TANPA batas waktu sama
+            # sekali, soalnya gspread defaultnya timeout=None. Itu bikin
+            # request nunggu selama-lamanya, jauh ngelewatin worker timeout
+            # gunicorn (default 30s), dan workernya keburu dipaksa mati di
+            # tengah jalan sebelum sempat balikin error yang jelas. Dikasih
+            # batas di sini biar kalau Google-nya memang lemot/nyangkut,
+            # gspread sendiri yang nyerah duluan (raise requests.Timeout,
+            # ketangkep di get_sheet()/caller-nya) sebelum gunicorn maksa
+            # matiin workernya. Dibungkus try/except -- kalau versi gspread
+            # yang beda kebetulan nggak punya atribut ini, jangan sampai
+            # bikin login gagal total cuma gara-gara ini.
+            try:
+                _gspread_client.http_client.timeout = 20
+            except Exception as e:
+                print(f"   ⚠️ Nggak bisa set timeout HTTP client gspread (dilewatin): {e}")
         return _gspread_client
 
 
 _spreadsheet_handle = {"sh": None}
 _spreadsheet_lock = threading.Lock()
+
+# Cache daftar worksheet (nama tab -> objek Worksheet) buat SPREADSHEET_ID
+# utama -- lihat penjelasan lengkap di get_sheet() soal kenapa ini perlu
+# (sh.worksheet(name) sendirian diam-diam re-fetch metadata SELURUH
+# spreadsheet tiap dipanggil, jadi mahal kalau dipanggil berkali-kali
+# berurutan buat beberapa sheet dalam satu request).
+_worksheet_cache = {}
+_worksheet_cache_lock = threading.Lock()
+_worksheet_cache_loaded_at = [0.0]  # list ber-1-elemen biar bisa di-mutate dari dalam get_sheet()
+WORKSHEET_CACHE_TTL = 600  # detik -- refresh daftar tab tiap 10 menit, biar tab baru/rename ikut kedeteksi tanpa perlu restart app
 
 
 def _is_quota_error(e):
@@ -230,6 +257,22 @@ def get_sheet(sheet_name, attempts=3):
     fetch') waktu user tanya berdasarkan nama produk. Sekarang handle
     spreadsheet-nya dibuka sekali lalu dipakai ulang terus.
 
+    KETAHUAN DARI LOG (WORKER TIMEOUT gunicorn): walau handle spreadsheet-
+    nya udah di-cache, sh.worksheet(sheet_name) SENDIRI ternyata diam-diam
+    fetch ULANG metadata SELURUH spreadsheet (semua tab, bukan cuma yang
+    diminta) SETIAP KALI dipanggil -- gspread nggak nyimpen hasil itu.
+    Query chatbot yang buka beberapa sheet sekaligus (mis. grup Printing =
+    PRINTING_2..5, 4 sheet) jadinya 4x full-metadata-fetch BERURUTAN ke
+    Google, satu-satu -- kalau salah satu aja lemot, gampang numpuk lewat
+    30 detik (default worker timeout gunicorn) dan workernya dipaksa mati
+    di tengah jalan (request jadi HTML error di frontend, bukan JSON).
+    Makanya sekarang daftar SEMUA worksheet diambil sekali pakai
+    sh.worksheets() (SATU API call, muat semua tab sekaligus) lalu
+    dicache di _worksheet_cache -- pemanggilan get_sheet() berikutnya
+    (nama sheet apapun) tinggal ambil dari cache, nggak nembak Google lagi,
+    sampai cache-nya kadaluarsa (WORKSHEET_CACHE_TTL) atau nama sheet yang
+    diminta belum ada di cache (mis. baru dibikin) -- baru di-refresh ulang.
+
     Ditambah retry khusus buat 429 ('Quota exceeded ... per minute') --
     SEBELUMNYA sekali kena 429 (misalnya persis setelah tombol Refresh
     dipencet dan kuota per-menit abis) endpoint manapun yang manggil
@@ -246,10 +289,24 @@ def get_sheet(sheet_name, attempts=3):
         with _spreadsheet_lock:
             _spreadsheet_handle["sh"] = sh
 
+    with _worksheet_cache_lock:
+        cached = _worksheet_cache.get(sheet_name)
+        cache_fresh = (time.time() - _worksheet_cache_loaded_at[0]) <= WORKSHEET_CACHE_TTL
+    if cached is not None and cache_fresh:
+        return cached
+
+    # Cache kosong / kadaluarsa / sheet belum kedaftar -> refresh SEKALI
+    # (satu sh.worksheets() muat semua tab), baru cek cache lagi. Kalau
+    # gagal karena 429, coba lagi setelah nunggu (logika lama, dipertahankan).
     last_exc = None
     for attempt in range(1, attempts + 1):
         try:
-            return sh.worksheet(sheet_name)
+            all_ws = sh.worksheets()
+            with _worksheet_cache_lock:
+                _worksheet_cache.clear()
+                _worksheet_cache.update({ws.title: ws for ws in all_ws})
+                _worksheet_cache_loaded_at[0] = time.time()
+            break
         except gspread.exceptions.APIError as e:
             if not _is_quota_error(e) or attempt == attempts:
                 raise
@@ -257,7 +314,14 @@ def get_sheet(sheet_name, attempts=3):
             wait = 15 * attempt
             print(f"   ⚠️ Kena limit kuota Google Sheets (get_sheet '{sheet_name}'): {e}. Coba lagi dalam {wait}s...")
             time.sleep(wait)
-    raise last_exc
+    else:
+        raise last_exc
+
+    with _worksheet_cache_lock:
+        ws = _worksheet_cache.get(sheet_name)
+    if ws is None:
+        raise gspread.exceptions.WorksheetNotFound(sheet_name)
+    return ws
 
 
 # --------------------------------------------------------------------------
