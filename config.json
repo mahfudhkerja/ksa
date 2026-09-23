@@ -54,10 +54,10 @@
       "source_id": "1kR5aqeHg8X_V3BWzXCYeSL_3A12FrqDxvUxwXloZJTE",
       "source_name": "PRINTING 4 - 2025 & 2026",
       "sheets": [
-        "September 2026",
-        "Agus 2026",
-        "july 2026",
-        "juni 2026",
+        "SEP 2026",
+        "AGS 2026",
+        "JUL 2026",
+        "JUN 2026",
         "MAY 2026",
         "APR 2026",
         "MAR 2026",
@@ -123,6 +123,7 @@
       "source_id": "19JktufS4bcUMn5WL6xAIzqcRoDXUdrUb",
       "source_name": "Laporan Dry 2.xlsx",
       "sheets": [
+        "SEP 2026",
         "AGS 2026",
         "JUL 2026",
         "JUN 2026",
@@ -443,7 +444,7 @@
       "label": "Rewind Kecil",
       "type": "gsheet",
       "script": "import_rewind_kecil.py",
-      "source_id": "1DnXtcMPkRdoadgO7ML7y7M9s4injmMTsKqEQ4BPrJxc",
+      "source_id": "1H_yl42V7ttn6KuydXQDAi5ppqBcRVczhVUS5L_EtkC8",
       "source_name": "LAPORAN HARIAN REWINDING KECIL",
       "sheets": [
         "SEPTEMBER 2026",
