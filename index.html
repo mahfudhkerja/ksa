@@ -140,15 +140,23 @@
   .live-pill{display:flex; align-items:center; gap:7px; background:rgba(255,255,255,.16); backdrop-filter:blur(4px); padding:7px 14px; border-radius:20px; font-size:12px; font-weight:600; flex-shrink:0;}
   .live-pill .blip{width:7px; height:7px; border-radius:50%; background:#7CFF9E; animation: blipPulse 2s infinite;}
 
-  /* Hamburger -- cuma kepake di layar sempit, lihat @media di bawah */
+  /* Hamburger -- dipakai di DUA mode: di layar sempit (<=860px) buka/tutup
+     drawer sidebar (lihat .sidebar.open di @media bawah), di layar lebar
+     (desktop) sembunyikan/tampilkan sidebar sepenuhnya (.sidebar.collapsed)
+     biar konten dapet lebih leluasa. Makanya selalu ditampilkan (display:none
+     dihapus), nggak cuma muncul pas mobile lagi. */
   .hamburger-btn{
-    display:none; background:rgba(255,255,255,.18); border:none; color:white;
+    display:inline-flex; background:rgba(255,255,255,.18); border:none; color:white;
     width:36px; height:36px; border-radius:9px; align-items:center; justify-content:center;
     font-size:17px; cursor:pointer; flex-shrink:0; transition:background .15s var(--ease);
   }
   .hamburger-btn:hover{background:rgba(255,255,255,.3);}
   .sidebar-backdrop{position:fixed; inset:0; background:rgba(15,25,45,.5); z-index:899; display:none;}
   .sidebar-backdrop.show{display:block; animation:fadeIn .2s;}
+  /* Sidebar disembunyikan (desktop) -- lebar jadi 0 & konten dalamnya
+     disembunyikan biar tidak "nyempil"/kepencet pas transisi width. */
+  .sidebar.collapsed{width:0; min-width:0; border-right:none; overflow:hidden;}
+  .sidebar.collapsed > *{opacity:0; pointer-events:none;}
 
 
   .content{flex:1; overflow-y:auto; padding:26px 30px;}
@@ -678,7 +686,6 @@
      lebar layar penuh.
      ========================================================== */
   @media (max-width:860px){
-    .hamburger-btn{display:inline-flex;}
     .sidebar{
       position:fixed; top:0; left:0; height:100vh; z-index:900; width:270px;
       transform:translateX(-100%); transition:transform .25s var(--ease);
@@ -882,7 +889,7 @@
       <div class="main">
         <div class="topbar">
           <div class="topbar-left">
-            <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Buka menu">☰</button>
+            <button class="hamburger-btn" onclick="toggleSidebar()" aria-label="Tampilkan/sembunyikan menu" title="Tampilkan/sembunyikan menu">☰</button>
             <h2 id="pageTitle">Dashboard</h2>
           </div>
           <div class="live-pill"><span class="blip"></span> Live Data</div>
@@ -1453,7 +1460,12 @@
     document.getElementById("txt_pass").value = "";
   }
 
-  // ---------------- SIDEBAR (mobile drawer) ----------------
+  // ---------------- SIDEBAR (mobile drawer + desktop collapse) ----------------
+  // <=860px: sidebar jadi drawer yang nongol/hilang (.open) + backdrop gelap.
+  // >860px : sidebar disembunyikan total (.collapsed) biar konten lebih
+  //          leluasa; pilihan user diingat lewat localStorage.
+  const SIDEBAR_COLLAPSED_KEY = "ksa_sidebar_collapsed";
+  function isMobileWidth(){ return window.matchMedia("(max-width:860px)").matches; }
   function openSidebar(){
     document.querySelector(".sidebar").classList.add("open");
     document.getElementById("sidebarBackdrop").classList.add("show");
@@ -1462,9 +1474,27 @@
     document.querySelector(".sidebar").classList.remove("open");
     document.getElementById("sidebarBackdrop").classList.remove("show");
   }
-  function toggleSidebar(){
-    document.querySelector(".sidebar").classList.contains("open") ? closeSidebar() : openSidebar();
+  function setSidebarCollapsed(collapsed){
+    document.querySelector(".sidebar").classList.toggle("collapsed", collapsed);
+    try{ localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0"); }catch(e){}
   }
+  function toggleSidebar(){
+    if(isMobileWidth()){
+      document.querySelector(".sidebar").classList.contains("open") ? closeSidebar() : openSidebar();
+    } else {
+      setSidebarCollapsed(!document.querySelector(".sidebar").classList.contains("collapsed"));
+    }
+  }
+  // Terapkan pilihan tersembunyi/tidaknya sidebar (desktop) yang diingat dari
+  // kunjungan sebelumnya -- cuma dipasang kalau layar memang lebar (desktop),
+  // supaya tidak nyangkut jadi "collapsed" pas dibuka di HP.
+  (function restoreSidebarCollapsed(){
+    try{
+      if(!isMobileWidth() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"){
+        document.querySelector(".sidebar").classList.add("collapsed");
+      }
+    }catch(e){}
+  })();
 
   // ---------------- NAVIGASI ----------------
   function toggleGroup(id){ document.getElementById(id).classList.toggle("open"); }
