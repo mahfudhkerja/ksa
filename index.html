@@ -1633,7 +1633,12 @@
     log.scrollTop = log.scrollHeight;
     let idx = 0;
     const timer = setInterval(() => {
-      idx = (idx + 1) % CHAT_THINKING_PHRASES.length;
+      // Jangan muter balik ke awal ("Mengecek data...") kalau sudah nyampe
+      // kata terakhir ("Hampir selesai...") -- kalau jawabannya lama,
+      // caption cukup DIAM di kata terakhir sambil nunggu, bukan looping
+      // dari awal lagi (kesannya jadi ngulang-ngulang/nggak maju-maju).
+      if(idx >= CHAT_THINKING_PHRASES.length - 1){ clearInterval(timer); return; }
+      idx += 1;
       const cap = bubble.querySelector(".chat-typing-caption");
       if(!cap) return;
       // restart animasi fade-in caption tiap ganti kata (biar kerasa "hidup")
