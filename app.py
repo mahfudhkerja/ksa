@@ -978,6 +978,7 @@ def _run_rewind_kecil_worker():
         kg_bruto_updated = None
         konversi_updated = None
         meter_hilang_updated = None
+        waste_kolom_updated = None
         revisi_applied = None
         _invalidate_waste_rewind_source_cache()  # Refresh selalu baca LP_1/JO_1/SL_1/PRINTING_x terbaru
         try:
@@ -1047,6 +1048,18 @@ def _run_rewind_kecil_worker():
                     f"di {WASTE_REWIND_SHEET_NAME}] {mh_err}\n"
                 )
             err = err or str(mh_err)
+        # HARUS setelah Bahan_Awal_Printing_(Meter)/Hasil_Slitting_(Meter)/
+        # Meter_Jumbo_Hilang_Rewind terisi (jadi input hitung_waste_rewind()).
+        # Ini yang bikin tombol Refresh ikut menghitung 4 kolom waste untuk
+        # SEMUA JO (bukan cuma tombol "Hitung Waste" per-JO di modal Detail).
+        try:
+            waste_kolom_updated = _sync_hitung_waste_kolom_into_rewind_py()
+        except Exception as wk_err:
+            with REWIND_KECIL_RUN_STATE_LOCK:
+                REWIND_KECIL_RUN_STATE["log"] += (
+                    f"\n[GAGAL HITUNG 4 KOLOM WASTE di {WASTE_REWIND_SHEET_NAME}] {wk_err}\n"
+                )
+            err = err or str(wk_err)
         # PALING AKHIR: terapkan revisi manual (REWIND_PY_REVISI) per sel yang
         # berbeda, supaya tidak ditimpa sync-sync di atas.
         try:
@@ -1069,6 +1082,7 @@ def _run_rewind_kecil_worker():
             REWIND_KECIL_RUN_STATE["kg_bruto_updated"] = kg_bruto_updated
             REWIND_KECIL_RUN_STATE["konversi_updated"] = konversi_updated
             REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = meter_hilang_updated
+            REWIND_KECIL_RUN_STATE["waste_kolom_updated"] = waste_kolom_updated
             REWIND_KECIL_RUN_STATE["revisi_applied"] = revisi_applied
             REWIND_KECIL_RUN_STATE["error"] = err
     except Exception as e:
@@ -1105,6 +1119,7 @@ def produksi_run_rewind_kecil():
         REWIND_KECIL_RUN_STATE["printing_updated"] = None
         REWIND_KECIL_RUN_STATE["konversi_updated"] = None
         REWIND_KECIL_RUN_STATE["meter_hilang_updated"] = None
+        REWIND_KECIL_RUN_STATE["waste_kolom_updated"] = None
         REWIND_KECIL_RUN_STATE["revisi_applied"] = None
         REWIND_KECIL_RUN_STATE["error"] = None
 
@@ -3442,6 +3457,75 @@ def _sync_meter_hilang_into_rewind_py():
                 "range": gspread.utils.rowcol_to_a1(i, c_mh + 1),
                 "values": [[new_mh]],
             })
+
+    if updates:
+        ws.batch_update(updates, value_input_option="USER_ENTERED")
+        with _waste_rewind_cache_lock:
+            _waste_rewind_cache["ts"] = 0.0
+    return len(updates)
+
+
+def _sync_hitung_waste_kolom_into_rewind_py():
+    """Hitung ulang 4 kolom waste (_WRW_CALC_COLS) untuk SEMUA baris di
+    REWIND_PY sekaligus, pakai rumus yang SAMA dengan tombol "Hitung Waste"
+    di modal Detail (lihat hitung_waste_rewind()) -- jadi tombol Refresh di
+    halaman Waste Rewind ikut mengisi/memperbarui:
+        Waste_Slitting_Meter, Persentase_Waste_(%),
+        Waste_Slitting_After_Rewind_Meter, Waste_Slitting_After_Rewind_Presentase
+    untuk SEMUA JO, tanpa harus buka Detail satu-satu. Tombol "Hitung Waste"
+    per-JO di modal Detail TETAP ADA & tetap jalan (dipakai kalau cuma mau
+    hitung ulang satu JO tertentu, mis. sesudah revisi data mentahnya).
+
+    HARUS dipanggil SETELAH Bahan_Awal_Printing_(Meter), Hasil_Slitting_(Meter)
+    & Meter_Jumbo_Hilang_Rewind terisi (jadi taruh di urutan akhir, sebelum
+    _apply_rewind_revisi_into_rewind_py supaya revisi manual tetap menang).
+
+    Baris yang sudah Finish DILEWATI (dikunci, sama seperti aturan tombol
+    "Hitung Waste" per-JO di /api/waste-rewind/hitung) -- nilainya sudah
+    tersimpan permanen di REWIND_PY_FINISH. Baris yang datanya belum cukup
+    (Bahan Awal / Hasil Slitting kosong atau Bahan Awal = 0) juga dilewati
+    apa adanya (tidak mengosongkan nilai lama), supaya baris yang memang
+    belum siap dihitung tidak keliru ditampilkan kosong/error.
+    Sel yang nilainya sudah sama tidak ditulis ulang. Balikin jumlah SEL
+    yang diupdate."""
+    sh = _waste_rewind_spreadsheet()
+    ws = sh.worksheet(WASTE_REWIND_SHEET_NAME)
+    values = ws.get_all_values()
+    if not values:
+        return 0
+
+    header = [str(h).strip() for h in values[0]]
+    find = import_engine._find_col_index
+    parse = import_engine._parse_flexible_number
+    names = ("Bahan_Awal_Printing_(Meter)", "Hasil_Slitting_(Meter)",
+              "Meter_Jumbo_Hilang_Rewind", "Status") + _WRW_CALC_COLS
+    cols = {n: find(header, n) for n in names}
+    missing = [n for n, c in cols.items() if c is None and n != "Status"]
+    if missing:
+        raise RuntimeError(f"Kolom {', '.join(missing)} tidak ketemu di header {WASTE_REWIND_SHEET_NAME}")
+
+    c_bahan = cols["Bahan_Awal_Printing_(Meter)"]
+    c_hasil = cols["Hasil_Slitting_(Meter)"]
+    c_jumbo = cols["Meter_Jumbo_Hilang_Rewind"]
+    c_status = cols["Status"]
+
+    updates = []
+    for i, row in enumerate(values[1:], start=2):
+        def _cell(idx, _row=row):
+            return str(_row[idx]).strip() if idx is not None and idx < len(_row) else ""
+
+        if c_status is not None and _cell(c_status).lower() == "finish":
+            continue  # terkunci, sudah punya nilai permanen di REWIND_PY_FINISH
+
+        try:
+            res = hitung_waste_rewind(parse(_cell(c_bahan)), parse(_cell(c_hasil)), parse(_cell(c_jumbo)))
+        except ValueError:
+            continue  # data belum cukup buat dihitung, biarkan apa adanya
+
+        for n in _WRW_CALC_COLS:
+            c = cols[n]
+            if not _wrw_same_value(_cell(c), res[n]):
+                updates.append({"range": gspread.utils.rowcol_to_a1(i, c + 1), "values": [[res[n]]]})
 
     if updates:
         ws.batch_update(updates, value_input_option="USER_ENTERED")
