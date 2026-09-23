@@ -1670,12 +1670,14 @@
     input.value = "";
     const typing = chatAppendTyping();
     let answer;
-    // Batasin nunggu maksimal 45 detik -- lebih baik gagal cepat dengan
-    // pesan yang jelas daripada nge-hang lama terus akhirnya server/hosting
-    // yang motong koneksinya sendiri (baliknya jadi halaman HTML error,
-    // bukan JSON, dan bikin pesan errornya nggak jelas buat user).
+    // Batasin nunggu maksimal 90 detik -- lebih baik gagal dengan pesan
+    // jelas daripada nge-hang selamanya, TAPI alur chatbot ini normalnya
+    // emang butuh 2x panggilan berurutan ke AI (mutusin data apa yang mau
+    // dicari, baru nulis jawaban akhir), jadi kasih ruang cukup biar
+    // proses yang jalan normal (cuma kebetulan modelnya lagi lambat)
+    // nggak ikut ke-cut kayak proses yang beneran macet.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 45000);
+    const timer = setTimeout(() => controller.abort(), 90000);
     try{
       const res = await fetch(`${API_BASE}/api/chatbot/ask`, {
         method: "POST",
@@ -1699,7 +1701,7 @@
       }
     }catch(e){
       answer = e.name === "AbortError"
-        ? "Server kelamaan menjawab (lebih dari 45 detik) — kemungkinan lagi \"bangun\" dari idle atau data yang dicari banyak. Coba tanya ulang."
+        ? "Server kelamaan menjawab (lebih dari 90 detik) — kemungkinan AI-nya lagi lambat atau data yang dicari banyak. Coba tanya ulang."
         : "Gagal menghubungi server: " + e.message;
     }finally{
       clearTimeout(timer);

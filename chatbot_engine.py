@@ -67,7 +67,14 @@ def get_ai_client():
             # except Exception di app.py. Dibatasi di sini biar kalau memang
             # lemot, gagalnya CEPAT dan masih sempat dibalikin sebagai JSON
             # error yang jelas ke frontend.
-            timeout=25.0,
+            #
+            # Nilainya 40 (bukan 25) -- alur normal chatbot ini MINIMAL butuh
+            # 2x panggilan ke DeepSeek berurutan (1: mutusin tool apa yang
+            # dipanggil, 2: nulis jawaban akhir setelah dapat data sheet).
+            # Model gratis/murah via OpenRouter wajar butuh belasan detik per
+            # panggilan kalau lagi rame -- 25 detik kemarin kekecilan, jadi
+            # sering ke-cut PADAHAL prosesnya jalan normal (bukan nyangkut).
+            timeout=40.0,
             max_retries=1,
         )
     return _client
