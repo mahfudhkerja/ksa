@@ -1258,7 +1258,7 @@
           </div>
 
           <div class="page" id="page-chatbot" style="display:none">
-            <div class="card" style="display:flex; flex-direction:column; height:70vh;">
+            <div class="card" style="display:flex; flex-direction:column; height:calc(100vh - 170px); margin-bottom:0;">
               <h3 style="margin-bottom:4px;">💬 Tanya JO</h3>
               <p style="color:var(--ink-soft); font-size:13px; margin-bottom:10px;">
                 Tanya bebas soal satu nomor JO, misal: <em>"JO 2412 diproses di mesin apa saja dan berapa hasilnya, lalu sisa stocknya berapa?"</em>
@@ -1560,10 +1560,20 @@
     chatAppend("bot", "Halo! Tanya bebas soal JO, misal: \"no lot bahan JO 2412 pas printing apa?\" atau \"JO 2412 diproses di mesin apa saja dan berapa hasilnya, lalu sisa stocknya berapa?\"");
   }
   function chatFormat(text){
+    // Kadang AI nyambungin poin-poin bernomor jadi satu paragraf rapat
+    // (cuma dipisah spasi, bukan baris baru asli) walau sudah diminta di
+    // system prompt -- ini jaring pengaman di sisi tampilan: paksa tiap
+    // "1. ", "2. ", dst mulai baris baru sendiri kalau belum ada newline
+    // di depannya. Syarat setelah "angka." harus tanggal (dd-mm-yyyy) atau
+    // huruf kapital, biar nggak ketiban angka ribuan/desimal kayak "10.250".
+    const normalized = (text || "").replace(
+      /[ \t]+(?=\d{1,2}\.\s(?:\d{1,2}-\d{1,2}-\d{2,4}\b|[A-ZÀ-Ý]))/g,
+      "\n"
+    );
     // escape dulu biar aman dari HTML asing, baru render markdown ringan:
     // **bold**, bullet "- ", dan tabel (| kolom | kolom |) jadi HTML.
     // Ini pola-pola yang dipakai AI di jawabannya.
-    const escaped = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const escaped = normalized.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const inline = s => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     const isTableRow = line => /^\s*\|.*\|\s*$/.test(line);
     const isSeparatorRow = line => /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line);
