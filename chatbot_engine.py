@@ -42,6 +42,7 @@ Kebutuhan:
 import os
 import re
 import json
+import time
 
 from openai import OpenAI
 
@@ -49,6 +50,19 @@ import import_engine
 
 MODEL = os.environ.get("CHATBOT_MODEL", "z-ai/glm-5.3-flash")
 MAX_AGENT_STEPS = 6  # batas jaga-jaga biar nggak looping tool call terus-terusan
+
+# Total waktu maksimal 1 pertanyaan (detik). Frontend (index.html) menyerah di
+# 90 detik, jadi backend harus selesai/gagal LEBIH CEPAT dari itu supaya user
+# dapat pesan error yang jelas, bukan menunggu sampai timeout di browser.
+TOTAL_BUDGET_SECONDS = float(os.environ.get("CHATBOT_TOTAL_BUDGET", "70"))
+# Batas waktu 1x panggilan ke AI (detik).
+PER_CALL_TIMEOUT = float(os.environ.get("CHATBOT_CALL_TIMEOUT", "40"))
+# Matikan mode "thinking" GLM (bikin lambat & tidak perlu untuk tanya-jawab
+# data). Kalau provider menolak parameternya, otomatis dicoba ulang tanpa itu.
+REASONING_OFF = os.environ.get("CHATBOT_REASONING_OFF", "1") == "1"
+# Routing OpenRouter: pilih provider dengan throughput tertinggi (provider
+# termurah kadang cuma 6-20 token/detik) dan wajib yang mendukung tools.
+PROVIDER_PREFS = {"sort": "throughput", "require_parameters": True}
 
 _client = None
 
@@ -74,8 +88,8 @@ def get_ai_client():
             # Model gratis/murah via OpenRouter wajar butuh belasan detik per
             # panggilan kalau lagi rame -- 25 detik kemarin kekecilan, jadi
             # sering ke-cut PADAHAL prosesnya jalan normal (bukan nyangkut).
-            timeout=40.0,
-            max_retries=1,
+            timeout=PER_CALL_TIMEOUT,
+            max_retries=0,  # OpenRouter sudah fallback antar-provider sendiri; retry SDK bikin total waktu 2x lipat
         )
     return _client
 
@@ -1199,6 +1213,30 @@ def trim_history(messages, max_user_turns=6):
     return system_msgs + rest
 
 
+def _chat_create(client, messages, timeout):
+    """Satu panggilan ke AI lewat OpenRouter. Mencoba dengan reasoning
+    dimatikan; kalau provider menolak (HTTP 400), ulangi tanpa parameter itu."""
+    global REASONING_OFF
+    body = {"provider": dict(PROVIDER_PREFS)}
+    if REASONING_OFF:
+        body["reasoning"] = {"enabled": False}
+    try:
+        return client.chat.completions.create(
+            model=MODEL, messages=messages, tools=TOOLS,
+            timeout=timeout, extra_body=body,
+        )
+    except Exception as exc:
+        if REASONING_OFF and getattr(exc, "status_code", None) == 400:
+            print(f"[chatbot] 400 dengan reasoning off, ulangi tanpa (dan seterusnya tanpa): {exc}", flush=True)
+            REASONING_OFF = False  # ingat: jangan coba lagi di panggilan berikutnya
+            body.pop("reasoning", None)
+            return client.chat.completions.create(
+                model=MODEL, messages=messages, tools=TOOLS,
+                timeout=timeout, extra_body=body,
+            )
+        raise
+
+
 def run_agent(get_sheet_fn, user_message, history=None):
     """Jalankan satu putaran percakapan chatbot memakai GLM.
 
@@ -1212,14 +1250,28 @@ def run_agent(get_sheet_fn, user_message, history=None):
     messages.append({"role": "user", "content": user_message})
 
     tool_call_log = []
+    deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
+    t_start = time.monotonic()
 
-    for _ in range(MAX_AGENT_STEPS):
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=TOOLS,
-        )
+    for step in range(MAX_AGENT_STEPS):
+        remaining = deadline - time.monotonic()
+        if remaining < 8:
+            print(f"[chatbot] budget waktu habis di step {step + 1}", flush=True)
+            return {
+                "answer": "Maaf, prosesnya kelamaan sebelum data selesai dikumpulkan. Coba tanya lebih spesifik (sebutkan nomor JO & proses yang dimaksud), atau ulangi sebentar lagi.",
+                "tool_calls": tool_call_log,
+                "messages": messages,
+            }
+        t_call = time.monotonic()
+        response = _chat_create(client, messages, timeout=min(PER_CALL_TIMEOUT, remaining))
         msg = response.choices[0].message
+        print(
+            f"[chatbot] step {step + 1}: AI {time.monotonic() - t_call:.1f}s, "
+            f"model={MODEL}, finish={response.choices[0].finish_reason}, "
+            f"tools={[tc.function.name for tc in (msg.tool_calls or [])]}, "
+            f"total={time.monotonic() - t_start:.1f}s",
+            flush=True,
+        )
 
         if not msg.tool_calls:
             messages.append({"role": "assistant", "content": msg.content})
@@ -1253,6 +1305,7 @@ def run_agent(get_sheet_fn, user_message, history=None):
             else:
                 result = {"error": f"Tool '{tc.function.name}' tidak dikenal"}
 
+            print(f"[chatbot]   tool {tc.function.name} selesai, total={time.monotonic() - t_start:.1f}s", flush=True)
             tool_call_log.append({"tool": tc.function.name, "input": args, "result": result})
             messages.append({
                 "role": "tool",
