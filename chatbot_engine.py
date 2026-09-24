@@ -3,18 +3,18 @@ chatbot_engine.py
 ==================
 Chatbot "Tanya JO" — AI-driven, pakai OpenRouter API (kompatibel format
 OpenAI: chat.completions + "tools"/function calling), model
-deepseek/deepseek-v4-flash-0731.
+z-ai/glm-5.3-flash.
 
 ALUR LOGIKA (contoh: user tanya "hasil produksi dry JO 1234 gimana?")
 ----------------------------------------------------------------------
-1. Pesan user dikirim ke DeepSeek beserta:
+1. Pesan user dikirim ke GLM beserta:
    - SYSTEM_PROMPT (instruksi peran + aturan "jangan ngarang")
    - TOOL_DEF (definisi tool `query_group`, isinya daftar semua grup
      sheet + kolom yang ada di masing-masing grup)
-2. DeepSeek baca pertanyaan, "mikir": kata kunci "dry" & "hasil produksi"
+2. GLM baca pertanyaan, "mikir": kata kunci "dry" & "hasil produksi"
    -> cocok dengan grup "dry" (kolom HASIL_PRODUKSI_METER/KG ada di situ),
    dan nomor JO "1234" ada di kalimat.
-   DeepSeek TIDAK menjawab langsung -- dia balikin response yang isinya
+   GLM TIDAK menjawab langsung -- dia balikin response yang isinya
    `finish_reason = "tool_calls"` dengan permintaan panggil
    `query_group(group="dry", jo="1234")`.
 3. Kode Python (bukan AI) yang benar-benar eksekusi: buka sheet
@@ -23,13 +23,13 @@ ALUR LOGIKA (contoh: user tanya "hasil produksi dry JO 1234 gimana?")
    baris yang ketemu (mis. dari DRY_3, ada HASIL_PRODUKSI_METER=850,
    HASIL_PRODUKSI_KG=210, dst).
 4. Hasil tool itu (JSON mentah, data asli dari sheet) dikirim BALIK ke
-   DeepSeek sebagai pesan role "tool".
-5. DeepSeek baca data itu, lalu menyusun jawaban akhir dalam Bahasa
+   GLM sebagai pesan role "tool".
+5. GLM baca data itu, lalu menyusun jawaban akhir dalam Bahasa
    Indonesia -- HANYA memakai angka yang ada di data tsb. Kalau baris
    kosong (JO tidak ketemu di Dry manapun), dia wajib bilang "tidak
    ditemukan", bukan menebak.
 6. Kalau pertanyaannya gabungan (mis. "hasil produksi dry DAN sisa
-   stocknya"), DeepSeek akan minta panggil `query_group` lagi untuk grup
+   stocknya"), GLM akan minta panggil `query_group` lagi untuk grup
    "validasi_stock" sebelum menjawab -- makanya ini jalan sebagai LOOP
    (lihat run_agent), bukan cuma 1x tanya-jawab.
 
@@ -47,7 +47,7 @@ from openai import OpenAI
 
 import import_engine
 
-MODEL = os.environ.get("CHATBOT_MODEL", "deepseek/deepseek-v4-flash-0731")
+MODEL = os.environ.get("CHATBOT_MODEL", "z-ai/glm-5.3-flash")
 MAX_AGENT_STEPS = 6  # batas jaga-jaga biar nggak looping tool call terus-terusan
 
 _client = None
@@ -60,7 +60,7 @@ def get_ai_client():
             api_key=os.environ["OPENROUTER_API_KEY"],
             base_url="https://openrouter.ai/api/v1",
             # SEBELUMNYA nggak dikasih timeout -- default OpenAI SDK bisa
-            # nunggu sampai 10 menit kalau OpenRouter/DeepSeek lemot/nyangkut.
+            # nunggu sampai 10 menit kalau OpenRouter/GLM lemot/nyangkut.
             # Itu jauh lebih lama dari worker timeout Render/gunicorn (biasanya
             # ~30s), jadi request keburu dipaksa mati duluan sama hosting-nya
             # (balikin halaman HTML error, bukan JSON) sebelum sempat masuk ke
@@ -69,7 +69,7 @@ def get_ai_client():
             # error yang jelas ke frontend.
             #
             # Nilainya 40 (bukan 25) -- alur normal chatbot ini MINIMAL butuh
-            # 2x panggilan ke DeepSeek berurutan (1: mutusin tool apa yang
+            # 2x panggilan ke GLM berurutan (1: mutusin tool apa yang
             # dipanggil, 2: nulis jawaban akhir setelah dapat data sheet).
             # Model gratis/murah via OpenRouter wajar butuh belasan detik per
             # panggilan kalau lagi rame -- 25 detik kemarin kekecilan, jadi
@@ -936,7 +936,7 @@ def search_produk(get_sheet_fn, keyword, max_hasil=20):
     return out
 
 
-# Format tool DeepSeek (sama dengan format function-calling OpenAI):
+# Format tool GLM (sama dengan format function-calling OpenAI):
 # {"type": "function", "function": {name, description, parameters}}
 TOOLS = [
     {
@@ -1145,7 +1145,30 @@ SYSTEM_PROMPT = (
     "biasa (enter/newline) untuk list bernomor; tag HTML lain "
     "muncul sebagai teks mentah, bukan diformat, dan akan bikin jawaban "
     "berantakan. Untuk list bernomor, PAKAI newline asli antar poin "
-    "(jangan cuma spasi) -- ini WAJIB, lihat poin 7."
+    "(jangan cuma spasi) -- ini WAJIB, lihat poin 7.\n"
+    "10. FORMAT JAWABAN (WAJIB, berlaku untuk semua jawaban): tulis sebagai "
+    "BEBERAPA BARIS TERPISAH, BUKAN satu paragraf. Setiap tanda newline "
+    "harus benar-benar karakter enter. Urutannya: (a) satu kalimat jawaban "
+    "inti di baris pertama; (b) satu baris kosong; (c) rincian sebagai list "
+    "bernomor, SATU nomor per baris; (d) satu baris kosong; (e) baris "
+    "'Total' di baris SENDIRI; (f) kalau ada catatan tambahan, tulis di "
+    "bawahnya sebagai bullet '- ' dengan SATU bullet per baris. Jangan "
+    "menyambung 'Total', 'Catatan', atau nomor berikutnya di ujung baris "
+    "sebelumnya. Setiap pasangan ** harus lengkap (ada buka DAN tutup); "
+    "jangan pernah menyisakan ** yang menggantung. Contoh bentuk yang "
+    "benar:\n"
+    "Total hasil Bag Making JO 2532 adalah **66.300 pcs**.\n"
+    "\n"
+    "Rincian per baris:\n"
+    "1. 17-07-2026, Mesin 5, Shift 3 — 0\n"
+    "2. 18-07-2026, Mesin 6, Shift 1 — 2.200\n"
+    "3. 18-07-2026, Mesin 6, Shift 3 — 9.900\n"
+    "\n"
+    "**Total = 66.300 pcs**\n"
+    "\n"
+    "Catatan:\n"
+    "- Di sheet Validasi Stock: HASIL BAG = 66.300\n"
+    "- Di Laporan Produksi: Meter Hasil 57.900"
 )
 
 
@@ -1159,7 +1182,7 @@ def trim_history(messages, max_user_turns=6):
 
     Kalau motongnya asal jumlah pesan (mis. messages[-20:]), gampang
     kepotong pas di antara pesan assistant yang minta tool_calls dan
-    pesan tool balasannya -- itu yang bikin DeepSeek nolak dengan error
+    pesan tool balasannya -- itu yang bikin GLM nolak dengan error
     "Messages with role 'tool' must be a response to a preceding message
     with 'tool_calls'"."""
     system_msgs = [m for m in messages if m.get("role") == "system"]
@@ -1177,7 +1200,7 @@ def trim_history(messages, max_user_turns=6):
 
 
 def run_agent(get_sheet_fn, user_message, history=None):
-    """Jalankan satu putaran percakapan chatbot memakai DeepSeek.
+    """Jalankan satu putaran percakapan chatbot memakai GLM.
 
     `history` opsional: list pesan sebelumnya (format OpenAI messages)
     kalau mau multi-turn dengan konteks; kalau None, percakapan baru.
@@ -1206,7 +1229,7 @@ def run_agent(get_sheet_fn, user_message, history=None):
                 "messages": messages,
             }
 
-        # DeepSeek minta panggil satu atau beberapa tool -> eksekusi semua,
+        # GLM minta panggil satu atau beberapa tool -> eksekusi semua,
         # lalu kirim balik hasilnya sebagai pesan role "tool".
         messages.append({
             "role": "assistant",
