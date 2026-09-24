@@ -2,19 +2,19 @@
 chatbot_engine.py
 ==================
 Chatbot "Tanya JO" — AI-driven, pakai OpenRouter API (kompatibel format
-OpenAI: chat.completions + "tools"/function calling), model
-z-ai/glm-5.3-flash.
+OpenAI: chat.completions + "tools"/function calling), model diambil dari environment variable CHATBOT_MODEL
+(diisi di Render -> Environment).
 
 ALUR LOGIKA (contoh: user tanya "hasil produksi dry JO 1234 gimana?")
 ----------------------------------------------------------------------
-1. Pesan user dikirim ke GLM beserta:
+1. Pesan user dikirim ke AI beserta:
    - SYSTEM_PROMPT (instruksi peran + aturan "jangan ngarang")
    - TOOL_DEF (definisi tool `query_group`, isinya daftar semua grup
      sheet + kolom yang ada di masing-masing grup)
-2. GLM baca pertanyaan, "mikir": kata kunci "dry" & "hasil produksi"
+2. AI baca pertanyaan, "mikir": kata kunci "dry" & "hasil produksi"
    -> cocok dengan grup "dry" (kolom HASIL_PRODUKSI_METER/KG ada di situ),
    dan nomor JO "1234" ada di kalimat.
-   GLM TIDAK menjawab langsung -- dia balikin response yang isinya
+   AI TIDAK menjawab langsung -- dia balikin response yang isinya
    `finish_reason = "tool_calls"` dengan permintaan panggil
    `query_group(group="dry", jo="1234")`.
 3. Kode Python (bukan AI) yang benar-benar eksekusi: buka sheet
@@ -23,13 +23,13 @@ ALUR LOGIKA (contoh: user tanya "hasil produksi dry JO 1234 gimana?")
    baris yang ketemu (mis. dari DRY_3, ada HASIL_PRODUKSI_METER=850,
    HASIL_PRODUKSI_KG=210, dst).
 4. Hasil tool itu (JSON mentah, data asli dari sheet) dikirim BALIK ke
-   GLM sebagai pesan role "tool".
-5. GLM baca data itu, lalu menyusun jawaban akhir dalam Bahasa
+   AI sebagai pesan role "tool".
+5. AI baca data itu, lalu menyusun jawaban akhir dalam Bahasa
    Indonesia -- HANYA memakai angka yang ada di data tsb. Kalau baris
    kosong (JO tidak ketemu di Dry manapun), dia wajib bilang "tidak
    ditemukan", bukan menebak.
 6. Kalau pertanyaannya gabungan (mis. "hasil produksi dry DAN sisa
-   stocknya"), GLM akan minta panggil `query_group` lagi untuk grup
+   stocknya"), AI akan minta panggil `query_group` lagi untuk grup
    "validasi_stock" sebelum menjawab -- makanya ini jalan sebagai LOOP
    (lihat run_agent), bukan cuma 1x tanya-jawab.
 
@@ -48,7 +48,11 @@ from openai import OpenAI
 
 import import_engine
 
-MODEL = os.environ.get("CHATBOT_MODEL", "z-ai/glm-5.3-flash")
+# Nama model dibaca HANYA dari environment variable CHATBOT_MODEL (di Render:
+# Dashboard -> service -> Environment), mis. "vendor/nama-model" sesuai slug
+# di openrouter.ai. Sengaja tanpa default supaya ganti-ganti model cukup dari
+# Render, tanpa edit kode.
+MODEL = os.environ.get("CHATBOT_MODEL", "").strip()
 MAX_AGENT_STEPS = 6  # batas jaga-jaga biar nggak looping tool call terus-terusan
 
 # Total waktu maksimal 1 pertanyaan (detik). Frontend (index.html) menyerah di
@@ -57,24 +61,42 @@ MAX_AGENT_STEPS = 6  # batas jaga-jaga biar nggak looping tool call terus-terusa
 TOTAL_BUDGET_SECONDS = float(os.environ.get("CHATBOT_TOTAL_BUDGET", "70"))
 # Batas waktu 1x panggilan ke AI (detik).
 PER_CALL_TIMEOUT = float(os.environ.get("CHATBOT_CALL_TIMEOUT", "40"))
-# Matikan mode "thinking" GLM (bikin lambat & tidak perlu untuk tanya-jawab
-# data). Kalau provider menolak parameternya, otomatis dicoba ulang tanpa itu.
+# Matikan mode "thinking" model (bikin lambat & tidak perlu untuk tanya-jawab
+# data; diabaikan oleh model yang tidak punya mode itu). Kalau provider menolak parameternya, otomatis dicoba ulang tanpa itu.
 REASONING_OFF = os.environ.get("CHATBOT_REASONING_OFF", "1") == "1"
+# Hemat token: histori percakapan yang disimpan cuma pertanyaan + JAWABAN AKHIR
+# tiap giliran; data mentah hasil tool (bisa puluhan ribu token) dibuang, supaya
+# tidak ikut dikirim ulang ke AI di setiap pertanyaan berikutnya.
+COMPACT_HISTORY = os.environ.get("CHATBOT_COMPACT_HISTORY", "1") == "1"
+# Opsional: batas panjang (karakter) hasil tool yang dikirim ke AI. 0 = tanpa batas.
+# Hati-hati: kalau dipotong, AI bisa salah menjumlah -- aktifkan hanya kalau log
+# menunjukkan satu hasil tool memang raksasa.
+TOOL_RESULT_MAX_CHARS = int(os.environ.get("CHATBOT_TOOL_RESULT_MAX_CHARS", "0"))
 # Routing OpenRouter: pilih provider dengan throughput tertinggi (provider
 # termurah kadang cuma 6-20 token/detik) dan wajib yang mendukung tools.
-PROVIDER_PREFS = {"sort": "throughput", "require_parameters": True}
+# Isi CHATBOT_PROVIDER_SORT dengan "price" / "latency" untuk mengganti, atau
+# kosongkan (set ke "-") untuk memakai routing default OpenRouter.
+_PROVIDER_SORT = os.environ.get("CHATBOT_PROVIDER_SORT", "throughput").strip()
+PROVIDER_PREFS = {"require_parameters": True}
+if _PROVIDER_SORT and _PROVIDER_SORT != "-":
+    PROVIDER_PREFS["sort"] = _PROVIDER_SORT
 
 _client = None
 
 
 def get_ai_client():
     global _client
+    if not MODEL:
+        raise RuntimeError(
+            "CHATBOT_MODEL belum diisi. Isi di Render -> Environment dengan nama model "
+            "OpenRouter (contoh format: vendor/nama-model), lalu deploy ulang."
+        )
     if _client is None:
         _client = OpenAI(
             api_key=os.environ["OPENROUTER_API_KEY"],
             base_url="https://openrouter.ai/api/v1",
             # SEBELUMNYA nggak dikasih timeout -- default OpenAI SDK bisa
-            # nunggu sampai 10 menit kalau OpenRouter/GLM lemot/nyangkut.
+            # nunggu sampai 10 menit kalau OpenRouter/AI lemot/nyangkut.
             # Itu jauh lebih lama dari worker timeout Render/gunicorn (biasanya
             # ~30s), jadi request keburu dipaksa mati duluan sama hosting-nya
             # (balikin halaman HTML error, bukan JSON) sebelum sempat masuk ke
@@ -83,7 +105,7 @@ def get_ai_client():
             # error yang jelas ke frontend.
             #
             # Nilainya 40 (bukan 25) -- alur normal chatbot ini MINIMAL butuh
-            # 2x panggilan ke GLM berurutan (1: mutusin tool apa yang
+            # 2x panggilan ke AI berurutan (1: mutusin tool apa yang
             # dipanggil, 2: nulis jawaban akhir setelah dapat data sheet).
             # Model gratis/murah via OpenRouter wajar butuh belasan detik per
             # panggilan kalau lagi rame -- 25 detik kemarin kekecilan, jadi
@@ -950,7 +972,7 @@ def search_produk(get_sheet_fn, keyword, max_hasil=20):
     return out
 
 
-# Format tool GLM (sama dengan format function-calling OpenAI):
+# Format tool (sama dengan format function-calling OpenAI):
 # {"type": "function", "function": {name, description, parameters}}
 TOOLS = [
     {
@@ -1196,7 +1218,7 @@ def trim_history(messages, max_user_turns=6):
 
     Kalau motongnya asal jumlah pesan (mis. messages[-20:]), gampang
     kepotong pas di antara pesan assistant yang minta tool_calls dan
-    pesan tool balasannya -- itu yang bikin GLM nolak dengan error
+    pesan tool balasannya -- itu yang bikin AI nolak dengan error
     "Messages with role 'tool' must be a response to a preceding message
     with 'tool_calls'"."""
     system_msgs = [m for m in messages if m.get("role") == "system"]
@@ -1209,6 +1231,15 @@ def trim_history(messages, max_user_turns=6):
     if len(turn_start_idx) > max_user_turns:
         cut_at = turn_start_idx[-max_user_turns]
         rest = rest[cut_at:]
+
+    if COMPACT_HISTORY:
+        # Buang pesan assistant(tool_calls) & tool(hasil mentah) -- yang tersisa
+        # user + jawaban akhir assistant. Pasangan tool_calls<->tool dibuang
+        # BERSAMAAN, jadi tidak ada yang yatim (aman dari error API).
+        rest = [
+            m for m in rest
+            if m.get("role") != "tool" and not (m.get("role") == "assistant" and m.get("tool_calls"))
+        ]
 
     return system_msgs + rest
 
@@ -1238,7 +1269,7 @@ def _chat_create(client, messages, timeout):
 
 
 def run_agent(get_sheet_fn, user_message, history=None):
-    """Jalankan satu putaran percakapan chatbot memakai GLM.
+    """Jalankan satu putaran percakapan chatbot memakai AI.
 
     `history` opsional: list pesan sebelumnya (format OpenAI messages)
     kalau mau multi-turn dengan konteks; kalau None, percakapan baru.
@@ -1269,6 +1300,9 @@ def run_agent(get_sheet_fn, user_message, history=None):
             f"[chatbot] step {step + 1}: AI {time.monotonic() - t_call:.1f}s, "
             f"model={MODEL}, finish={response.choices[0].finish_reason}, "
             f"tools={[tc.function.name for tc in (msg.tool_calls or [])]}, "
+            f"in_tok={getattr(getattr(response, 'usage', None), 'prompt_tokens', '?')}, "
+            f"out_tok={getattr(getattr(response, 'usage', None), 'completion_tokens', '?')}, "
+            f"msgs={len(messages)}, "
             f"total={time.monotonic() - t_start:.1f}s",
             flush=True,
         )
@@ -1281,7 +1315,7 @@ def run_agent(get_sheet_fn, user_message, history=None):
                 "messages": messages,
             }
 
-        # GLM minta panggil satu atau beberapa tool -> eksekusi semua,
+        # AI minta panggil satu atau beberapa tool -> eksekusi semua,
         # lalu kirim balik hasilnya sebagai pesan role "tool".
         messages.append({
             "role": "assistant",
@@ -1307,10 +1341,17 @@ def run_agent(get_sheet_fn, user_message, history=None):
 
             print(f"[chatbot]   tool {tc.function.name} selesai, total={time.monotonic() - t_start:.1f}s", flush=True)
             tool_call_log.append({"tool": tc.function.name, "input": args, "result": result})
+            result_json = json.dumps(result, ensure_ascii=False)
+            print(f"[chatbot]   hasil tool {tc.function.name}: {len(result_json)} karakter", flush=True)
+            if TOOL_RESULT_MAX_CHARS and len(result_json) > TOOL_RESULT_MAX_CHARS:
+                result_json = (
+                    result_json[:TOOL_RESULT_MAX_CHARS]
+                    + f' ...[DIPOTONG: hasil asli {len(result_json)} karakter, hanya sebagian yang ditampilkan -- jangan menjumlah/menyimpulkan total dari data yang terpotong, minta user persempit pertanyaan]'
+                )
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": result_json,
             })
 
     return {
