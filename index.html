@@ -1568,15 +1568,32 @@
     // di depannya. Syarat abis penanda harus tanggal (dd-mm-yyyy), huruf
     // kapital, atau **bold** -- biar nggak ketiban angka ribuan/desimal
     // (mis. "10.250") atau tanda pisah biasa di tengah kalimat.
-    const normalized = (text || "").replace(
-      /[ \t]+(?=(?:\d{1,2}\.|-)\s(?:\*\*)?(?:\d{1,2}-\d{1,2}-\d{2,4}\b|[A-ZÀ-Ý]))/g,
+    let normalized = (text || "");
+    // (a) penanda list bernomor "2. 18-07-2026..." / "3. Mesin..." -> baris baru.
+    normalized = normalized.replace(
+      /[ \t]+(?=\d{1,2}\.\s(?:\*\*)?(?:\d{1,2}-\d{1,2}-\d{2,4}\b|[A-ZÀ-Ý]))/g,
+      "\n"
+    );
+    // (b) penanda bullet "- Di sheet ..." -> baris baru. Syaratnya lebih
+    // ketat (huruf kapital + huruf kecil, mis. "Di", "Laporan") supaya tanda
+    // pisah biasa di tengah nama produk ("5 WARNA - E16 malam") TIDAK ikut
+    // terpotong jadi baris baru.
+    normalized = normalized.replace(
+      /[ \t]+(?=-\s(?:\*\*)?[A-ZÀ-Ý][a-zà-ÿ])/g,
+      "\n"
+    );
+    // (c) kata pembuka bagian yang biasanya nempel di ujung kalimat sebelumnya
+    // ("... 66.300 pcs Catatan tambahan ...", "... Total = 66.300"):
+    // paksa mulai baris baru.
+    normalized = normalized.replace(
+      /[ \t]+(?=(?:\*\*)?(?:Total\s*[=:]|Catatan\b|Kesimpulan\b|Ringkasan\b|Rincian\b))/g,
       "\n"
     );
     // escape dulu biar aman dari HTML asing, baru render markdown ringan:
     // **bold**, bullet "- ", dan tabel (| kolom | kolom |) jadi HTML.
     // Ini pola-pola yang dipakai AI di jawabannya.
     const escaped = normalized.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const inline = s => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+    const inline = s => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "");
     const isTableRow = line => /^\s*\|.*\|\s*$/.test(line);
     const isSeparatorRow = line => /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line);
     const splitCells = line => {
