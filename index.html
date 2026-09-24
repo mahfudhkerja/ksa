@@ -1656,7 +1656,7 @@
     const log = document.getElementById("chatLog");
     const bubble = document.createElement("div");
     bubble.className = "chat-bubble-anim";
-    bubble.style.cssText = `align-self:flex-start; background:var(--bg-soft,#f1f2f6); color:var(--ink,#1a1a1a); padding:10px 14px; border-radius:14px 14px 14px 2px; max-width:80%; font-size:13px;`;
+    bubble.style.cssText = `align-self:flex-start; background:var(--bg-soft,#f1f2f6); color:var(--ink,#1a1a1a); padding:10px 14px; border-radius:14px 14px 14px 2px; max-width:80%; white-space:pre-wrap; font-size:13px;`;
     bubble.innerHTML = `<div class="chat-typing-wrap"><span class="chat-typing-dots"><i></i><i></i><i></i></span><span class="chat-typing-caption">${CHAT_THINKING_PHRASES[0]}</span></div>`;
     log.appendChild(bubble);
     log.scrollTop = log.scrollHeight;
@@ -1732,6 +1732,7 @@
     bubble.style.opacity = "0";
     bubble.style.transform = "translateY(2px)";
     setTimeout(() => {
+      bubble.style.whiteSpace = "pre-wrap"; // biar enter/baris baru dari jawaban tampil (bubble typing dulu tanpa ini)
       bubble.innerHTML = chatFormat(answer);
       bubble.style.opacity = "1";
       bubble.style.transform = "translateY(0)";
