@@ -1614,9 +1614,23 @@
         const headerCells = splitCells(lines[i]);
         i += 2;
         const bodyRows = [];
-        while(i < lines.length && isTableRow(lines[i])){
-          bodyRows.push(splitCells(lines[i]));
-          i++;
+        while(i < lines.length){
+          if(isTableRow(lines[i])){
+            bodyRows.push(splitCells(lines[i]));
+            i++;
+            continue;
+          }
+          // Kadang AI nyelipin 1 baris kosong di tengah tabel (mis. antar
+          // baris data yang berasal dari sumber berbeda). Baris kosong itu
+          // sendiri BUKAN penanda akhir tabel -- baru dianggap akhir tabel
+          // kalau baris SESUDAHNYA juga bukan baris tabel. Ini jaring
+          // pengaman di sisi tampilan supaya baris data nggak "lepas" dari
+          // tabel dan tercetak mentah sebagai teks "| ... |".
+          if(lines[i].trim() === "" && i + 1 < lines.length && isTableRow(lines[i + 1])){
+            i++;
+            continue;
+          }
+          break;
         }
         html += '<div class="chat-table-wrap"><table class="chat-table"><thead><tr>' +
           headerCells.map(h => `<th>${inline(h)}</th>`).join("") +

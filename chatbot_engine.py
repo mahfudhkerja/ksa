@@ -639,7 +639,18 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "(| kolom | kolom |), tag HTML lain akan tampil sebagai teks "
             "mentah, bukan diformat. Kalau tabel BJB/BJL lebar, biarkan "
             "saja apa adanya (tampilan chat sudah otomatis bisa "
-            "di-scroll ke samping), jangan memotong kolom/baris."
+            "di-scroll ke samping), jangan memotong kolom/baris. "
+            "PENTING: semua baris data dalam SATU tabel (baris header, "
+            "separator |---|---|, dan SEMUA baris body-nya) HARUS "
+            "berurutan langsung baris demi baris, TANPA baris kosong "
+            "yang menyelip di tengah -- walaupun baris-baris itu berasal "
+            "dari entri/sumber yang berbeda-beda (mis. bjb.baris atau "
+            "bjl.baris berisi beberapa produk sekaligus). Kalau ada baris "
+            "kosong nyempil di tengah tabel, baris sesudahnya TIDAK akan "
+            "tampil sebagai tabel lagi, cuma jadi teks mentah dengan "
+            "tanda '|'. Baris kosong hanya boleh dipakai untuk memisahkan "
+            "antar-BLOK (mis. sesudah tabel selesai, sebelum 'Total Stok "
+            "Utuh :'), bukan di antara baris-baris tabel itu sendiri."
         ),
     }
 
