@@ -1620,15 +1620,21 @@
             i++;
             continue;
           }
-          // Kadang AI nyelipin 1 baris kosong di tengah tabel (mis. antar
-          // baris data yang berasal dari sumber berbeda). Baris kosong itu
-          // sendiri BUKAN penanda akhir tabel -- baru dianggap akhir tabel
-          // kalau baris SESUDAHNYA juga bukan baris tabel. Ini jaring
-          // pengaman di sisi tampilan supaya baris data nggak "lepas" dari
-          // tabel dan tercetak mentah sebagai teks "| ... |".
-          if(lines[i].trim() === "" && i + 1 < lines.length && isTableRow(lines[i + 1])){
-            i++;
-            continue;
+          // Kadang AI nyelipin baris kosong (bisa lebih dari satu) di
+          // tengah tabel -- mis. antar baris data yang berasal dari
+          // entri/sumber berbeda. Baris kosong itu sendiri BUKAN penanda
+          // akhir tabel -- baru dianggap akhir tabel kalau, sesudah
+          // dilompati semua baris kosong berurutan, baris berikutnya JUGA
+          // bukan baris tabel. Jaring pengaman di sisi tampilan supaya
+          // baris data nggak "lepas" dari tabel dan tercetak mentah
+          // sebagai teks "| ... |".
+          if(lines[i].trim() === ""){
+            let j = i;
+            while(j < lines.length && lines[j].trim() === "") j++;
+            if(j < lines.length && isTableRow(lines[j])){
+              i = j;
+              continue;
+            }
           }
           break;
         }
