@@ -43,6 +43,7 @@ import os
 import re
 import json
 import time
+from datetime import date
 
 from openai import OpenAI
 
@@ -267,6 +268,30 @@ def _get_gudang_spreadsheet():
     return _gudang_spreadsheet
 
 
+_CELL_NEWLINE_RE = re.compile(r"[\r\n]+")
+
+
+def _sanitize_cell(value):
+    """Ganti newline yang nyempil DI DALAM satu sel (mis. hasil wrap-text
+    manual di Google Sheets, sering ada di kolom KETERANGAN yang isinya
+    beberapa kalimat) jadi spasi.
+
+    PENTING kenapa ini perlu: nilai sel di-JSON-dump apa adanya lalu
+    dikirim ke AI (lihat run_agent -> result_json). Kalau ada '\\n' di
+    tengah isi kolom, dan AI menaruh isi itu ke dalam satu sel tabel
+    markdown, baris tabel itu jadi terpotong jadi 2 baris FISIK -- padahal
+    aturan di catatan_format bilang satu baris tabel wajib satu baris
+    fisik tanpa jeda. Begitu ini kejadian, SISA tabel sesudahnya (baris2
+    berikutnya, bahkan blok lain) ikut tampil sebagai teks mentah
+    berantakan dengan tanda '|', bukan tabel lagi -- ini akar masalah
+    'kadang aslinya tabel tapi tampil bukan tabel'. Disanitasi di sini
+    (sumber data), bukan cuma dipesan ke AI lewat prompt, supaya
+    kejadiannya tidak bergantung ke kepatuhan AI."""
+    if not value:
+        return value
+    return _CELL_NEWLINE_RE.sub(" ", str(value)).strip()
+
+
 def _sheet_to_dicts(ws):
     """Baca 1 worksheet -> (header_row, [dict per baris]) pakai
     get_all_values (bukan get_all_records) supaya tahan header yang
@@ -282,7 +307,7 @@ def _sheet_to_dicts(ws):
         for i, h in enumerate(header):
             h = str(h).strip()
             if h:
-                d[h] = row[i] if i < len(row) else ""
+                d[h] = _sanitize_cell(row[i] if i < len(row) else "")
         out.append(d)
     return header, out
 
@@ -394,6 +419,9 @@ def _cari_produk_di_form_st(get_sheet_fn, query_tokens):
     return header, matched
 
 
+FORM_ST_REWIND_START_DATE = date(2026, 6, 30)  # 30 Juni 2026 -- baris TANGGAL sebelum ini diabaikan (histori lama, sudah tidak relevan buat antrian rewind)
+
+
 def _filter_form_st_antrian_rewind(rows):
     """SAMA PERSIS logika 'Cek Stok' di halaman Waste Rewind
     (app.py: _wrw_cek_stok_form_st) -- baris FORM_ST_1 cuma ditampilkan
@@ -401,12 +429,26 @@ def _filter_form_st_antrian_rewind(rows):
     cuma '-'/kosong) DAN HASIL_RIWEN masih kosong/'-' (berarti masih
     di-antrian rewind, belum ada hasilnya). Baris yang HASIL_RIWEN-nya
     sudah keisi (rewind sudah kelar) ATAU MASUK_REWIND-nya kosong (tidak
-    pernah masuk rewind) TIDAK relevan buat ditampilkan di sini."""
-    return [
-        r for r in rows
-        if _stok_cell_has_content(_col(r, "MASUK_REWIND"))
-        and not _stok_cell_has_content(_col(r, "HASIL_RIWEN"))
-    ]
+    pernah masuk rewind) TIDAK relevan buat ditampilkan di sini.
+
+    TAMBAHAN: baris juga WAJIB ber-TANGGAL >= FORM_ST_REWIND_START_DATE
+    (30 Juni 2026) -- baris lebih lama dari itu diabaikan sepenuhnya,
+    dianggap histori lama yang tidak relevan lagi buat antrian rewind
+    saat ini, walaupun MASUK_REWIND/HASIL_RIWEN-nya cocok kriteria di
+    atas. Kalau TANGGAL-nya kosong atau gagal di-parse, baris itu ikut
+    diabaikan juga (sama konservatifnya dengan pola tanggal sejenis di
+    app.py: _read_rewind_kecil_spk_jo / REWIND_KECIL_START_DATE)."""
+    out = []
+    for r in rows:
+        if not _stok_cell_has_content(_col(r, "MASUK_REWIND")):
+            continue
+        if _stok_cell_has_content(_col(r, "HASIL_RIWEN")):
+            continue
+        tgl = import_engine._parse_date_flexible(str(_col(r, "TANGGAL") or "").strip())
+        if tgl is None or tgl < FORM_ST_REWIND_START_DATE:
+            continue
+        out.append(r)
+    return out
 
 
 def _tambah_suffix_roll(combined):
