@@ -331,6 +331,12 @@
   .chat-send-btn:hover:not(:disabled){ transform:scale(1.07); }
   .chat-send-btn:active:not(:disabled){ transform:scale(.93); }
   .chat-send-btn:disabled{ background:var(--line-soft); color:var(--ink-faint); box-shadow:none; cursor:default; }
+  /* Label pemisah blok jawaban Tanya JO (Validasi / Form Serah Terima /
+     Barang Jadi Baru (BJB) / Barang Jadi Lama (BJL)) -- dibedain dari teks
+     biasa (bold + font lebih besar) biar user gampang lihat batas
+     antar-blok, lihat chatFormat() -> isSectionHeader(). */
+  .chat-section-header{ font-weight:800; font-size:15px; color:var(--blue-dark); margin:10px 0 4px; }
+  .chat-section-header:first-child{ margin-top:0; }
   .chat-table-wrap{ overflow-x:auto; margin:6px 0; border-radius:10px; border:1px solid var(--line); }
   table.chat-table{ border-collapse:collapse; width:100%; font-size:12.5px; white-space:normal; }
   table.chat-table th, table.chat-table td{ padding:7px 10px; border-bottom:1px solid var(--line); text-align:left; }
@@ -1597,6 +1603,11 @@
     // Ini pola-pola yang dipakai AI di jawabannya.
     const escaped = normalized.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const inline = s => s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*\*/g, "");
+    // Label pemisah blok jawaban Tanya JO -- PERSIS 4 label ini dari
+    // catatan_format di chatbot_engine.py (query_stok_gudang), selalu
+    // muncul sebagai baris sendiri. Ditebalin + digedein fontnya (lihat
+    // .chat-section-header) biar batas antar-blok kelihatan jelas.
+    const isSectionHeader = line => /^(Validasi|Form Serah Terima|Barang Jadi Baru \(BJB\)|Barang Jadi Lama \(BJL\)):\s*$/.test(line.trim());
     const isTableRow = line => /^\s*\|.*\|\s*$/.test(line);
     const isSeparatorRow = line => /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?\s*$/.test(line);
     const splitCells = line => {
@@ -1645,7 +1656,11 @@
           '</tbody></table></div>';
         continue;
       }
-      html += inline(lines[i]) + (i < lines.length - 1 ? "\n" : "");
+      if(isSectionHeader(lines[i])){
+        html += `<div class="chat-section-header">${inline(lines[i].trim())}</div>`;
+      } else {
+        html += inline(lines[i]) + (i < lines.length - 1 ? "\n" : "");
+      }
       i++;
     }
     return html;
