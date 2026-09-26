@@ -372,6 +372,43 @@ def _cari_jo_di_val1(get_sheet_fn, target_jo_suffix):
     return header, matched
 
 
+FORM_ST1_SHEET_NAME = "FORM_ST_1"
+
+
+def _stok_cell_has_content(value):
+    """True kalau isi sel beneran ada (bukan kosong / '-') -- dipakai buat
+    filter FORM_ST_1 di bawah, SAMA PERSIS definisi 'ada isi' yang dipakai
+    fitur Cek Stok di halaman Waste Rewind (app.py: _stok_has_content)."""
+    t = str(value or "").strip()
+    return bool(t) and t != "-"
+
+
+def _cari_produk_di_form_st(get_sheet_fn, query_tokens):
+    """FORM_ST_1 (Form Serah Terima) ada di spreadsheet MASTER yang sama
+    dengan VAL_1 (diakses lewat get_sheet_fn juga -- bukan spreadsheet
+    'GUDANG API' terpisah tempat BJB_KATEGORI/BJL_KATEGORI berada).
+    Kolom nama produknya "NAMA_PRODUK", sama seperti VAL_1."""
+    ws = get_sheet_fn(FORM_ST1_SHEET_NAME)
+    header, rows = _sheet_to_dicts(ws)
+    matched = [r for r in rows if _produk_tokens_match(query_tokens, _produk_tokens(_col(r, "NAMA_PRODUK")))]
+    return header, matched
+
+
+def _filter_form_st_antrian_rewind(rows):
+    """SAMA PERSIS logika 'Cek Stok' di halaman Waste Rewind
+    (app.py: _wrw_cek_stok_form_st) -- baris FORM_ST_1 cuma ditampilkan
+    kalau MASUK_REWIND ada isinya (angka ATAUPUN teks apa saja, bukan
+    cuma '-'/kosong) DAN HASIL_RIWEN masih kosong/'-' (berarti masih
+    di-antrian rewind, belum ada hasilnya). Baris yang HASIL_RIWEN-nya
+    sudah keisi (rewind sudah kelar) ATAU MASUK_REWIND-nya kosong (tidak
+    pernah masuk rewind) TIDAK relevan buat ditampilkan di sini."""
+    return [
+        r for r in rows
+        if _stok_cell_has_content(_col(r, "MASUK_REWIND"))
+        and not _stok_cell_has_content(_col(r, "HASIL_RIWEN"))
+    ]
+
+
 def _tambah_suffix_roll(combined):
     """Tambahkan ' Roll' ke bagian angka POLOS dari hasil
     import_engine._combine_number_terms (mis. '42' -> '42 Roll'), TANPA
@@ -526,6 +563,20 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             nama = str(_col(r, "NAMA_PRODUK") or "").strip()
             if nama:
                 kandidat_produk.add(nama)
+        # FORM_ST_1 diikutkan juga sebagai sumber kandidat produk -- biar
+        # konsisten sama VAL_1/BJB/BJL (kadang satu JO cuma kelihatan
+        # produknya di Form Serah Terima, belum masuk VAL_1/BJB/BJL sama
+        # sekali kalau baru diserahterimakan).
+        try:
+            ws_formst = get_sheet_fn(FORM_ST1_SHEET_NAME)
+            _, formst_all_rows = _sheet_to_dicts(ws_formst)
+            formst_jo_rows = [r for r in formst_all_rows if normalize_jo(_col(r, "JO")) == target_jo]
+        except Exception:
+            formst_jo_rows = []
+        for r in formst_jo_rows:
+            nama = str(_col(r, "NAMA_PRODUK") or "").strip()
+            if nama:
+                kandidat_produk.add(nama)
         for sheet_name in GUDANG_KATEGORI_SHEETS.values():
             try:
                 _, rows = _cari_jo_di_kategori(sheet_name, target_jo)
@@ -540,7 +591,7 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             return {
                 "jo": jo,
                 "ditemukan": False,
-                "pesan": f"JO '{jo}' tidak ditemukan di VAL_1/BJB_KATEGORI/BJL_KATEGORI.",
+                "pesan": f"JO '{jo}' tidak ditemukan di VAL_1/{FORM_ST1_SHEET_NAME}/BJB_KATEGORI/BJL_KATEGORI.",
             }
         if len(kandidat_produk) > 1:
             return {
@@ -574,6 +625,32 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
     except Exception as exc:
         val1_out = {"ditemukan": False, "error": str(exc)}
 
+    # Form Serah Terima (FORM_ST_1) -- ditambahkan sebagai blok terpisah,
+    # tampil di ANTARA Validasi dan Barang Jadi Baru (lihat catatan_format
+    # di bawah). Cuma baris "masih di-antrian rewind" yang ditampilkan --
+    # lihat _filter_form_st_antrian_rewind.
+    form_st_out = {"ditemukan": False}
+    try:
+        _, form_st_rows_raw = _cari_produk_di_form_st(get_sheet_fn, query_tokens)
+        form_st_rows = _filter_form_st_antrian_rewind(form_st_rows_raw)
+        if form_st_rows:
+            form_st_out = {"ditemukan": True, "baris": form_st_rows}
+            for r in form_st_rows:
+                v = _col(r, "JO")
+                if v and str(v).strip():
+                    jo_set.add(str(v).strip())
+        else:
+            form_st_out = {
+                "ditemukan": False,
+                "pesan": (
+                    f"Tidak ada baris {FORM_ST1_SHEET_NAME} untuk produk ini "
+                    "yang masih di-antrian rewind (MASUK_REWIND terisi & "
+                    "HASIL_RIWEN masih kosong)."
+                ),
+            }
+    except Exception as exc:
+        form_st_out = {"ditemukan": False, "error": str(exc)}
+
     kategori_out = {}
     for label, sheet_name in GUDANG_KATEGORI_SHEETS.items():
         try:
@@ -605,25 +682,43 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
         "jumlah_jo_unik": len(jo_set),
         "daftar_jo": sorted(jo_set),
         "validasi": val1_out,
+        "form_st": form_st_out,
         "bjb": kategori_out.get("BJB", {"ditemukan": False}),
         "bjl": kategori_out.get("BJL", {"ditemukan": False}),
         "catatan_format": (
-            "Susun jawaban akhir PERSIS format ini (Bahasa Indonesia):\n"
+            "Susun jawaban akhir PERSIS format ini (Bahasa Indonesia), "
+            "URUTAN BLOK WAJIB: Validasi -> Form Serah Terima -> Barang "
+            "Jadi Baru (BJB) -> Barang Jadi Lama (BJL), JANGAN diubah "
+            "urutannya:\n"
             "Nama Produk : <nama_produk>\n"
             "JO : Kumpulan JO nya (Dinamis) <jumlah_jo_unik>\n\n"
             "Validasi:\n<tabel kolom AREA, JO, NAMA_PRODUK, JUMLAH, "
             "JUMLAH_MASUK_REWIND, KETERANGAN dari validasi.baris -- kalau "
             "validasi.ditemukan false, tulis 'Tidak ditemukan di VAL_1'>\n"
             "Total Stok : <validasi.total_stok>\n\n"
+            "Form Serah Terima:\n"
+            "<tabel dari form_st.baris kalau form_st.ditemukan true, kalau "
+            "false tulis persis form_st.pesan -- kolom tabelnya PERSIS "
+            "ini, urutan ini: TANGGAL, JO, NAMA_PRODUK, JUMLAH_MASUK_GBJ, "
+            "BERAT/KG, STATUS, MASUK_REWIND, HASIL_RIWEN, DARI_SLITTING -- "
+            "form_st.baris SUDAH difilter hanya baris yang masih "
+            "di-antrian rewind, tampilkan semua apa adanya tanpa filter "
+            "ulang>\n\n"
             "Barang Jadi Baru (BJB):\n"
             "<tabel dari bjb.baris kalau bjb.ditemukan true, kalau false "
             "tulis persis bjb.pesan -- PENTING: bjb.baris berasal dari "
-            "sheet BJB_KATEGORI (BUKAN sheet 'BJB' biasa), jadi kolom "
-            "tabelnya HARUS PERSIS mengikuti kolom asli sheet itu, dengan "
-            "urutan ini: CUSTOMER, UKURAN_PRODUK, PRODUK, SISA_STOCK_AKHIR, "
-            "BERAT_ROLL, JO_DAN_STATUS, KETERANGAN, JO, STATUS, KATEGORI -- "
-            "JANGAN pakai nama kolom dari blok Validasi (AREA/NAMA_PRODUK/"
-            "JUMLAH/JUMLAH_MASUK_REWIND) untuk tabel ini. bjb.baris SUDAH "
+            "sheet BJB_KATEGORI (BUKAN sheet 'BJB' biasa) dan berisi SEMUA "
+            "kolom asli sheet itu, tapi kamu WAJIB HANYA menampilkan 9 "
+            "kolom berikut, PERSIS urutan ini, dan PAKAI HEADER ALIAS di "
+            "tabel (bukan nama kolom aslinya) untuk 4 kolom yang ditandai "
+            "'->': AREA, UKURAN_PRODUK -> UK, PRODUK, SISA_STOCK_AKHIR -> "
+            "SISA, BERAT_ROLL -> Berat/Roll, JO_DAN_STATUS -> JO & STATUS, "
+            "KETERANGAN, STATUS, KATEGORI -- JANGAN tampilkan kolom lain "
+            "selain 9 ini (CUSTOMER, BERAT_TOTAL, JO, STATUS_BARANG, "
+            "JENIS_BARANG, TANGGAL_MASUK, dll TIDAK ditampilkan walau ada "
+            "di data mentahnya). JANGAN pakai nama kolom dari blok "
+            "Validasi (AREA di sini beda dari AREA Validasi, sama-sama "
+            "AREA tapi sumbernya beda sheet, itu wajar). bjb.baris SUDAH "
             "difilter -- hanya berisi baris dengan KATEGORI salah satu "
             "dari: BAIK, BISA_REWORK, BISA_REWIND, PERLU_REVIEW, jadi "
             "tampilkan SEMUA baris yang ada apa adanya, jangan filter "
@@ -631,26 +726,31 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "Total Stok Utuh : <bjb.total_stok_utuh>\n"
             "Perlu Review : <bjb.perlu_review>\n\n"
             "Barang Jadi Lama (BJL): sama persis seperti blok BJB di atas "
-            "(kolom tabel sama, dari sheet BJL_KATEGORI), pakai data dari "
-            "'bjl'.\n\n"
+            "(9 kolom + alias header yang sama, dari sheet BJL_KATEGORI), "
+            "pakai data dari 'bjl'.\n\n"
             "Catatan tampilan: JANGAN PERNAH memakai tag HTML apa pun "
             "(mis. <small>, <b>, <div>) di jawaban -- tampilan chat ini "
             "HANYA mendukung **bold** dan tabel gaya markdown "
             "(| kolom | kolom |), tag HTML lain akan tampil sebagai teks "
-            "mentah, bukan diformat. Kalau tabel BJB/BJL lebar, biarkan "
-            "saja apa adanya (tampilan chat sudah otomatis bisa "
-            "di-scroll ke samping), jangan memotong kolom/baris. "
-            "PENTING: semua baris data dalam SATU tabel (baris header, "
-            "separator |---|---|, dan SEMUA baris body-nya) HARUS "
-            "berurutan langsung baris demi baris, TANPA baris kosong "
-            "yang menyelip di tengah -- walaupun baris-baris itu berasal "
-            "dari entri/sumber yang berbeda-beda (mis. bjb.baris atau "
-            "bjl.baris berisi beberapa produk sekaligus). Kalau ada baris "
-            "kosong nyempil di tengah tabel, baris sesudahnya TIDAK akan "
-            "tampil sebagai tabel lagi, cuma jadi teks mentah dengan "
-            "tanda '|'. Baris kosong hanya boleh dipakai untuk memisahkan "
+            "mentah, bukan diformat. Kalau tabel lebar, biarkan saja apa "
+            "adanya (tampilan chat sudah otomatis bisa di-scroll ke "
+            "samping), jangan memotong kolom/baris. PENTING -- INI YANG "
+            "PALING SERING SALAH: semua baris data dalam SATU tabel "
+            "(baris header, separator |---|---|, dan SEMUA baris "
+            "body-nya) HARUS berurutan LANGSUNG baris demi baris, TANPA "
+            "SATU BARIS KOSONG PUN yang menyelip di tengah -- walaupun "
+            "baris-baris itu berasal dari entri/sumber yang berbeda-beda "
+            "(mis. bjb.baris atau bjl.baris berisi beberapa produk "
+            "sekaligus, atau baris terakhir dari satu tabel besar). Kalau "
+            "ada satu saja baris kosong nyempil di tengah tabel (termasuk "
+            "pas mau nutup tabel di baris terakhir), SISA baris "
+            "sesudahnya TIDAK akan tampil sebagai tabel lagi, cuma jadi "
+            "teks mentah dengan tanda '|' berantakan -- jadi tabel HARUS "
+            "satu blok utuh tanpa jeda dari header sampai baris paling "
+            "akhir. Baris kosong HANYA boleh dipakai untuk memisahkan "
             "antar-BLOK (mis. sesudah tabel selesai, sebelum 'Total Stok "
-            "Utuh :'), bukan di antara baris-baris tabel itu sendiri."
+            "Utuh :', atau sebelum nama blok berikutnya), bukan di dalam "
+            "tabel itu sendiri."
         ),
     }
 
@@ -1077,17 +1177,19 @@ TOOLS = [
         "function": {
             "name": "query_stok_gudang",
             "description": (
-                "Ambil rekap STOK AKHIR suatu produk dari VAL_1 (Validasi "
-                "Produksi) + BJB_KATEGORI (Barang Jadi Baru) + BJL_KATEGORI "
-                "(Barang Jadi Lama). Isi salah satu: 'produk' (nama yang "
-                "SUDAH dikonfirmasi lewat search_produk_gudang) ATAU 'jo' "
-                "(nomor JO -- kalau nomor itu ternyata dipakai lebih dari "
-                "satu produk berbeda di tahun berbeda, tool ini balikin "
-                "field 'ambigu'=true + daftar kandidat produk; user WAJIB "
-                "ditanya dulu mana yang dimaksud sebelum panggil ulang tool "
-                "ini dengan 'produk' yang sudah pasti). Hasilnya sudah "
+                "Ambil rekap STOK AKHIR suatu produk dari VAL_1 (Validasi), "
+                "FORM_ST_1 (Form Serah Terima, cuma baris yang masih "
+                "di-antrian rewind), BJB_KATEGORI (Barang Jadi Baru), dan "
+                "BJL_KATEGORI (Barang Jadi Lama). Isi salah satu: 'produk' "
+                "(nama yang SUDAH dikonfirmasi lewat search_produk_gudang) "
+                "ATAU 'jo' (nomor JO -- kalau nomor itu ternyata dipakai "
+                "lebih dari satu produk berbeda di tahun berbeda, tool ini "
+                "balikin field 'ambigu'=true + daftar kandidat produk; user "
+                "WAJIB ditanya dulu mana yang dimaksud sebelum panggil ulang "
+                "tool ini dengan 'produk' yang sudah pasti). Hasilnya sudah "
                 "termasuk field 'catatan_format' -- WAJIB diikuti persis "
-                "untuk menyusun jawaban akhir."
+                "untuk menyusun jawaban akhir, termasuk urutan blok "
+                "(Validasi -> Form Serah Terima -> BJB -> BJL)."
             ),
             "parameters": {
                 "type": "object",
@@ -1099,6 +1201,7 @@ TOOLS = [
         },
     },
 ]
+
 
 
 SYSTEM_PROMPT = (
@@ -1162,30 +1265,25 @@ SYSTEM_PROMPT = (
     "tetap masing-masing di baris sendiri -- intinya jawaban harus enak "
     "dibaca sebagai daftar ke bawah, bukan blok teks rapat.\n\n"
     "8. KHUSUS pertanyaan soal STOK/SISA STOK/STOCK AKHIR suatu produk "
-    "(bukan soal proses produksinya) -- pakai `search_produk_gudang` lalu "
-    "`query_stok_gudang`, JANGAN `search_produk`/`query_group` biasa "
-    "untuk ini, karena sumber datanya beda (VAL_1 + BJB_KATEGORI + "
-    "BJL_KATEGORI, bukan sheet proses seperti Printing/Dry/dll).\n"
+    "(bukan soal proses produksinya) -- gunakan alur berikut:\n"
     "8a. Kalau user sebut NAMA PRODUK: panggil `search_produk_gudang` "
-    "dulu. PENTING -- nama produk di data gudang SERING diawali kode "
-    "angka panjang yang memang bagian dari nama itu sendiri (mis. "
-    "'2016000095 ROL ROLLS RCE 5.5G (D3)'), BUKAN nomor JO. Kalau user "
-    "ketik string yang diawali angka lalu diikuti huruf/nama produk "
-    "(bukan format JO yang jelas seperti 'JO/23/...' atau cuma angka "
-    "polos pendek), coba dulu SELURUH string itu apa adanya sebagai "
-    "'keyword' ke `search_produk_gudang` -- jangan buru-buru memisah "
-    "angka di depan sebagai nomor JO. Kalau hasilnya lebih dari 1 nama, "
-    "WAJIB tampilkan daftarnya dan minta konfirmasi SEBELUM panggil "
-    "`query_stok_gudang`.\n"
+    "dulu untuk konfirmasi nama. PENTING -- nama produk di data gudang "
+    "SERING diawali kode angka panjang yang memang bagian dari nama itu "
+    "sendiri (mis. '2016000095 ROL ROLLS RCE 5.5G (D3)'), BUKAN nomor JO. "
+    "Kalau hasilnya lebih dari 1 nama, WAJIB tampilkan daftarnya dan minta "
+    "konfirmasi user. Setelah nama dikonfirmasi, panggil `query_stok_gudang` "
+    "dengan 'produk' (nama persis yang dikonfirmasi).\n"
     "8b. Kalau user sebut NOMOR JO: langsung panggil `query_stok_gudang` "
-    "dengan 'jo'. Kalau hasilnya field 'ambigu'=true (nomor JO itu dipakai "
-    "produk berbeda-beda), WAJIB tampilkan daftar 'kandidat_produk' dan "
-    "minta user pilih, baru panggil ulang `query_stok_gudang` dengan "
+    "dengan 'jo' -- tidak perlu search_produk_gudang dulu. Kalau nomor "
+    "JO itu ternyata dipakai lebih dari satu produk berbeda, tool ini "
+    "balikin 'ambigu'=true + daftar kandidat -- WAJIB tanya user dulu mana "
+    "yang dimaksud, JANGAN pilih sendiri, baru panggil ulang dengan "
     "'produk' yang sudah pasti.\n"
-    "8c. Hasil `query_stok_gudang` punya field 'catatan_format' -- WAJIB "
-    "diikuti PERSIS strukturnya untuk menyusun jawaban akhir (jangan "
-    "diringkas/diubah urutannya). Angka Total Stok/Total Stok Utuh/Perlu "
-    "Review dari tool ini sudah final, JANGAN dihitung ulang manual.\n"
+    "8c. Susun jawaban PERSIS mengikuti field 'catatan_format' dari hasil "
+    "`query_stok_gudang` -- termasuk URUTAN BLOK-nya: Validasi -> Form "
+    "Serah Terima -> Barang Jadi Baru (BJB) -> Barang Jadi Lama (BJL). "
+    "JANGAN diubah urutannya walau bagian mana yang 'ditemukan' berbeda "
+    "tiap kali.\n"
     "9. JANGAN PERNAH memakai tag HTML apa pun (mis. <small>, <b>, <br>, "
     "<div>) di jawaban mana pun -- tampilan chat cuma mendukung "
     "**bold**, tabel gaya markdown (| kolom | kolom |), dan baris baru "
