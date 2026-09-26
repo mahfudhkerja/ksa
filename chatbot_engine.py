@@ -421,6 +421,58 @@ def _cari_produk_di_form_st(get_sheet_fn, query_tokens):
 
 FORM_ST_REWIND_START_DATE = date(2026, 6, 30)  # 30 Juni 2026 -- baris TANGGAL sebelum ini diabaikan (histori lama, sudah tidak relevan buat antrian rewind)
 
+_INDO_BULAN = {
+    "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
+    "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
+    "desember": 12,
+}
+# Contoh isi kolom TANGGAL di FORM_ST_1: "Rabu, 01 April 2026" -- ini format
+# tampilan panjang ala-Indonesia bawaan Google Sheets (cell diformat "long
+# date" + locale id-ID), BUKAN format umum "DD-MM-YYYY"/"DD/MM/YYYY" yang
+# dipahami import_engine._parse_date_flexible (yang dipakai buat sheet lain
+# spt REWIND_PY_RAW). get_all_values() balikin teks PERSIS seperti yang
+# tampil di sel, jadi nama hari (opsional) + tanggal + nama bulan (huruf) +
+# tahun, dipisah koma & spasi.
+_TANGGAL_INDO_RE = re.compile(r"^(?:[A-Za-z]+,\s*)?(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$")
+
+
+def _parse_tanggal_indo_panjang(value):
+    """Parse "<Nama Hari opsional>, <DD> <Nama Bulan Indonesia> <YYYY>"
+    (mis. "Rabu, 01 April 2026") -> objek date, atau None kalau tidak cocok
+    pola ini sama sekali."""
+    t = str(value or "").strip()
+    if not t:
+        return None
+    m = _TANGGAL_INDO_RE.match(t)
+    if not m:
+        return None
+    day_str, bulan_str, year_str = m.groups()
+    bulan_num = _INDO_BULAN.get(bulan_str.strip().lower())
+    if not bulan_num:
+        return None
+    try:
+        return date(int(year_str), bulan_num, int(day_str))
+    except ValueError:
+        return None
+
+
+def _parse_tanggal_form_st(value):
+    """Coba import_engine._parse_date_flexible dulu (siapa tahu ada baris
+    lama yang formatnya beda, mis. DD-MM-YYYY biasa), baru fallback ke
+    _parse_tanggal_indo_panjang buat format "Rabu, 01 April 2026" yang
+    ternyata dipakai di kolom TANGGAL FORM_ST_1. Balikin None kalau
+    dua-duanya gagal."""
+    t = str(value or "").strip()
+    if not t:
+        return None
+    try:
+        tgl = import_engine._parse_date_flexible(t)
+    except Exception:
+        tgl = None
+    if tgl:
+        return tgl
+    return _parse_tanggal_indo_panjang(t)
+
 
 def _filter_form_st_antrian_rewind(rows):
     """SAMA PERSIS logika 'Cek Stok' di halaman Waste Rewind
@@ -435,16 +487,18 @@ def _filter_form_st_antrian_rewind(rows):
     (30 Juni 2026) -- baris lebih lama dari itu diabaikan sepenuhnya,
     dianggap histori lama yang tidak relevan lagi buat antrian rewind
     saat ini, walaupun MASUK_REWIND/HASIL_RIWEN-nya cocok kriteria di
-    atas. Kalau TANGGAL-nya kosong atau gagal di-parse, baris itu ikut
-    diabaikan juga (sama konservatifnya dengan pola tanggal sejenis di
-    app.py: _read_rewind_kecil_spk_jo / REWIND_KECIL_START_DATE)."""
+    atas. TANGGAL di-parse lewat _parse_tanggal_form_st (lihat itu --
+    formatnya "Rabu, 01 April 2026", bukan format umum). Kalau TANGGAL-nya
+    kosong atau gagal di-parse total, baris itu ikut diabaikan juga (sama
+    konservatifnya dengan pola tanggal sejenis di app.py:
+    _read_rewind_kecil_spk_jo / REWIND_KECIL_START_DATE)."""
     out = []
     for r in rows:
         if not _stok_cell_has_content(_col(r, "MASUK_REWIND")):
             continue
         if _stok_cell_has_content(_col(r, "HASIL_RIWEN")):
             continue
-        tgl = import_engine._parse_date_flexible(str(_col(r, "TANGGAL") or "").strip())
+        tgl = _parse_tanggal_form_st(_col(r, "TANGGAL"))
         if tgl is None or tgl < FORM_ST_REWIND_START_DATE:
             continue
         out.append(r)
