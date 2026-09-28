@@ -907,6 +907,12 @@
             <div class="nav-child" data-page="gudangBjb" onclick="go('gudangBjb', this)">Data Gudang BJB</div>
             <div class="nav-child" data-page="gudangBjl" onclick="go('gudangBjl', this)">Data Gudang BJL</div>
           </div>
+          <div class="nav-item" onclick="toggleGroup('g-kiriman')"><span class="ic">🚚</span> Kiriman</div>
+          <div class="nav-children" id="g-kiriman">
+            <div class="nav-child" data-page="kartuOrder" onclick="go('kartuOrder', this)">Kartu Order</div>
+            <div class="nav-child" data-page="historyPengiriman" onclick="go('historyPengiriman', this)">History Pengiriman</div>
+            <div class="nav-child" data-page="actionPlan" onclick="go('actionPlan', this)">Action Plan</div>
+          </div>
           <div class="nav-item" onclick="toggleGroup('g-fstl')"><span class="ic">🧾</span> FSTL</div>
           <div class="nav-children" id="g-fstl">
             <div class="nav-child" data-page="fstlWaste" onclick="go('fstlWaste', this)">Lampiran Waste</div>
@@ -1205,6 +1211,39 @@
                 </button>
               </div>
               <div id="gudangResult-gudangBjl" style="margin-top:10px; font-size:12.5px;"></div>
+            </div>
+          </div>
+
+          <!-- ==================== KIRIMAN — KARTU ORDER ==================== -->
+          <div class="page" id="page-kartuOrder" style="display:none">
+            <div class="card">
+              <h3>🚚 Kartu Order</h3>
+              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Kelola dan pantau kartu order pengiriman.</p>
+              <div style="margin-top:20px;">
+                <div class="empty"><span class="ic">📋</span>Halaman Kartu Order — segera hadir.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== KIRIMAN — HISTORY PENGIRIMAN ==================== -->
+          <div class="page" id="page-historyPengiriman" style="display:none">
+            <div class="card">
+              <h3>🚚 History Pengiriman</h3>
+              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Riwayat lengkap semua pengiriman yang telah dilakukan.</p>
+              <div style="margin-top:20px;">
+                <div class="empty"><span class="ic">📦</span>Halaman History Pengiriman — segera hadir.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== KIRIMAN — ACTION PLAN ==================== -->
+          <div class="page" id="page-actionPlan" style="display:none">
+            <div class="card">
+              <h3>🚚 Action Plan</h3>
+              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Rencana tindakan untuk pengiriman dan distribusi.</p>
+              <div style="margin-top:20px;">
+                <div class="empty"><span class="ic">📝</span>Halaman Action Plan — segera hadir.</div>
+              </div>
             </div>
           </div>
 
@@ -1545,7 +1584,7 @@
     document.querySelectorAll(".page").forEach(p=>p.style.display="none");
     const pg = document.getElementById("page-"+page);
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
-    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
+    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", kartuOrder:"Kartu Order", historyPengiriman:"History Pengiriman", actionPlan:"Action Plan", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
     if(page === "produksi"){ loadProduksiSources(); loadScriptList(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
     if(page === "validasi") loadValidasi();
