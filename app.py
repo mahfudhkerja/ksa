@@ -4541,6 +4541,312 @@ def chatbot_reset():
 
 
 # --------------------------------------------------------------------------
+# CHATBOT — CEK STOK (endpoint khusus chatbot, support via JO ATAU nama produk)
+# Kolom lebih lengkap dari modal Waste Rewind, sesuai header yang diminta:
+#   Validasi : NO, TANGGAL, SHIFT, CHECK, AREA, JO_DIGIT, JO, NAMA_PRODUK,
+#              JUMLAH, JUMLAH_MASUK_REWIND, KETERANGAN
+#   Form ST  : TANGGAL, SHIFT, JO_DIGIT, JO, NAMA_PRODUK, JUMLAH_MASUK_GBJ,
+#              BERAT/KG, STATUS, MASUK_REWIND, HASIL_RIWEN, DARI_SLITTING
+#   BJB/BJL  : CUSTOMER, UKURAN_PRODUK, PRODUK, SISA_STOCK_AKHIR, BERAT_ROLL,
+#              BERAT_TOTAL, JO_DAN_STATUS, STATUS_BARANG, JENIS_BARANG,
+#              KETERANGAN, JO, STATUS, TANGGAL_MASUK, KATEGORI
+# --------------------------------------------------------------------------
+
+# Kolom lengkap untuk chatbot cek stok
+_CB_STOK_VAL_COLUMNS = (
+    "NO", "TANGGAL", "SHIFT", "CHECK", "AREA", "JO_DIGIT", "JO",
+    "NAMA_PRODUK", "JUMLAH", "JUMLAH_MASUK_REWIND", "KETERANGAN",
+)
+_CB_STOK_FORMST_COLUMNS = (
+    "TANGGAL", "SHIFT", "JO_DIGIT", "JO", "NAMA_PRODUK",
+    "JUMLAH_MASUK_GBJ", "BERAT/KG", "STATUS",
+    "MASUK_REWIND", "HASIL_RIWEN", "DARI_SLITTING",
+)
+_CB_STOK_KATEGORI_COLUMNS = (
+    "CUSTOMER", "UKURAN_PRODUK", "PRODUK", "SISA_STOCK_AKHIR",
+    "BERAT_ROLL", "BERAT_TOTAL", "JO_DAN_STATUS", "STATUS_BARANG",
+    "JENIS_BARANG", "KETERANGAN", "JO", "STATUS", "TANGGAL_MASUK", "KATEGORI",
+)
+
+_CB_STOK_COL_KEYWORDS = {
+    "NO": ("NO",),
+    "TANGGAL": ("TANGGAL",),
+    "SHIFT": ("SHIFT",),
+    "CHECK": ("CHECK",),
+    "AREA": ("AREA",),
+    "JO_DIGIT": ("JO_DIGIT",),
+    "JO": ("JO",),
+    "NAMA_PRODUK": ("NAMA_PRODUK", "NAMA PRODUK", "NAMA", "PRODUK"),
+    "JUMLAH": ("JUMLAH",),
+    "JUMLAH_MASUK_REWIND": ("JUMLAH_MASUK_REWIND", "JUMLAH MASUK REWIND"),
+    "KETERANGAN": ("KETERANGAN",),
+    "JO_DIGIT": ("JO_DIGIT",),
+    "JUMLAH_MASUK_GBJ": ("JUMLAH_MASUK_GBJ", "JUMLAH MASUK GBJ", "JUMLAH_MASUK"),
+    "BERAT/KG": ("BERAT/KG", "BERAT_KG", "BERAT KG", "BERAT"),
+    "STATUS": ("STATUS",),
+    "MASUK_REWIND": ("MASUK_REWIND", "MASUK REWIND"),
+    "HASIL_RIWEN": ("HASIL_RIWEN", "HASIL RIWEN"),
+    "DARI_SLITTING": ("DARI_SLITTING", "DARI SLITTING"),
+    "CUSTOMER": ("CUSTOMER",),
+    "UKURAN_PRODUK": ("UKURAN_PRODUK", "UKURAN PRODUK"),
+    "PRODUK": ("PRODUK",),
+    "SISA_STOCK_AKHIR": ("SISA_STOCK_AKHIR", "SISA STOCK AKHIR"),
+    "BERAT_ROLL": ("BERAT_ROLL", "BERAT ROLL"),
+    "BERAT_TOTAL": ("BERAT_TOTAL", "BERAT TOTAL"),
+    "JO_DAN_STATUS": ("JO_DAN_STATUS", "JO DAN STATUS"),
+    "STATUS_BARANG": ("STATUS_BARANG", "STATUS BARANG"),
+    "JENIS_BARANG": ("JENIS_BARANG", "JENIS BARANG"),
+    "TANGGAL_MASUK": ("TANGGAL_MASUK", "TANGGAL MASUK"),
+    "KATEGORI": ("KATEGORI",),
+}
+
+
+def _cb_stok_col(header, field_name):
+    """Cari index kolom (0-based) pakai keywords chatbot stok."""
+    keywords = _CB_STOK_COL_KEYWORDS.get(field_name, (field_name,))
+    return _fstl_find_col(header, *keywords)
+
+
+def _cb_stok_cell(row, col_idx):
+    return row[col_idx].strip() if col_idx is not None and col_idx < len(row) else ""
+
+
+def _cb_produk_tokens(value):
+    """Normalisasi nama produk jadi string padat tanpa spasi/tanda baca."""
+    import re as _re
+    if value is None:
+        return ""
+    s = str(value).upper()
+    return _re.sub(r"[^A-Z0-9]", "", s)
+
+
+def _cb_produk_match(query_tokens, row_tokens):
+    """True kalau query ada di dalam row atau sebaliknya (loose match)."""
+    if not query_tokens or not row_tokens:
+        return False
+    return query_tokens in row_tokens or row_tokens in query_tokens
+
+
+def _cb_stok_val1_by_jo(target_suffix):
+    """Cari di VAL_2 berdasar suffix JO — kolom lengkap versi chatbot."""
+    ws = _stok_spreadsheet_b().worksheet("VAL_2")
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": "Sheet VAL_2 kosong.", "total_stok": ""}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _cb_stok_col(header, f) for f in _CB_STOK_VAL_COLUMNS}
+    col_jo = cols["JO"]
+    if col_jo is None:
+        return {"ditemukan": False, "rows": [], "pesan": "Kolom JO tidak ketemu di VAL_2.", "total_stok": ""}
+    rows_out = []
+    for row in values[1:]:
+        jo_cell = _cb_stok_cell(row, col_jo)
+        if not jo_cell or _fstl_suffix_key(jo_cell) != target_suffix:
+            continue
+        rows_out.append({f: _cb_stok_cell(row, cols[f]) for f in _CB_STOK_VAL_COLUMNS})
+    if not rows_out:
+        return {"ditemukan": False, "rows": [], "pesan": f"JO '{target_suffix}' tidak ditemukan di VAL_2.", "total_stok": ""}
+    return {"ditemukan": True, "rows": rows_out, "pesan": None, "total_stok": ""}
+
+
+def _cb_stok_val1_by_nama(nama_tokens):
+    """Cari di VAL_2 berdasar nama produk — kolom lengkap versi chatbot."""
+    ws = _stok_spreadsheet_b().worksheet("VAL_2")
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": "Sheet VAL_2 kosong.", "total_stok": ""}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _cb_stok_col(header, f) for f in _CB_STOK_VAL_COLUMNS}
+    col_nama = cols["NAMA_PRODUK"]
+    if col_nama is None:
+        return {"ditemukan": False, "rows": [], "pesan": "Kolom NAMA_PRODUK tidak ketemu di VAL_2.", "total_stok": ""}
+    rows_out = []
+    for row in values[1:]:
+        nama_cell = _cb_stok_cell(row, col_nama)
+        if not _cb_produk_match(nama_tokens, _cb_produk_tokens(nama_cell)):
+            continue
+        rows_out.append({f: _cb_stok_cell(row, cols[f]) for f in _CB_STOK_VAL_COLUMNS})
+    if not rows_out:
+        return {"ditemukan": False, "rows": [], "pesan": "Nama produk tidak ditemukan di VAL_2.", "total_stok": ""}
+    return {"ditemukan": True, "rows": rows_out, "pesan": None, "total_stok": ""}
+
+
+def _cb_stok_formst_by_jo(target_suffix):
+    """Cari di FORM_ST_2 berdasar suffix JO — kolom lengkap versi chatbot.
+    Tampilkan SEMUA baris (tidak filter MASUK_REWIND seperti Waste Rewind)."""
+    ws = _stok_spreadsheet_b().worksheet("FORM_ST_2")
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet FORM_ST_2 kosong."}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _cb_stok_col(header, f) for f in _CB_STOK_FORMST_COLUMNS}
+    col_jo = cols["JO"]
+    if col_jo is None:
+        return {"ditemukan": False, "rows": [], "pesan": "Kolom JO tidak ketemu di FORM_ST_2."}
+    rows_out = []
+    for row in values[1:]:
+        jo_cell = _cb_stok_cell(row, col_jo)
+        if not jo_cell or jo_cell == "-" or _fstl_suffix_key(jo_cell) != target_suffix:
+            continue
+        rows_out.append({f: _cb_stok_cell(row, cols[f]) for f in _CB_STOK_FORMST_COLUMNS})
+    if not rows_out:
+        return {"ditemukan": False, "rows": [], "pesan": f"JO '{target_suffix}' tidak ditemukan di FORM_ST_2."}
+    return {"ditemukan": True, "rows": rows_out, "pesan": None}
+
+
+def _cb_stok_formst_by_nama(nama_tokens):
+    """Cari di FORM_ST_2 berdasar nama produk — kolom lengkap versi chatbot."""
+    ws = _stok_spreadsheet_b().worksheet("FORM_ST_2")
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet FORM_ST_2 kosong."}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _cb_stok_col(header, f) for f in _CB_STOK_FORMST_COLUMNS}
+    col_nama = cols["NAMA_PRODUK"]
+    if col_nama is None:
+        return {"ditemukan": False, "rows": [], "pesan": "Kolom NAMA_PRODUK tidak ketemu di FORM_ST_2."}
+    rows_out = []
+    for row in values[1:]:
+        nama_cell = _cb_stok_cell(row, col_nama)
+        if not _cb_produk_match(nama_tokens, _cb_produk_tokens(nama_cell)):
+            continue
+        rows_out.append({f: _cb_stok_cell(row, cols[f]) for f in _CB_STOK_FORMST_COLUMNS})
+    if not rows_out:
+        return {"ditemukan": False, "rows": [], "pesan": "Nama produk tidak ditemukan di FORM_ST_2."}
+    return {"ditemukan": True, "rows": rows_out, "pesan": None}
+
+
+def _cb_stok_kategori(sheet_name, target_suffix=None, target_tahun=None, nama_tokens=None):
+    """Cari di BJB_KATEGORI / BJL_KATEGORI — kolom lengkap versi chatbot.
+    Bisa via JO (target_suffix + target_tahun) ATAU via nama produk (nama_tokens)."""
+    try:
+        ws = _stok_spreadsheet_b().worksheet(sheet_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet {sheet_name} tidak ditemukan.",
+                "total_stok_utuh": "", "perlu_review": 0}
+    values = ws.get_all_values()
+    if not values:
+        return {"ditemukan": False, "rows": [], "pesan": f"Sheet {sheet_name} kosong.",
+                "total_stok_utuh": "", "perlu_review": 0}
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _cb_stok_col(header, f) for f in _CB_STOK_KATEGORI_COLUMNS}
+
+    rows_out = []
+    total_stok_utuh = 0.0
+    ada_angka = False
+    review_count = 0
+
+    for row in values[1:]:
+        if nama_tokens:
+            # Mode pencarian nama produk
+            produk_cell = _cb_stok_cell(row, cols["PRODUK"])
+            if not _cb_produk_match(nama_tokens, _cb_produk_tokens(produk_cell)):
+                continue
+        else:
+            # Mode pencarian JO
+            col_jo = cols["JO"]
+            if col_jo is None:
+                continue
+            jo_cell = _cb_stok_cell(row, col_jo)
+            if not jo_cell or jo_cell == "-":
+                continue
+            suffix = _fstl_suffix_key(jo_cell)
+            if not suffix or suffix != target_suffix:
+                continue
+            jo_dan_status = _cb_stok_cell(row, cols["JO_DAN_STATUS"])
+            tahun_baris = _stok_extract_tahun(jo_dan_status) or _stok_extract_tahun(jo_cell)
+            if target_tahun and tahun_baris and tahun_baris != target_tahun:
+                continue
+
+        kategori = _cb_stok_cell(row, cols["KATEGORI"])
+        sisa = _cb_stok_cell(row, cols["SISA_STOCK_AKHIR"])
+        num = import_engine._parse_flexible_number(sisa) if sisa else None
+        if isinstance(num, (int, float)):
+            total_stok_utuh += num
+            ada_angka = True
+        if kategori.strip().upper() == "PERLU_REVIEW":
+            review_count += 1
+
+        rows_out.append({f: _cb_stok_cell(row, cols[f]) for f in _CB_STOK_KATEGORI_COLUMNS})
+
+    if not rows_out:
+        msg = f"Tidak ditemukan baris di {sheet_name}"
+        if target_suffix:
+            msg += f" dengan JO '{target_suffix}'" + (f" tahun {target_tahun}" if target_tahun else "")
+        else:
+            msg += " untuk produk ini"
+        msg += "."
+        return {"ditemukan": False, "rows": [], "pesan": msg, "total_stok_utuh": "", "perlu_review": 0}
+    return {
+        "ditemukan": True,
+        "rows": rows_out,
+        "pesan": None,
+        "total_stok_utuh": total_stok_utuh if ada_angka else "",
+        "perlu_review": review_count,
+    }
+
+
+@app.route("/api/chatbot/cek-stok", methods=["POST"])
+def chatbot_cek_stok():
+    """Endpoint untuk chatbot: cek stok via JO atau nama produk.
+    Body: {"jo": "3034"} ATAU {"nama": "RCE 56G D3"}
+    Return: validasi, form_st, bjb, bjl dengan kolom lengkap."""
+    body = request.get_json(force=True) or {}
+    jo_input = str(body.get("jo", "")).strip()
+    nama_input = str(body.get("nama", "")).strip()
+
+    if not jo_input and not nama_input:
+        return jsonify({"success": False, "message": "Isi salah satu: 'jo' atau 'nama'."}), 400
+
+    try:
+        if jo_input:
+            # Pencarian via JO
+            import re as _re
+            # Ambil suffix angka
+            target_suffix = re.sub(r"\D", "", jo_input.rsplit("/", 1)[-1]) if "/" in jo_input else re.sub(r"\D", "", jo_input)
+            if not target_suffix:
+                return jsonify({"success": False, "message": f"Format JO '{jo_input}' tidak bisa dibaca angkanya."}), 400
+            target_tahun = _stok_extract_tahun(jo_input)
+
+            validasi_out = _cb_stok_val1_by_jo(target_suffix)
+            form_st_out = _cb_stok_formst_by_jo(target_suffix)
+            bjb_out = _cb_stok_kategori(BJB_KATEGORI_SHEET_NAME, target_suffix=target_suffix, target_tahun=target_tahun)
+            bjl_out = _cb_stok_kategori(BJL_KATEGORI_SHEET_NAME, target_suffix=target_suffix, target_tahun=target_tahun)
+
+            return jsonify({
+                "success": True,
+                "mode": "jo",
+                "query": jo_input,
+                "validasi": validasi_out,
+                "form_st": form_st_out,
+                "bjb": bjb_out,
+                "bjl": bjl_out,
+            })
+        else:
+            # Pencarian via nama produk
+            nama_tokens = _cb_produk_tokens(nama_input)
+            if not nama_tokens:
+                return jsonify({"success": False, "message": "Nama produk tidak valid."}), 400
+
+            validasi_out = _cb_stok_val1_by_nama(nama_tokens)
+            form_st_out = _cb_stok_formst_by_nama(nama_tokens)
+            bjb_out = _cb_stok_kategori(BJB_KATEGORI_SHEET_NAME, nama_tokens=nama_tokens)
+            bjl_out = _cb_stok_kategori(BJL_KATEGORI_SHEET_NAME, nama_tokens=nama_tokens)
+
+            return jsonify({
+                "success": True,
+                "mode": "nama",
+                "query": nama_input,
+                "validasi": validasi_out,
+                "form_st": form_st_out,
+                "bjb": bjb_out,
+                "bjl": bjl_out,
+            })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
+
+
+# --------------------------------------------------------------------------
 # HEALTH CHECK (untuk memastikan servis & koneksi sheet hidup)
 # --------------------------------------------------------------------------
 @app.route("/api/health", methods=["GET"])

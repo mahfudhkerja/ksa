@@ -207,14 +207,13 @@ def _compute_slitting_summary(raw_rows):
 
 
 # --------------------------------------------------------------------------
-# STOK GUDANG (VAL_1 + BJB_KATEGORI/BJL_KATEGORI) — TERPISAH dari
+# STOK GUDANG (VAL_2 + BJB_KATEGORI/BJL_KATEGORI) — TERPISAH dari
 # SHEET_GROUPS di bawah karena dua alasan:
-#   1. VAL_1 ada di spreadsheet MASTER (sama seperti sheet produksi lain,
-#      diakses lewat get_sheet_fn), tapi BJB_KATEGORI/BJL_KATEGORI ada di
-#      spreadsheet lain ("GUDANG API") -- jadi dibaca lewat klien gspread
-#      sendiri (_get_gudang_spreadsheet), bukan get_sheet_fn.
+#   1. VAL_2, FORM_ST_2, BJB_KATEGORI & BJL_KATEGORI semuanya ada di
+#      spreadsheet "GUDANG API" (GUDANG_SPREADSHEET_ID) -- dibaca lewat
+#      klien gspread sendiri (_get_gudang_spreadsheet), bukan get_sheet_fn.
 #   2. Cara menjumlahkan totalnya juga beda dari grup produksi biasa:
-#      - VAL_1: Total Stok = jumlah kolom JUMLAH + gabungan kolom
+#      - VAL_2: Total Stok = jumlah kolom JUMLAH + gabungan kolom
 #        JUMLAH_MASUK_REWIND (format campuran polos/'N@panjang', pakai
 #        import_engine._combine_number_terms -- rumus SAMA PERSIS yang
 #        dipakai buat kolom HASIL SLITTING).
@@ -266,6 +265,16 @@ def _get_gudang_spreadsheet():
         gc = gspread.service_account(filename=GUDANG_CREDENTIALS_FILE)
         _gudang_spreadsheet = gc.open_by_key(GUDANG_SPREADSHEET_ID)
     return _gudang_spreadsheet
+
+
+VAL_SHEET_NAME = "VAL_2"        # tab Validasi di spreadsheet Gudang (GUDANG_SPREADSHEET_ID)
+FORM_ST_SHEET_NAME = "FORM_ST_2"  # tab Form Serah Terima di spreadsheet Gudang
+
+
+def _get_gudang_sheet(sheet_name):
+    """Buka 1 tab di spreadsheet Gudang (VAL_2 / FORM_ST_2 / BJB_KATEGORI /
+    BJL_KATEGORI -- semuanya 1 spreadsheet yang sama)."""
+    return _get_gudang_spreadsheet().worksheet(sheet_name)
 
 
 _CELL_NEWLINE_RE = re.compile(r"[\r\n]+")
@@ -384,36 +393,35 @@ def _ringkas_total_roll(items):
 
 
 def _cari_produk_di_val1(get_sheet_fn, query_tokens):
-    ws = get_sheet_fn("VAL_1")
+    ws = _get_gudang_sheet(VAL_SHEET_NAME)
     header, rows = _sheet_to_dicts(ws)
     matched = [r for r in rows if _produk_tokens_match(query_tokens, _produk_tokens(_col(r, "NAMA_PRODUK")))]
     return header, matched
 
 
 def _cari_jo_di_val1(get_sheet_fn, target_jo_suffix):
-    ws = get_sheet_fn("VAL_1")
+    ws = _get_gudang_sheet(VAL_SHEET_NAME)
     header, rows = _sheet_to_dicts(ws)
     matched = [r for r in rows if normalize_jo(_col(r, "JO")) == target_jo_suffix]
     return header, matched
 
 
-FORM_ST1_SHEET_NAME = "FORM_ST_1"
+FORM_ST1_SHEET_NAME = FORM_ST_SHEET_NAME  # alias lama, isinya sekarang FORM_ST_2
 
 
 def _stok_cell_has_content(value):
     """True kalau isi sel beneran ada (bukan kosong / '-') -- dipakai buat
-    filter FORM_ST_1 di bawah, SAMA PERSIS definisi 'ada isi' yang dipakai
+    filter FORM_ST_2 di bawah, SAMA PERSIS definisi 'ada isi' yang dipakai
     fitur Cek Stok di halaman Waste Rewind (app.py: _stok_has_content)."""
     t = str(value or "").strip()
     return bool(t) and t != "-"
 
 
 def _cari_produk_di_form_st(get_sheet_fn, query_tokens):
-    """FORM_ST_1 (Form Serah Terima) ada di spreadsheet MASTER yang sama
-    dengan VAL_1 (diakses lewat get_sheet_fn juga -- bukan spreadsheet
-    'GUDANG API' terpisah tempat BJB_KATEGORI/BJL_KATEGORI berada).
-    Kolom nama produknya "NAMA_PRODUK", sama seperti VAL_1."""
-    ws = get_sheet_fn(FORM_ST1_SHEET_NAME)
+    """FORM_ST_2 (Form Serah Terima) ada di spreadsheet GUDANG yang sama
+    dengan VAL_2, BJB_KATEGORI & BJL_KATEGORI (lewat _get_gudang_sheet).
+    Kolom nama produknya "NAMA_PRODUK", sama seperti VAL_2."""
+    ws = _get_gudang_sheet(FORM_ST_SHEET_NAME)
     header, rows = _sheet_to_dicts(ws)
     matched = [r for r in rows if _produk_tokens_match(query_tokens, _produk_tokens(_col(r, "NAMA_PRODUK")))]
     return header, matched
@@ -426,7 +434,7 @@ _INDO_BULAN = {
     "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
     "desember": 12,
 }
-# Contoh isi kolom TANGGAL di FORM_ST_1: "Rabu, 01 April 2026" -- ini format
+# Contoh isi kolom TANGGAL di FORM_ST_2: "Rabu, 01 April 2026" -- ini format
 # tampilan panjang ala-Indonesia bawaan Google Sheets (cell diformat "long
 # date" + locale id-ID), BUKAN format umum "DD-MM-YYYY"/"DD/MM/YYYY" yang
 # dipahami import_engine._parse_date_flexible (yang dipakai buat sheet lain
@@ -460,7 +468,7 @@ def _parse_tanggal_form_st(value):
     """Coba import_engine._parse_date_flexible dulu (siapa tahu ada baris
     lama yang formatnya beda, mis. DD-MM-YYYY biasa), baru fallback ke
     _parse_tanggal_indo_panjang buat format "Rabu, 01 April 2026" yang
-    ternyata dipakai di kolom TANGGAL FORM_ST_1. Balikin None kalau
+    ternyata dipakai di kolom TANGGAL FORM_ST_2. Balikin None kalau
     dua-duanya gagal."""
     t = str(value or "").strip()
     if not t:
@@ -476,7 +484,7 @@ def _parse_tanggal_form_st(value):
 
 def _filter_form_st_antrian_rewind(rows):
     """SAMA PERSIS logika 'Cek Stok' di halaman Waste Rewind
-    (app.py: _wrw_cek_stok_form_st) -- baris FORM_ST_1 cuma ditampilkan
+    (app.py: _wrw_cek_stok_form_st) -- baris FORM_ST_2 cuma ditampilkan
     kalau MASUK_REWIND ada isinya (angka ATAUPUN teks apa saja, bukan
     cuma '-'/kosong) DAN HASIL_RIWEN masih kosong/'-' (berarti masih
     di-antrian rewind, belum ada hasilnya). Baris yang HASIL_RIWEN-nya
@@ -518,7 +526,7 @@ def _tambah_suffix_roll(combined):
 
 
 def _ringkas_val1_rows(rows):
-    """Total Stok VAL_1 = gabungan SEMUA isi kolom JUMLAH + gabungan
+    """Total Stok VAL_2 = gabungan SEMUA isi kolom JUMLAH + gabungan
     semua isi kolom JUMLAH_MASUK_REWIND, keduanya dihitung pakai
     import_engine._combine_number_terms (rumus SAMA PERSIS dengan kolom
     HASIL SLITTING di sheet Validasi).
@@ -586,11 +594,11 @@ def _ringkas_kategori_rows(rows):
 
 def search_produk_gudang(get_sheet_fn, keyword):
     """Cari nama produk unik yang cocok `keyword` di TIGA sumber
-    sekaligus: VAL_1 (spreadsheet master) + BJB_KATEGORI + BJL_KATEGORI
+    sekaligus: VAL_2 (spreadsheet master) + BJB_KATEGORI + BJL_KATEGORI
     (spreadsheet GUDANG API terpisah) -- dipanggil SEBELUM
     query_stok_gudang untuk konfirmasi. Ambigu bisa muncul dari sumber
     manapun (mis. varian D3 vs D4 baru kelihatan bedanya di BJB_KATEGORI,
-    walau di VAL_1 cuma ketemu satu nama)."""
+    walau di VAL_2 cuma ketemu satu nama)."""
     query_tokens = _produk_tokens(keyword)
     if not query_tokens:
         return {"error": "Kata kunci nama produk kosong."}
@@ -604,7 +612,7 @@ def search_produk_gudang(get_sheet_fn, keyword):
             if nama:
                 found.add(nama)
     except Exception as exc:
-        errors.append(f"VAL_1: {exc}")
+        errors.append(f"VAL_2: {exc}")
 
     for sheet_name in GUDANG_KATEGORI_SHEETS.values():
         try:
@@ -634,7 +642,7 @@ def search_produk_gudang(get_sheet_fn, keyword):
 
 
 def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
-    """Ambil rekap stok akhir suatu produk dari VAL_1 (Validasi Produksi)
+    """Ambil rekap stok akhir suatu produk dari VAL_2 (Validasi Produksi)
     + BJB_KATEGORI + BJL_KATEGORI (Barang Jadi Baru/Lama). Isi salah
     satu:
     - 'produk': nama yang SUDAH dikonfirmasi lewat search_produk_gudang.
@@ -659,12 +667,12 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             nama = str(_col(r, "NAMA_PRODUK") or "").strip()
             if nama:
                 kandidat_produk.add(nama)
-        # FORM_ST_1 diikutkan juga sebagai sumber kandidat produk -- biar
-        # konsisten sama VAL_1/BJB/BJL (kadang satu JO cuma kelihatan
-        # produknya di Form Serah Terima, belum masuk VAL_1/BJB/BJL sama
+        # FORM_ST_2 diikutkan juga sebagai sumber kandidat produk -- biar
+        # konsisten sama VAL_2/BJB/BJL (kadang satu JO cuma kelihatan
+        # produknya di Form Serah Terima, belum masuk VAL_2/BJB/BJL sama
         # sekali kalau baru diserahterimakan).
         try:
-            ws_formst = get_sheet_fn(FORM_ST1_SHEET_NAME)
+            ws_formst = _get_gudang_sheet(FORM_ST_SHEET_NAME)
             _, formst_all_rows = _sheet_to_dicts(ws_formst)
             formst_jo_rows = [r for r in formst_all_rows if normalize_jo(_col(r, "JO")) == target_jo]
         except Exception:
@@ -687,7 +695,7 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             return {
                 "jo": jo,
                 "ditemukan": False,
-                "pesan": f"JO '{jo}' tidak ditemukan di VAL_1/{FORM_ST1_SHEET_NAME}/BJB_KATEGORI/BJL_KATEGORI.",
+                "pesan": f"JO '{jo}' tidak ditemukan di VAL_2/{FORM_ST1_SHEET_NAME}/BJB_KATEGORI/BJL_KATEGORI.",
             }
         if len(kandidat_produk) > 1:
             return {
@@ -721,7 +729,7 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
     except Exception as exc:
         val1_out = {"ditemukan": False, "error": str(exc)}
 
-    # Form Serah Terima (FORM_ST_1) -- ditambahkan sebagai blok terpisah,
+    # Form Serah Terima (FORM_ST_2) -- ditambahkan sebagai blok terpisah,
     # tampil di ANTARA Validasi dan Barang Jadi Baru (lihat catatan_format
     # di bawah). Cuma baris "masih di-antrian rewind" yang ditampilkan --
     # lihat _filter_form_st_antrian_rewind.
@@ -790,7 +798,7 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "JO : Kumpulan JO nya (Dinamis) <jumlah_jo_unik>\n\n"
             "Validasi:\n<tabel kolom AREA, JO, NAMA_PRODUK, JUMLAH, "
             "JUMLAH_MASUK_REWIND, KETERANGAN dari validasi.baris -- kalau "
-            "validasi.ditemukan false, tulis 'Tidak ditemukan di VAL_1'>\n"
+            "validasi.ditemukan false, tulis 'Tidak ditemukan di VAL_2'>\n"
             "Total Stok : <validasi.total_stok>\n\n"
             "Form Serah Terima:\n"
             "<tabel dari form_st.baris kalau form_st.ditemukan true, kalau "
@@ -1249,7 +1257,7 @@ TOOLS = [
         "function": {
             "name": "search_produk_gudang",
             "description": (
-                "Cari nama produk di data STOK GUDANG (VAL_1 = Validasi "
+                "Cari nama produk di data STOK GUDANG (VAL_2 = Validasi "
                 "Produksi, BJB_KATEGORI = Barang Jadi Baru, BJL_KATEGORI = "
                 "Barang Jadi Lama) -- BEDA dari search_produk biasa (yang "
                 "nyari di sheet proses produksi seperti Printing/Dry/dll). "
@@ -1257,7 +1265,7 @@ TOOLS = [
                 "user tanya soal STOK/SISA STOK/STOCK AKHIR suatu produk. "
                 "Balikin daftar nama produk unik yang cocok, dicek "
                 "ambiguitasnya lintas ketiga sumber sekaligus (varian mirip "
-                "kadang cuma kelihatan beda di BJB/BJL, bukan di VAL_1)."
+                "kadang cuma kelihatan beda di BJB/BJL, bukan di VAL_2)."
             ),
             "parameters": {
                 "type": "object",
@@ -1273,8 +1281,8 @@ TOOLS = [
         "function": {
             "name": "query_stok_gudang",
             "description": (
-                "Ambil rekap STOK AKHIR suatu produk dari VAL_1 (Validasi), "
-                "FORM_ST_1 (Form Serah Terima, cuma baris yang masih "
+                "Ambil rekap STOK AKHIR suatu produk dari VAL_2 (Validasi), "
+                "FORM_ST_2 (Form Serah Terima, cuma baris yang masih "
                 "di-antrian rewind), BJB_KATEGORI (Barang Jadi Baru), dan "
                 "BJL_KATEGORI (Barang Jadi Lama). Isi salah satu: 'produk' "
                 "(nama yang SUDAH dikonfirmasi lewat search_produk_gudang) "
