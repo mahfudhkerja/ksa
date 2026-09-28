@@ -117,7 +117,13 @@
      pointer-events:none nyegah onclick-nya kepencet sama sekali. */
   .nav-item.nav-disabled, .nav-child.nav-disabled{opacity:.38; cursor:not-allowed; pointer-events:none; filter:grayscale(.4);}
   .nav-children{margin:2px 0 6px 30px; max-height:0; overflow:hidden; transition: max-height .25s var(--ease);}
-  .nav-children.open{max-height:200px;}
+  .nav-children.open{max-height:400px;}
+  /* Sub-group di dalam nav-children (mis. Kartu Order > Reguler/Forisa/DDCT) */
+  .nav-sub-header{padding:9px 11px; margin-bottom:3px; border-radius:8px; cursor:pointer; font-size:12.5px; color:var(--ink); font-weight:700; transition: all .15s var(--ease);}
+  .nav-sub-header:hover{background:var(--blue-50); color:var(--blue-dark);}
+  .nav-sub-header .ic-arrow{font-size:9px; margin-left:4px; display:inline-block; transition:transform .2s var(--ease);}
+  .nav-sub-children{margin:2px 0 4px 16px; max-height:0; overflow:hidden; transition: max-height .25s var(--ease);}
+  .nav-sub-children.open{max-height:200px;}
   .nav-child{padding:9px 11px; margin-bottom:3px; border-radius:8px; cursor:pointer; font-size:12.5px; color:var(--ink-soft); font-weight:600; transition: all .15s var(--ease); border-left:2px solid transparent;}
   .nav-child:hover{background:var(--blue-50); color:var(--blue-dark); border-left-color:var(--blue-200);}
   .nav-child.active{background:var(--blue-100); color:var(--blue-dark); border-left-color:var(--blue);}
@@ -909,7 +915,12 @@
           </div>
           <div class="nav-item" onclick="toggleGroup('g-kiriman')"><span class="ic">🚚</span> Kiriman</div>
           <div class="nav-children" id="g-kiriman">
-            <div class="nav-child" data-page="kartuOrder" onclick="go('kartuOrder', this)">Kartu Order</div>
+            <div class="nav-sub-header" onclick="toggleSubGroup('gs-kartuOrder')">Kartu Order <span class="ic-arrow">▶</span></div>
+            <div class="nav-sub-children" id="gs-kartuOrder">
+              <div class="nav-child" data-page="koReguler" onclick="go('koReguler', this)">Reguler</div>
+              <div class="nav-child" data-page="koForisa" onclick="go('koForisa', this)">Forisa</div>
+              <div class="nav-child" data-page="koDDCT" onclick="go('koDDCT', this)">DDCT</div>
+            </div>
             <div class="nav-child" data-page="historyPengiriman" onclick="go('historyPengiriman', this)">History Pengiriman</div>
             <div class="nav-child" data-page="actionPlan" onclick="go('actionPlan', this)">Action Plan</div>
           </div>
@@ -1214,13 +1225,35 @@
             </div>
           </div>
 
-          <!-- ==================== KIRIMAN — KARTU ORDER ==================== -->
-          <div class="page" id="page-kartuOrder" style="display:none">
+          <!-- ==================== KIRIMAN — KARTU ORDER REGULER ==================== -->
+          <div class="page" id="page-koReguler" style="display:none">
             <div class="card">
-              <h3>🚚 Kartu Order</h3>
-              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Kelola dan pantau kartu order pengiriman.</p>
+              <h3>🚚 Kartu Order — Reguler</h3>
+              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Kartu order untuk pengiriman reguler.</p>
               <div style="margin-top:20px;">
-                <div class="empty"><span class="ic">📋</span>Halaman Kartu Order — segera hadir.</div>
+                <div class="empty"><span class="ic">📋</span>Halaman Kartu Order Reguler — segera hadir.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== KIRIMAN — KARTU ORDER FORISA ==================== -->
+          <div class="page" id="page-koForisa" style="display:none">
+            <div class="card">
+              <h3>🚚 Kartu Order — Forisa</h3>
+              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Kartu order untuk pengiriman Forisa.</p>
+              <div style="margin-top:20px;">
+                <div class="empty"><span class="ic">📋</span>Halaman Kartu Order Forisa — segera hadir.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ==================== KIRIMAN — KARTU ORDER DDCT ==================== -->
+          <div class="page" id="page-koDDCT" style="display:none">
+            <div class="card">
+              <h3>🚚 Kartu Order — DDCT</h3>
+              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Kartu order untuk pengiriman DDCT.</p>
+              <div style="margin-top:20px;">
+                <div class="empty"><span class="ic">📋</span>Halaman Kartu Order DDCT — segera hadir.</div>
               </div>
             </div>
           </div>
@@ -1572,6 +1605,15 @@
 
   // ---------------- NAVIGASI ----------------
   function toggleGroup(id){ document.getElementById(id).classList.toggle("open"); }
+  function toggleSubGroup(id){
+    const el = document.getElementById(id);
+    el.classList.toggle("open");
+    const header = el.previousElementSibling;
+    if(header){
+      const arrow = header.querySelector(".ic-arrow");
+      if(arrow) arrow.style.transform = el.classList.contains("open") ? "rotate(90deg)" : "";
+    }
+  }
 
   function go(page, el){
     if(currentUser && !isPageAllowed(page, currentUser.role)){
@@ -1584,7 +1626,7 @@
     document.querySelectorAll(".page").forEach(p=>p.style.display="none");
     const pg = document.getElementById("page-"+page);
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
-    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", kartuOrder:"Kartu Order", historyPengiriman:"History Pengiriman", actionPlan:"Action Plan", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
+    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", koReguler:"Kartu Order — Reguler", koForisa:"Kartu Order — Forisa", koDDCT:"Kartu Order — DDCT", historyPengiriman:"History Pengiriman", actionPlan:"Action Plan", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
     if(page === "produksi"){ loadProduksiSources(); loadScriptList(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
     if(page === "validasi") loadValidasi();
