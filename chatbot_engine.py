@@ -65,6 +65,18 @@ PER_CALL_TIMEOUT = float(os.environ.get("CHATBOT_CALL_TIMEOUT", "40"))
 # Matikan mode "thinking" model (bikin lambat & tidak perlu untuk tanya-jawab
 # data; diabaikan oleh model yang tidak punya mode itu). Kalau provider menolak parameternya, otomatis dicoba ulang tanpa itu.
 REASONING_OFF = os.environ.get("CHATBOT_REASONING_OFF", "1") == "1"
+# Temperature AI. Default 0 supaya jawaban (terutama pilihan argumen tool, mis.
+# string 'produk' yang dikirim ke query_stok_gudang) KONSISTEN antar pertanyaan
+# yang sama -- tanpa ini provider memakai default-nya (~1.0), dan AI bisa
+# memilih argumen berbeda tiap kali sehingga baris data yang cocok ikut beda.
+# Kosongkan CHATBOT_TEMPERATURE untuk tidak mengirim parameter ini sama sekali.
+# Kalau provider menolak parameternya (HTTP 400), otomatis dicoba ulang tanpa itu.
+_TEMP_RAW = os.environ.get("CHATBOT_TEMPERATURE", "0").strip()
+TEMPERATURE_ON = _TEMP_RAW != ""
+try:
+    CHAT_TEMPERATURE = float(_TEMP_RAW) if _TEMP_RAW else 0.0
+except ValueError:
+    CHAT_TEMPERATURE, TEMPERATURE_ON = 0.0, False
 # Hemat token: histori percakapan yang disimpan cuma pertanyaan + JAWABAN AKHIR
 # tiap giliran; data mentah hasil tool (bisa puluhan ribu token) dibuang, supaya
 # tidak ikut dikirim ulang ke AI di setiap pertanyaan berikutnya.
@@ -762,12 +774,36 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
         except Exception as exc:
             kategori_out[label] = {"ditemukan": False, "error": str(exc)}
             continue
-        rows = _filter_kategori_rows(rows)
+        rows_cocok_produk = rows
+        rows = _filter_kategori_rows(rows_cocok_produk)
+        # Baris yang cocok produknya tapi KATEGORI-nya kosong / bukan salah satu
+        # dari 4 nilai valid tetap DIBUANG (aturan lama tidak diubah), tapi
+        # sekarang dilaporkan terang-terangan -- dulu dibuang diam-diam dan
+        # pesannya sama persis dengan kasus "tidak ada baris sama sekali",
+        # sehingga stok yang sebenarnya ada di sheet tampak hilang.
+        jumlah_dibuang = len(rows_cocok_produk) - len(rows)
+        nilai_dibuang = sorted({
+            _normalize_kategori(_col(r, "KATEGORI")) or "(kosong)"
+            for r in rows_cocok_produk
+            if _normalize_kategori(_col(r, "KATEGORI")) not in KATEGORI_ALLOWED
+        })
         if not rows:
-            kategori_out[label] = {
-                "ditemukan": False,
-                "pesan": f"Tidak menemukan baris dengan KATEGORI valid (BAIK/BISA_REWORK/BISA_REWIND/PERLU_REVIEW) untuk produk '{produk}' di {label}.",
-            }
+            if jumlah_dibuang:
+                kategori_out[label] = {
+                    "ditemukan": False,
+                    "tidak_terklasifikasi_dibuang": jumlah_dibuang,
+                    "pesan": (
+                        f"Ada {jumlah_dibuang} baris untuk produk '{produk}' di {label}, "
+                        f"tetapi KATEGORI-nya kosong/tidak valid ({', '.join(nilai_dibuang)}), "
+                        f"jadi TIDAK ditampilkan dan TIDAK dihitung ke total stok. "
+                        f"Cek kolom KATEGORI di sheet {sheet_name}."
+                    ),
+                }
+            else:
+                kategori_out[label] = {
+                    "ditemukan": False,
+                    "pesan": f"Tidak ada baris untuk produk '{produk}' di {label} (tidak ada satu pun baris yang namanya cocok).",
+                }
             continue
         ringkasan = _ringkas_kategori_rows(rows)
         for r in rows:
@@ -780,6 +816,8 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "total_stok_utuh": ringkasan["total_stok_utuh"],
             "perlu_review": ringkasan["perlu_review"],
         }
+        if jumlah_dibuang:
+            kategori_out[label]["tidak_terklasifikasi_dibuang"] = jumlah_dibuang
 
     return {
         "nama_produk": produk,
@@ -828,7 +866,10 @@ def query_stok_gudang(get_sheet_fn, produk=None, jo=None):
             "tampilkan SEMUA baris yang ada apa adanya, jangan filter "
             "ulang atau buang kategori manapun dari 4 itu>\n"
             "Total Stok Utuh : <bjb.total_stok_utuh>\n"
-            "Perlu Review : <bjb.perlu_review>\n\n"
+            "Perlu Review : <bjb.perlu_review>\n"
+            "Kalau bjb.tidak_terklasifikasi_dibuang ada dan > 0, tambahkan SATU baris lagi persis: "
+            "'Tidak Terklasifikasi (tidak dihitung) : <n> baris' -- itu baris yang cocok produk "
+            "tapi KATEGORI-nya kosong/tidak valid. Berlaku sama untuk blok BJL.\n\n"
             "Barang Jadi Lama (BJL): sama persis seperti blok BJB di atas "
             "(9 kolom + alias header yang sama, dari sheet BJL_KATEGORI), "
             "pakai data dari 'bjl'.\n\n"
@@ -1459,26 +1500,31 @@ def trim_history(messages, max_user_turns=6):
 
 def _chat_create(client, messages, timeout):
     """Satu panggilan ke AI lewat OpenRouter. Mencoba dengan reasoning
-    dimatikan; kalau provider menolak (HTTP 400), ulangi tanpa parameter itu."""
-    global REASONING_OFF
-    body = {"provider": dict(PROVIDER_PREFS)}
-    if REASONING_OFF:
-        body["reasoning"] = {"enabled": False}
-    try:
-        return client.chat.completions.create(
-            model=MODEL, messages=messages, tools=TOOLS,
-            timeout=timeout, extra_body=body,
-        )
-    except Exception as exc:
-        if REASONING_OFF and getattr(exc, "status_code", None) == 400:
-            print(f"[chatbot] 400 dengan reasoning off, ulangi tanpa (dan seterusnya tanpa): {exc}", flush=True)
-            REASONING_OFF = False  # ingat: jangan coba lagi di panggilan berikutnya
-            body.pop("reasoning", None)
+    dimatikan & temperature tetap; kalau provider menolak (HTTP 400), parameter
+    itu dibuang satu per satu dan diingat (tidak dicoba lagi di panggilan
+    berikutnya)."""
+    global REASONING_OFF, TEMPERATURE_ON
+    while True:
+        body = {"provider": dict(PROVIDER_PREFS)}
+        if REASONING_OFF:
+            body["reasoning"] = {"enabled": False}
+        kwargs = {"temperature": CHAT_TEMPERATURE} if TEMPERATURE_ON else {}
+        try:
             return client.chat.completions.create(
                 model=MODEL, messages=messages, tools=TOOLS,
-                timeout=timeout, extra_body=body,
+                timeout=timeout, extra_body=body, **kwargs,
             )
-        raise
+        except Exception as exc:
+            if getattr(exc, "status_code", None) == 400:
+                if TEMPERATURE_ON:
+                    print(f"[chatbot] 400 dengan temperature, ulangi tanpa (dan seterusnya tanpa): {exc}", flush=True)
+                    TEMPERATURE_ON = False
+                    continue
+                if REASONING_OFF:
+                    print(f"[chatbot] 400 dengan reasoning off, ulangi tanpa (dan seterusnya tanpa): {exc}", flush=True)
+                    REASONING_OFF = False
+                    continue
+            raise
 
 
 def run_agent(get_sheet_fn, user_message, history=None):
@@ -1553,6 +1599,16 @@ def run_agent(get_sheet_fn, user_message, history=None):
                 result = {"error": f"Tool '{tc.function.name}' tidak dikenal"}
 
             print(f"[chatbot]   tool {tc.function.name} selesai, total={time.monotonic() - t_start:.1f}s", flush=True)
+            print(f"[chatbot]   args {tc.function.name}: {json.dumps(args, ensure_ascii=False)}", flush=True)
+            if tc.function.name == "query_stok_gudang" and isinstance(result, dict):
+                def _n(blok):
+                    return len(blok.get("baris", [])) if isinstance(blok, dict) else 0
+                print(
+                    f"[chatbot]   stok baris: VAL={_n(result.get('validasi'))} "
+                    f"FORM_ST={_n(result.get('form_st'))} BJB={_n(result.get('bjb'))} "
+                    f"BJL={_n(result.get('bjl'))} JO={result.get('daftar_jo')}",
+                    flush=True,
+                )
             tool_call_log.append({"tool": tc.function.name, "input": args, "result": result})
             result_json = json.dumps(result, ensure_ascii=False)
             print(f"[chatbot]   hasil tool {tc.function.name}: {len(result_json)} karakter", flush=True)
