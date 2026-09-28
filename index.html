@@ -1577,27 +1577,41 @@
     // di depannya. Syarat abis penanda harus tanggal (dd-mm-yyyy), huruf
     // kapital, atau **bold** -- biar nggak ketiban angka ribuan/desimal
     // (mis. "10.250") atau tanda pisah biasa di tengah kalimat.
-    let normalized = (text || "");
-    // (a) penanda list bernomor "2. 18-07-2026..." / "3. Mesin..." -> baris baru.
-    normalized = normalized.replace(
-      /[ \t]+(?=\d{1,2}\.\s(?:\*\*)?(?:\d{1,2}-\d{1,2}-\d{2,4}\b|[A-ZÀ-Ý]))/g,
-      "\n"
-    );
-    // (b) penanda bullet "- Di sheet ..." -> baris baru. Syaratnya lebih
-    // ketat (huruf kapital + huruf kecil, mis. "Di", "Laporan") supaya tanda
-    // pisah biasa di tengah nama produk ("5 WARNA - E16 malam") TIDAK ikut
-    // terpotong jadi baris baru.
-    normalized = normalized.replace(
-      /[ \t]+(?=-\s(?:\*\*)?[A-ZÀ-Ý][a-zà-ÿ])/g,
-      "\n"
-    );
-    // (c) kata pembuka bagian yang biasanya nempel di ujung kalimat sebelumnya
-    // ("... 66.300 pcs Catatan tambahan ...", "... Total = 66.300"):
-    // paksa mulai baris baru.
-    normalized = normalized.replace(
-      /[ \t]+(?=(?:\*\*)?(?:Total\s*[=:]|Catatan\b|Kesimpulan\b|Ringkasan\b|Rincian\b))/g,
-      "\n"
-    );
+    // PENTING: normalisasi (a)-(c) di bawah HANYA boleh dijalankan ke baris
+    // yang BUKAN baris tabel (| ... |). Kalau tidak, isi sel tabel yang
+    // kebetulan mengandung pola mirip penanda list -- mis. KETERANGAN
+    // "... REWIND 3. HASIL REWIND 3 (31 MEI)." (" 3. HASIL" dikira nomor
+    // list) -- ikut dipotong jadi 2 baris fisik, baris tabelnya pecah, dan
+    // tercetak mentah sebagai teks "| ... |" alih-alih jadi baris tabel.
+    const isRawTableLine = l => /^\s*\|.*\|\s*$/.test(l);
+    const normalizeListMarkers = (chunk) => {
+      let n = chunk;
+      // (a) penanda list bernomor "2. 18-07-2026..." / "3. Mesin..." -> baris baru.
+      n = n.replace(
+        /[ \t]+(?=\d{1,2}\.\s(?:\*\*)?(?:\d{1,2}-\d{1,2}-\d{2,4}\b|[A-ZÀ-Ý]))/g,
+        "\n"
+      );
+      // (b) penanda bullet "- Di sheet ..." -> baris baru. Syaratnya lebih
+      // ketat (huruf kapital + huruf kecil, mis. "Di", "Laporan") supaya tanda
+      // pisah biasa di tengah nama produk ("5 WARNA - E16 malam") TIDAK ikut
+      // terpotong jadi baris baru.
+      n = n.replace(
+        /[ \t]+(?=-\s(?:\*\*)?[A-ZÀ-Ý][a-zà-ÿ])/g,
+        "\n"
+      );
+      // (c) kata pembuka bagian yang biasanya nempel di ujung kalimat sebelumnya
+      // ("... 66.300 pcs Catatan tambahan ...", "... Total = 66.300"):
+      // paksa mulai baris baru.
+      n = n.replace(
+        /[ \t]+(?=(?:\*\*)?(?:Total\s*[=:]|Catatan\b|Kesimpulan\b|Ringkasan\b|Rincian\b))/g,
+        "\n"
+      );
+      return n;
+    };
+    let normalized = (text || "")
+      .split("\n")
+      .map(l => isRawTableLine(l) ? l : normalizeListMarkers(l))
+      .join("\n");
     // escape dulu biar aman dari HTML asing, baru render markdown ringan:
     // **bold**, bullet "- ", dan tabel (| kolom | kolom |) jadi HTML.
     // Ini pola-pola yang dipakai AI di jawabannya.
