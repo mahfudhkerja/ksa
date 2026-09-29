@@ -487,6 +487,21 @@
       "last_status": null,
       "last_rows": 0,
       "last_error": null
+    },
+    "surat_jalan": {
+      "label": "History Pengiriman (SJ)",
+      "type": "gsheet",
+      "script": "import_sj.py",
+      "source_id": "",
+      "source_name": "",
+      "target_id": "1h720fO5xiBdTCCwmsxmImSlEa4472HU-0rNlztPI_8E",
+      "target_sheet": "SURAT_JALAN",
+      "sheets": [],
+      "last_connected": null,
+      "last_import": null,
+      "last_status": null,
+      "last_rows": 0,
+      "last_error": null
     }
   }
 }

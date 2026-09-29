@@ -75,6 +75,10 @@ SCRIPTS_ORDER = [
     "import_jo.py",
     # --- LP (Laporan Produksi) ---
     "import_lp.py",
+    # --- Rewind Kecil ---
+    "import_rewind_kecil.py",
+    # --- History Pengiriman (Surat Jalan) ---
+    "import_sj.py",
 ]
 
 

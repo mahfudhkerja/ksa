@@ -145,6 +145,7 @@ SCRIPT_LABELS = {
     "import_jo.py": "JO",
     "import_lp.py": "LP (Laporan Produksi)",
     "import_rewind_kecil.py": "Rewind Kecil (REWIND_PY_RAW)",
+    "import_sj.py": "History Pengiriman (SJ)",
 }
 
 app = Flask(__name__)
