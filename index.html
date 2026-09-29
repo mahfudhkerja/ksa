@@ -501,6 +501,30 @@
   .fstl-btn-save:active{transform:translateY(0);}
 
   /* ============================================================
+     KIRIMAN — KARTU ORDER REGULER (kotak per produk, gaya sama FSTL)
+     ============================================================ */
+  .kor-count{font-size:11px; font-weight:800; color:var(--fv-deep); background:var(--fv-soft); padding:5px 11px; border-radius:99px; display:inline-flex; align-items:center; gap:5px;}
+  .kor-card{cursor:pointer;}
+  .kor-card:focus-visible{outline:3px solid var(--fv); outline-offset:2px;}
+  .kor-jo-preview{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;}
+  .kor-jo-preview .jo{font-size:10.5px;}
+  .kor-more{font-size:10.5px; font-weight:700; color:var(--fink-soft); align-self:center;}
+  .kor-toolbar-info{font-size:12px; font-weight:700; color:var(--fink-soft); margin-left:auto;}
+  .kor-refresh{border:1.5px solid var(--fv-soft); background:white; color:var(--fv-deep); font-weight:800; font-size:12px; padding:9px 15px; border-radius:99px; cursor:pointer; font-family:inherit;}
+  .kor-refresh:hover{border-color:var(--fv); background:var(--fv-soft);}
+  .kor-refresh:disabled{opacity:.6; cursor:wait;}
+  .kor-modal-body{overflow:auto; padding:14px 18px 18px; background:#fff;}
+  .kor-jo-block{border:1px solid #e7ecf2; border-radius:12px; margin-bottom:10px; overflow:hidden;}
+  .kor-jo-block > summary{cursor:pointer; list-style:none; padding:12px 14px; background:#f5f8fb; color:#1e4573; font-weight:800; font-size:12.5px; display:flex; align-items:center; gap:8px; overflow-wrap:anywhere;}
+  .kor-jo-block > summary::-webkit-details-marker{display:none;}
+  .kor-jo-block > summary::before{content:"▶"; font-size:9px; transition:transform .15s ease; flex-shrink:0;}
+  .kor-jo-block[open] > summary::before{transform:rotate(90deg);}
+  .kor-jo-block .wrw-detail-grid{padding:0; overflow:visible;}
+  .kor-modal-tools{display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;}
+  .kor-modal-tools button{border:1.5px solid #3572b6; background:#fff; color:#1e4573; border-radius:9px; padding:7px 12px; font-size:11.5px; font-weight:800; cursor:pointer; font-family:inherit;}
+  .kor-modal-tools button:hover{background:#eef4fb;}
+
+  /* ============================================================
      WASTE REWIND — tabel compact seperti halaman Update Stock
      Header wrap + action detail + modal detail lengkap
      ============================================================ */
@@ -574,7 +598,7 @@
     overflow:auto; border:1px solid #e6ebf1; border-radius:11px;
     background:#fff; max-height:calc(100vh - 285px);
   }
-  #wrwDetailOverlay{
+  #wrwDetailOverlay, #korDetailOverlay{
     position:fixed; inset:0; z-index:1200; display:none;
     align-items:center; justify-content:center;
     padding:22px; background:rgba(15,25,45,.48); backdrop-filter:blur(3px);
@@ -713,7 +737,7 @@
   @media(max-width:600px){
     .wrw-search{max-width:none; min-width:100%;}
     .wrw-toolbar .btn-danger-outline,.wrw-toolbar .btn-outline{flex:1; justify-content:center;}
-    #wrwDetailOverlay{padding:10px;}
+    #wrwDetailOverlay, #korDetailOverlay{padding:10px;}
     .wrw-modal{width:100%; max-height:92vh; border-radius:13px;}
     .wrw-detail-item{grid-template-columns:42% 58%;}
   }
@@ -797,6 +821,17 @@
       </div>
       <div class="wrw-detail-grid" id="wrwDetailGrid"></div>
       <div class="wrw-modal-foot" id="wrwModalFoot"></div>
+    </div>
+  </div>
+
+  <!-- KIRIMAN REGULER — MODAL DETAIL PRODUK (daftar JO + semua kolom) -->
+  <div id="korDetailOverlay" onclick="if(event.target===this)closeKoDetail()">
+    <div class="wrw-modal">
+      <div class="wrw-modal-head">
+        <div><h3 id="korDetailTitle">Detail Produk</h3><div id="korDetailSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+        <button class="wrw-modal-close" onclick="closeKoDetail()">✕</button>
+      </div>
+      <div class="kor-modal-body" id="korDetailBody"></div>
     </div>
   </div>
 
@@ -1283,12 +1318,13 @@
 
           <!-- ==================== KIRIMAN — KARTU ORDER REGULER ==================== -->
           <div class="page" id="page-koReguler" style="display:none">
-            <div class="card">
-              <h3>🚚 Kartu Order — Reguler</h3>
-              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Kartu order untuk pengiriman reguler.</p>
-              <div style="margin-top:20px;">
-                <div class="empty"><span class="ic">📋</span>Halaman Kartu Order Reguler — segera hadir.</div>
+            <div class="fstl-scope">
+              <div class="fstl-toolbar">
+                <div class="fstl-search"><span class="ic">🔍</span><input id="korSearch" placeholder="Cari produk atau JO..." oninput="renderKoReguler()"></div>
+                <button class="kor-refresh" id="korRefreshBtn" onclick="loadKoReguler(true)">🔄 Refresh</button>
+                <span class="kor-toolbar-info" id="korInfo"></span>
               </div>
+              <div class="fstl-grid" id="korGrid"></div>
             </div>
           </div>
 
@@ -1723,6 +1759,7 @@
     if(page === "kirimanHariIni") loadKirimanHariIni();
     if(page === "fstlWaste") fstlLoadList();
     if(page === "wasteRewind") loadWasteRewind();
+    if(page === "koReguler") loadKoReguler();
     if(page === "chatbot") chatInit();
   }
 
@@ -3051,6 +3088,76 @@
   }
   function closeWasteRewindDetail(){ wrwRevisiMode=false; document.getElementById("wrwDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape") closeWasteRewindDetail();});
+
+  // ---------------- KIRIMAN — KARTU ORDER REGULER ----------------
+  // Data dari /api/kiriman/reguler (sheet REGULER_KO): sudah dikelompokkan
+  // per NAMA_PRODUK di backend. 1 kotak = 1 produk; klik kotak -> modal
+  // berisi semua JO produk itu, lengkap dengan seluruh kolom (pakai alias).
+  let koProducts = [], koAliases = {}, koJoCol = "KUMPULAN_JO_AKTIF", koProdukCol = "NAMA_PRODUK", koHeaders = [];
+  let koRendered = [];
+  function koAlias(h){ return koAliases[h] || String(h).replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
+  async function loadKoReguler(force=false){
+    const grid = document.getElementById("korGrid"); if(!grid) return;
+    const btn = document.getElementById("korRefreshBtn");
+    if(btn) btn.disabled = true;
+    if(!koProducts.length || force){
+      grid.innerHTML = Array(6).fill(`<div class="fstl-card"><div class="skeleton" style="height:14px;width:35%;"></div><div class="skeleton" style="height:14px;width:80%;margin-top:14px;"></div><div class="skeleton" style="height:14px;width:55%;margin-top:10px;"></div></div>`).join("");
+    }
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler${force?"?refresh=1":""}`, {cache:"no-store"});
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat Kartu Order Reguler");
+      koProducts = data.products || []; koAliases = data.aliases || {}; koHeaders = data.headers || [];
+      koJoCol = data.jo_col || koJoCol; koProdukCol = data.produk_col || koProdukCol;
+      document.getElementById("korInfo").innerText = `${koProducts.length} produk · ${data.count} JO`;
+      renderKoReguler();
+      if(force) toast(`Kartu Order Reguler diperbarui — ${koProducts.length} produk`, "success");
+    }catch(e){
+      grid.innerHTML = `<div class="fstl-empty"><span class="emoji">⚠️</span><h4 class="fstl-display">Gagal memuat data</h4><p>${escHtml(e.message)}</p></div>`;
+    }finally{ if(btn) btn.disabled = false; }
+  }
+  function renderKoReguler(){
+    const grid = document.getElementById("korGrid"); if(!grid) return;
+    const kw = (document.getElementById("korSearch")?.value || "").trim().toLowerCase();
+    koRendered = koProducts.filter(p => !kw
+      || p.produk.toLowerCase().includes(kw)
+      || p.rows.some(r => String(r[koJoCol]??"").toLowerCase().includes(kw)));
+    if(!koRendered.length){
+      grid.innerHTML = `<div class="fstl-empty"><span class="emoji">🗂️</span><h4 class="fstl-display">Tidak ada produk</h4><p>${kw ? "Tidak ada produk atau JO yang cocok dengan pencarian." : "Sheet REGULER_KO masih kosong."}</p></div>`;
+      return;
+    }
+    grid.innerHTML = koRendered.map((p, idx)=>{
+      const jos = p.rows.map(r => String(r[koJoCol]??"").trim()).filter(Boolean);
+      const preview = jos.slice(0,2).map(j=>`<span class="jo">${escHtml(j)}</span>`).join("")
+        + (jos.length>2 ? `<span class="kor-more">+${jos.length-2} lainnya</span>` : "");
+      return `<div class="fstl-card kor-card" tabindex="0" role="button" onclick="openKoDetail(${idx})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openKoDetail(${idx});}">
+        <h4 style="margin-top:0;">${escHtml(p.produk)}</h4>
+        <div class="kor-jo-preview">${preview}</div>
+        <div class="fstl-card-foot"><span class="kor-count">📄 ${p.jo_count} JO</span><span class="fstl-meta">Lihat detail ›</span></div>
+      </div>`;
+    }).join("");
+  }
+  function openKoDetail(idx){
+    const p = koRendered[idx]; if(!p) return;
+    document.getElementById("korDetailTitle").innerText = p.produk;
+    document.getElementById("korDetailSub").innerText = `${p.jo_count} JO aktif`;
+    const skip = [koJoCol, koProdukCol];
+    const cols = koHeaders.filter(h => !skip.includes(h));
+    const blocks = p.rows.map((r, i)=>{
+      const jo = String(r[koJoCol]??"").trim() || "(JO kosong)";
+      const grid = cols.map(h=>{
+        const val = String(r[h]??"").trim();
+        return `<div class="wrw-detail-item"><div class="lbl">${escHtml(koAlias(h))}</div><div class="val">${escHtml(val)||"-"}</div></div>`;
+      }).join("");
+      return `<details class="kor-jo-block"${i===0?" open":""}><summary>${escHtml(koAlias(koJoCol))}: ${escHtml(jo)}</summary><div class="wrw-detail-grid">${grid}</div></details>`;
+    }).join("");
+    const tools = p.rows.length>1 ? `<div class="kor-modal-tools"><button onclick="koToggleAll(true)">Buka semua</button><button onclick="koToggleAll(false)">Tutup semua</button></div>` : "";
+    document.getElementById("korDetailBody").innerHTML = tools + blocks;
+    document.getElementById("korDetailOverlay").style.display = "flex";
+  }
+  function koToggleAll(open){ document.querySelectorAll("#korDetailBody details").forEach(d=>d.open=open); }
+  function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
+  document.addEventListener("keydown",e=>{if(e.key==="Escape") closeKoDetail();});
 
   // ============================================================
   // DATA GUDANG — file diupload lewat kartu "Data Gudang" di halaman

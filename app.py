@@ -1556,6 +1556,148 @@ def get_waste_rewind():
         }), 500
 
 
+# --------------------------------------------------------------------------
+# 6c. KIRIMAN — KARTU ORDER REGULER
+#     Sumber: spreadsheet "PROJECT 2 KARTU ORDER", tab REGULER_KO. Tiap baris
+#     di sheet = 1 JO. Di sini baris dikelompokkan per NAMA_PRODUK, jadi
+#     frontend cukup nampilin 1 kotak per produk; kalau kotaknya dipencet,
+#     modal nampilin semua JO produk tsb + seluruh kolom (pakai alias).
+# --------------------------------------------------------------------------
+REGULER_KO_SPREADSHEET_ID = os.environ.get(
+    "REGULER_KO_SPREADSHEET_ID", "1sa94oS26M81kdoWTu9WDjzMtot40OuiVyowRh_GVEoE"
+)
+REGULER_KO_SHEET_NAME = os.environ.get("REGULER_KO_SHEET_NAME", "REGULER_KO")
+REGULER_KO_JO_COL = "KUMPULAN_JO_AKTIF"
+REGULER_KO_PRODUK_COL = "NAMA_PRODUK"
+
+# Nama header asli di sheet -> alias yang tampil di frontend. Header yang
+# belum terdaftar di sini otomatis dirapikan (underscore -> spasi, Title Case).
+REGULER_KO_ALIASES = {
+    "KUMPULAN_JO_AKTIF": "Kumpulan JO Aktif",
+    "NAMA_PRODUK": "Nama Produk",
+    "PLANNING_METER": "Planning Meter",
+    "PLANNING_ROL_PCS": "Planning Rol/Pcs",
+    "PRINTING_1": "Printing",
+    "PRINTING_2": "Printing 2",
+    "PRINTING_3": "Printing 3",
+    "PRINTING_4": "Printing 4",
+    "PRINTING_5": "Printing 5",
+    "TOTAL_PRINTING": "Total Printing",
+    "SLITTING_METER": "Slitting Meter",
+    "SLITTING_ROL": "Slitting Rol",
+    "TANGGAL_FINISH": "Tanggal Finish",
+    "POTONGAN": "Potongan",
+    "TANGGAL_KIRIMAN": "Tanggal Kiriman",
+    "JUMLAH_PENGIRIMAN": "Jumlah Pengiriman",
+    "JUMLAH_PENGIRIMAN_TOTAL": "Total Pengiriman",
+    "DETAIL_JO_PENGIRIMAN": "Detail JO Kirim",
+    "DETAIL_QTY_JO_PENGIRIMAN": "Detail Qty JO Kirim",
+    "JUMLAH_QTY_DIAMBIL": "Jumlah Qty Diambil",
+    "JUMLAH_STOK_PROD": "Jumlah Stok Produksi",
+    "JUMLAH_REW_PROD": "Jumlah Rewind Produksi",
+    "AREA_STOK_PROD": "Area Stok Produksi",
+    "JUMLAH_STOK_FORM_ST": "Jumlah Stok Form ST",
+    "JUMLAH_REW_FORM_ST": "Jumlah Rewind Form ST",
+    "AREA_STOK_FORM_ST": "Area Form ST",
+    "JUMLAH_STOK_GBJ": "Jumlah Stok Gudang",
+    "JUMLAH_REW_GBJ": "Jumlah Rewind Gudang",
+    "AREA_STOK_GBJ": "Area Stok Gudang",
+    "KARANTINA": "Karantina",
+    "TOTAL_STOK": "Total Stok",
+    "SELISIH": "Selisih",
+    "TANGGAL_REWIND": "Tanggal Rewind",
+    "QTY_AWAL": "Qty Rewind Awal",
+    "QTY_AKHIR": "Qty Rewind Akhir",
+    "QTY_BERKURANG": "Qty Berkurang",
+    "TANGGAL_KIRIM": "Tanggal Kirim",
+    "JUMLAH_KIRIMAN": "Jumlah Kiriman",
+    "TUNGGU_PERMINTAAN": "Tunggu Permintaan",
+}
+
+_reguler_ko_cache = {"ts": 0.0, "payload": None}
+_reguler_ko_cache_lock = threading.Lock()
+_REGULER_KO_CACHE_TTL = int(os.environ.get("REGULER_KO_CACHE_TTL_SECONDS", "60"))
+
+
+def _reguler_ko_alias(header):
+    h = str(header or "").strip()
+    if h in REGULER_KO_ALIASES:
+        return REGULER_KO_ALIASES[h]
+    if h.upper() in REGULER_KO_ALIASES:
+        return REGULER_KO_ALIASES[h.upper()]
+    return h.replace("_", " ").strip().title()
+
+
+def _read_reguler_ko(force=False):
+    now = time.time()
+    with _reguler_ko_cache_lock:
+        cached = _reguler_ko_cache["payload"]
+        fresh = cached is not None and (now - _reguler_ko_cache["ts"]) < _REGULER_KO_CACHE_TTL
+    if fresh and not force:
+        return cached
+
+    sh = get_client().open_by_key(REGULER_KO_SPREADSHEET_ID)
+    values = sh.worksheet(REGULER_KO_SHEET_NAME).get_all_values()
+    if not values:
+        payload = {"headers": [], "aliases": {}, "products": [], "total_rows": 0}
+    else:
+        headers = [str(x).strip() for x in values[0]]
+        cols = [(i, h) for i, h in enumerate(headers) if h]
+        groups = {}   # key produk (normalisasi) -> {"produk": nama asli, "rows": [...]}
+        order = []
+        total_rows = 0
+        for raw in values[1:]:
+            row = {}
+            for i, h in cols:
+                if h in row:      # header kembar: pakai kemunculan pertama
+                    continue
+                row[h] = raw[i].strip() if i < len(raw) else ""
+            if not any(row.values()):
+                continue
+            total_rows += 1
+            produk = row.get(REGULER_KO_PRODUK_COL, "") or "(Tanpa nama produk)"
+            key = re.sub(r"\s+", " ", produk).strip().upper()
+            if key not in groups:
+                groups[key] = {"produk": re.sub(r"\s+", " ", produk).strip(), "rows": []}
+                order.append(key)
+            groups[key]["rows"].append(row)
+        products = [
+            {"produk": groups[k]["produk"], "jo_count": len(groups[k]["rows"]), "rows": groups[k]["rows"]}
+            for k in order
+        ]
+        payload = {
+            "headers": [h for _, h in cols],
+            "aliases": {h: _reguler_ko_alias(h) for _, h in cols},
+            "products": products,
+            "total_rows": total_rows,
+        }
+
+    with _reguler_ko_cache_lock:
+        _reguler_ko_cache["ts"] = now
+        _reguler_ko_cache["payload"] = payload
+    return payload
+
+
+@app.route("/api/kiriman/reguler", methods=["GET"])
+def get_kiriman_reguler():
+    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
+    try:
+        data = _read_reguler_ko(force=force)
+        return jsonify({
+            "success": True,
+            "sheet": REGULER_KO_SHEET_NAME,
+            "jo_col": REGULER_KO_JO_COL,
+            "produk_col": REGULER_KO_PRODUK_COL,
+            "headers": data["headers"],
+            "aliases": data["aliases"],
+            "products": data["products"],
+            "product_count": len(data["products"]),
+            "count": data["total_rows"],
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal membaca {REGULER_KO_SHEET_NAME}: {e}"}), 500
+
+
 
 # --------------------------------------------------------------------------
 # 6d.1 WASTE REWIND — aksi di modal Detail: Hitung Waste / Set Status Finish /
