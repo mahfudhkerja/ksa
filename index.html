@@ -501,43 +501,48 @@
   .fstl-btn-save:active{transform:translateY(0);}
 
   /* ============================================================
-     KIRIMAN — KARTU ORDER REGULER (kotak per produk, gaya sama FSTL)
+     KIRIMAN — KARTU ORDER REGULER (mengikuti KSA Design System)
      ============================================================ */
-  .kor-count{font-size:11px; font-weight:800; color:var(--fv-deep); background:var(--fv-soft); padding:5px 11px; border-radius:99px; display:inline-flex; align-items:center; gap:5px;}
-  .kor-card{cursor:pointer;}
-  .kor-card:focus-visible{outline:3px solid var(--fv); outline-offset:2px;}
+  .kor-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(min(280px,100%),1fr)); gap:16px; margin-bottom:20px;}
+  .kor-card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:18px; cursor:pointer; transition:all .18s var(--ease); animation:fadeUp .3s var(--ease) both; display:flex; flex-direction:column;}
+  .kor-card:hover{transform:translateY(-2px); box-shadow:var(--shadow-lg); border-color:var(--blue-200);}
+  .kor-card:active{transform:translateY(0) scale(.98);}
+  .kor-card:focus-visible{outline:none; border-color:var(--blue); box-shadow:0 0 0 4px var(--blue-50);}
+  .kor-card h4{font-size:13.5px; font-weight:700; color:var(--ink); line-height:1.45; overflow-wrap:anywhere;}
   .kor-jo-preview{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;}
-  .kor-jo-preview .jo{font-size:10.5px;}
-  .kor-more{font-size:10.5px; font-weight:700; color:var(--fink-soft); align-self:center;}
-  .kor-toolbar-info{font-size:12px; font-weight:700; color:var(--fink-soft); margin-left:auto;}
-  .kor-refresh{border:1.5px solid var(--fv-soft); background:white; color:var(--fv-deep); font-weight:800; font-size:12px; padding:9px 15px; border-radius:99px; cursor:pointer; font-family:inherit;}
-  .kor-refresh:hover{border-color:var(--fv); background:var(--fv-soft);}
-  .kor-refresh:disabled{opacity:.6; cursor:wait;}
-  .kor-modal{width:min(1300px,97vw);}
-  .kor-modal-body{display:flex; flex-direction:column; min-height:0; padding:12px 16px 16px; background:#fff; flex:1;}
-  .kor-modal-tools{display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; align-items:center; position:relative; flex-shrink:0;}
-  .kor-modal-tools button{border:1.5px solid #3572b6; background:#fff; color:#1e4573; border-radius:9px; padding:7px 12px; font-size:11.5px; font-weight:800; cursor:pointer; font-family:inherit;}
-  .kor-modal-tools button:hover{background:#eef4fb;}
-  .kor-hidden-info{font-size:11.5px; font-weight:700; color:#8a5a00;}
-  .kor-colpicker{display:none; position:absolute; top:100%; left:0; z-index:5; margin-top:6px; width:min(340px,92vw); background:#fff; border:1px solid #d9e2ec; border-radius:12px; box-shadow:0 18px 40px -14px rgba(10,25,50,.4); padding:10px;}
-  .kor-colpicker.open{display:block;}
-  .kor-colpicker .kor-cp-actions{display:flex; gap:6px; margin-bottom:8px;}
-  .kor-colpicker .kor-cp-actions button{flex:1; padding:6px 8px; font-size:11px;}
-  .kor-colpicker .kor-cp-list{max-height:300px; overflow:auto; display:flex; flex-direction:column;}
-  .kor-colpicker label{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12px; cursor:pointer; border-radius:7px;}
-  .kor-colpicker label:hover{background:#f2f6fa;}
-  .kor-colpicker input{accent-color:#3572b6; width:15px; height:15px; margin:0;}
-  .kor-table-wrap{overflow:auto; border:1px solid #d9e2ec; border-radius:10px; flex:1; min-height:0; max-height:calc(88vh - 190px);}
-  .kor-table{border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; font-size:12px;}
-  .kor-table th, .kor-table td{padding:9px 11px; border-bottom:1px solid #e7ecf2; border-right:1px solid #eef2f6; white-space:nowrap; text-align:left; background:#fff;}
-  .kor-table thead th{position:sticky; top:0; z-index:2; background:#fff3d6; color:#4a3a12; font-size:10.5px; font-weight:800; white-space:normal; min-width:90px; max-width:170px; line-height:1.3; text-align:center; vertical-align:middle;}
-  .kor-table th .kor-x{margin-left:4px; opacity:.35; cursor:pointer; font-size:10px;}
-  .kor-table th .kor-x:hover{opacity:1; color:#c0392b;}
-  .kor-table .kor-jo{position:sticky; left:0; z-index:1; background:#dff5e6; font-weight:800; color:#0d5c2e; min-width:170px;}
-  .kor-table thead th.kor-jo{z-index:3; background:#ffe9b0; color:#4a3a12;}
-  .kor-table tbody tr:hover td{background:#f4f8fc;}
-  .kor-table tbody tr:hover td.kor-jo{background:#c9eed6;}
-  .kor-table td.kor-empty{color:#b7c0cb; text-align:center;}
+  .kor-jo-chip{font-size:11px; font-weight:600; color:var(--blue-dark); background:var(--blue-50); border:1px solid var(--blue-100); padding:3px 9px; border-radius:20px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .kor-more{font-size:11px; font-weight:600; color:var(--ink-faint); align-self:center;}
+  .kor-card-foot{display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:auto; padding-top:14px;}
+  .kor-card-foot .kor-link{font-size:11px; font-weight:600; color:var(--ink-soft);}
+  .kor-card:hover .kor-link{color:var(--blue);}
+  .badge.info{background:var(--blue-50); color:var(--blue-dark);}
+  .badge.amber{background:var(--amber-bg); color:var(--amber);}
+
+  .kor-modal{width:min(1300px,97vw); max-height:88vh; display:flex; flex-direction:column; overflow:hidden; background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); border:1px solid var(--line); animation:popIn .25s var(--ease);}
+  .kor-modal-head{display:flex; align-items:center; justify-content:space-between; gap:15px; padding:16px 20px; background:linear-gradient(90deg, var(--blue), var(--blue-light)); color:white; flex-shrink:0;}
+  .kor-modal-head .eyebrow{font-size:11px; font-weight:600; opacity:.8; text-transform:uppercase; letter-spacing:.04em;}
+  .kor-modal-head h3{font-size:15px; font-weight:800; margin-top:2px; overflow-wrap:anywhere;}
+  .kor-modal-head .sub{font-size:11px; opacity:.85; margin-top:3px;}
+  .kor-modal-body{display:flex; flex-direction:column; min-height:0; padding:14px 18px 18px; flex:1;}
+  .kor-modal-tools{display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap; align-items:center; position:relative; flex-shrink:0;}
+  .kor-colpicker{display:none; position:absolute; top:100%; left:0; z-index:5; margin-top:6px; width:min(340px,92vw); background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow-lg); padding:10px;}
+  .kor-colpicker.open{display:block; animation:popIn .18s var(--ease); transform-origin:top left;}
+  .kor-cp-actions{display:flex; gap:6px; margin-bottom:8px;}
+  .kor-cp-actions .btn-outline{height:32px; font-size:11.5px; flex:1; justify-content:center; padding:0 8px;}
+  .kor-cp-list{max-height:300px; overflow:auto; display:flex; flex-direction:column;}
+  .kor-colpicker label{display:flex; align-items:center; gap:8px; padding:7px 8px; font-size:12.5px; font-weight:600; color:var(--ink); cursor:pointer; border-radius:var(--radius-sm); transition:background .12s var(--ease);}
+  .kor-colpicker label:hover{background:var(--blue-50);}
+  .kor-colpicker input{accent-color:var(--blue); width:15px; height:15px; margin:0;}
+  .kor-table-wrap{overflow:auto; border:1px solid var(--line); border-radius:var(--radius-sm); flex:1; min-height:0; max-height:calc(88vh - 200px);}
+  .kor-table{width:max-content; min-width:100%; table-layout:auto; border-collapse:separate; border-spacing:0;}
+  .kor-table thead th{position:sticky; top:0; z-index:2; white-space:normal; min-width:96px; max-width:180px; line-height:1.35; border-radius:0;}
+  .kor-table thead th .kor-x{margin-left:5px; opacity:.5; cursor:pointer; font-size:10px; transition:opacity .12s var(--ease);}
+  .kor-table thead th .kor-x:hover{opacity:1;}
+  .kor-table tbody td{white-space:nowrap; background:var(--card); overflow-wrap:normal; word-break:normal;}
+  .kor-table tbody tr:hover td{background:var(--blue-50);}
+  .kor-table .kor-jo{position:sticky; left:0; z-index:1; min-width:170px; font-weight:700; color:var(--blue-dark); background:var(--card); box-shadow:1px 0 0 var(--line);}
+  .kor-table thead th.kor-jo{z-index:3; background:var(--blue-dark); color:white; box-shadow:none;}
+  .kor-table td.kor-empty{color:var(--ink-faint); text-align:center;}
 
   /* ============================================================
      WASTE REWIND — tabel compact seperti halaman Update Stock
@@ -841,19 +846,19 @@
 
   <!-- KIRIMAN REGULER — MODAL DETAIL PRODUK (tabel JO x kolom, kolom bisa di-hide) -->
   <div id="korDetailOverlay" onclick="if(event.target===this)closeKoDetail()">
-    <div class="wrw-modal kor-modal">
-      <div class="wrw-modal-head">
-        <div><div style="font-size:10.5px;opacity:.75;font-weight:700;letter-spacing:.04em;">NAMA ITEM</div><h3 id="korDetailTitle">Detail Produk</h3><div id="korDetailSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+    <div class="kor-modal">
+      <div class="kor-modal-head">
+        <div><div class="eyebrow">Nama Item</div><h3 id="korDetailTitle">Detail Produk</h3><div class="sub" id="korDetailSub"></div></div>
         <button class="wrw-modal-close" onclick="closeKoDetail()">✕</button>
       </div>
       <div class="kor-modal-body">
         <div class="kor-modal-tools">
-          <button onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
-          <span class="kor-hidden-info" id="korHiddenInfo"></span>
+          <button class="btn-outline" onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
+          <span class="badge amber" id="korHiddenInfo" style="display:none;"></span>
           <div class="kor-colpicker" id="korColPicker" onclick="event.stopPropagation()">
-            <div class="kor-modal-tools kor-cp-actions">
-              <button onclick="koShowAllCols()">Tampilkan semua</button>
-              <button onclick="koHideAllCols()">Sembunyikan semua</button>
+            <div class="kor-cp-actions">
+              <button class="btn-outline" onclick="koShowAllCols()">Tampilkan semua</button>
+              <button class="btn-outline" onclick="koHideAllCols()">Sembunyikan semua</button>
             </div>
             <div class="kor-cp-list" id="korColList"></div>
           </div>
@@ -1346,14 +1351,23 @@
 
           <!-- ==================== KIRIMAN — KARTU ORDER REGULER ==================== -->
           <div class="page" id="page-koReguler" style="display:none">
-            <div class="fstl-scope">
-              <div class="fstl-toolbar">
-                <div class="fstl-search"><span class="ic">🔍</span><input id="korSearch" placeholder="Cari produk atau JO..." oninput="renderKoReguler()"></div>
-                <button class="kor-refresh" id="korRefreshBtn" onclick="loadKoReguler(true)">🔄 Refresh</button>
-                <span class="kor-toolbar-info" id="korInfo"></span>
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                  <h3>🚚 Kartu Order — Reguler</h3>
+                  <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Pilih produk untuk melihat daftar JO aktif dan seluruh detailnya.</p>
+                </div>
+                <button class="btn-outline" id="korRefreshBtn" onclick="loadKoReguler(true)">
+                  <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                  Refresh
+                </button>
               </div>
-              <div class="fstl-grid" id="korGrid"></div>
+              <div class="toolbar" style="margin-top:14px; margin-bottom:0;">
+                <div class="search-wrap"><span class="ic">🔍</span><input id="korSearch" placeholder="Cari produk atau JO..." oninput="renderKoReguler()"></div>
+                <span id="korInfo" style="font-size:12px; font-weight:600; color:var(--ink-soft); margin-left:auto;"></span>
+              </div>
             </div>
+            <div class="kor-grid" id="korGrid"></div>
           </div>
 
           <!-- ==================== KIRIMAN — KARTU ORDER FORISA ==================== -->
@@ -3127,9 +3141,9 @@
   async function loadKoReguler(force=false){
     const grid = document.getElementById("korGrid"); if(!grid) return;
     const btn = document.getElementById("korRefreshBtn");
-    if(btn) btn.disabled = true;
+    if(btn){ btn.disabled = true; btn.classList.add("spinning"); }
     if(!koProducts.length || force){
-      grid.innerHTML = Array(6).fill(`<div class="fstl-card"><div class="skeleton" style="height:14px;width:35%;"></div><div class="skeleton" style="height:14px;width:80%;margin-top:14px;"></div><div class="skeleton" style="height:14px;width:55%;margin-top:10px;"></div></div>`).join("");
+      grid.innerHTML = Array(6).fill(`<div class="kor-card" style="cursor:default;"><div class="skeleton" style="height:14px;width:80%;"></div><div class="skeleton" style="height:12px;width:45%;margin-top:14px;"></div><div class="skeleton" style="height:22px;width:30%;margin-top:18px;"></div></div>`).join("");
     }
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler${force?"?refresh=1":""}`, {cache:"no-store"});
@@ -3141,8 +3155,8 @@
       renderKoReguler();
       if(force) toast(`Kartu Order Reguler diperbarui — ${koProducts.length} produk`, "success");
     }catch(e){
-      grid.innerHTML = `<div class="fstl-empty"><span class="emoji">⚠️</span><h4 class="fstl-display">Gagal memuat data</h4><p>${escHtml(e.message)}</p></div>`;
-    }finally{ if(btn) btn.disabled = false; }
+      grid.innerHTML = `<div class="card" style="grid-column:1/-1;"><div class="empty"><span class="ic">⚠️</span>Gagal memuat Kartu Order Reguler: ${escHtml(e.message)}</div></div>`;
+    }finally{ if(btn){ btn.disabled = false; btn.classList.remove("spinning"); } }
   }
   function renderKoReguler(){
     const grid = document.getElementById("korGrid"); if(!grid) return;
@@ -3151,17 +3165,17 @@
       || p.produk.toLowerCase().includes(kw)
       || p.rows.some(r => String(r[koJoCol]??"").toLowerCase().includes(kw)));
     if(!koRendered.length){
-      grid.innerHTML = `<div class="fstl-empty"><span class="emoji">🗂️</span><h4 class="fstl-display">Tidak ada produk</h4><p>${kw ? "Tidak ada produk atau JO yang cocok dengan pencarian." : "Sheet REGULER_KO masih kosong."}</p></div>`;
+      grid.innerHTML = `<div class="card" style="grid-column:1/-1;"><div class="empty"><span class="ic">🗂️</span>${kw ? "Tidak ada produk atau JO yang cocok dengan pencarian." : "Sheet REGULER_KO masih kosong."}</div></div>`;
       return;
     }
     grid.innerHTML = koRendered.map((p, idx)=>{
       const jos = p.rows.map(r => String(r[koJoCol]??"").trim()).filter(Boolean);
-      const preview = jos.slice(0,2).map(j=>`<span class="jo">${escHtml(j)}</span>`).join("")
+      const preview = jos.slice(0,2).map(j=>`<span class="kor-jo-chip" title="${escHtml(j)}">${escHtml(j)}</span>`).join("")
         + (jos.length>2 ? `<span class="kor-more">+${jos.length-2} lainnya</span>` : "");
-      return `<div class="fstl-card kor-card" tabindex="0" role="button" onclick="openKoDetail(${idx})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openKoDetail(${idx});}">
-        <h4 style="margin-top:0;">${escHtml(p.produk)}</h4>
+      return `<div class="kor-card" style="animation-delay:${Math.min(idx*12,250)}ms" tabindex="0" role="button" onclick="openKoDetail(${idx})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openKoDetail(${idx});}">
+        <h4>${escHtml(p.produk)}</h4>
         <div class="kor-jo-preview">${preview}</div>
-        <div class="fstl-card-foot"><span class="kor-count">📄 ${p.jo_count} JO</span><span class="fstl-meta">Lihat detail ›</span></div>
+        <div class="kor-card-foot"><span class="badge info">📄 ${p.jo_count} JO</span><span class="kor-link">Lihat detail ›</span></div>
       </div>`;
     }).join("");
   }
@@ -3194,7 +3208,9 @@
       }).join("") + `</tr>`).join("");
     document.getElementById("korTableWrap").innerHTML = `<table class="kor-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
     const hid = koDataCols().filter(h => koHiddenCols.has(h)).length;
-    document.getElementById("korHiddenInfo").innerText = hid ? `${hid} kolom disembunyikan` : "";
+    const hi = document.getElementById("korHiddenInfo");
+    hi.innerText = hid ? `${hid} kolom disembunyikan` : "";
+    hi.style.display = hid ? "inline-flex" : "none";
   }
   function koRenderPicker(){
     document.getElementById("korColList").innerHTML = koDataCols().map(h =>
