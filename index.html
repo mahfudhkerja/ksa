@@ -513,16 +513,31 @@
   .kor-refresh{border:1.5px solid var(--fv-soft); background:white; color:var(--fv-deep); font-weight:800; font-size:12px; padding:9px 15px; border-radius:99px; cursor:pointer; font-family:inherit;}
   .kor-refresh:hover{border-color:var(--fv); background:var(--fv-soft);}
   .kor-refresh:disabled{opacity:.6; cursor:wait;}
-  .kor-modal-body{overflow:auto; padding:14px 18px 18px; background:#fff;}
-  .kor-jo-block{border:1px solid #e7ecf2; border-radius:12px; margin-bottom:10px; overflow:hidden;}
-  .kor-jo-block > summary{cursor:pointer; list-style:none; padding:12px 14px; background:#f5f8fb; color:#1e4573; font-weight:800; font-size:12.5px; display:flex; align-items:center; gap:8px; overflow-wrap:anywhere;}
-  .kor-jo-block > summary::-webkit-details-marker{display:none;}
-  .kor-jo-block > summary::before{content:"▶"; font-size:9px; transition:transform .15s ease; flex-shrink:0;}
-  .kor-jo-block[open] > summary::before{transform:rotate(90deg);}
-  .kor-jo-block .wrw-detail-grid{padding:0; overflow:visible;}
-  .kor-modal-tools{display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;}
+  .kor-modal{width:min(1300px,97vw);}
+  .kor-modal-body{display:flex; flex-direction:column; min-height:0; padding:12px 16px 16px; background:#fff; flex:1;}
+  .kor-modal-tools{display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; align-items:center; position:relative; flex-shrink:0;}
   .kor-modal-tools button{border:1.5px solid #3572b6; background:#fff; color:#1e4573; border-radius:9px; padding:7px 12px; font-size:11.5px; font-weight:800; cursor:pointer; font-family:inherit;}
   .kor-modal-tools button:hover{background:#eef4fb;}
+  .kor-hidden-info{font-size:11.5px; font-weight:700; color:#8a5a00;}
+  .kor-colpicker{display:none; position:absolute; top:100%; left:0; z-index:5; margin-top:6px; width:min(340px,92vw); background:#fff; border:1px solid #d9e2ec; border-radius:12px; box-shadow:0 18px 40px -14px rgba(10,25,50,.4); padding:10px;}
+  .kor-colpicker.open{display:block;}
+  .kor-colpicker .kor-cp-actions{display:flex; gap:6px; margin-bottom:8px;}
+  .kor-colpicker .kor-cp-actions button{flex:1; padding:6px 8px; font-size:11px;}
+  .kor-colpicker .kor-cp-list{max-height:300px; overflow:auto; display:flex; flex-direction:column;}
+  .kor-colpicker label{display:flex; align-items:center; gap:8px; padding:6px 6px; font-size:12px; cursor:pointer; border-radius:7px;}
+  .kor-colpicker label:hover{background:#f2f6fa;}
+  .kor-colpicker input{accent-color:#3572b6; width:15px; height:15px; margin:0;}
+  .kor-table-wrap{overflow:auto; border:1px solid #d9e2ec; border-radius:10px; flex:1; min-height:0; max-height:calc(88vh - 190px);}
+  .kor-table{border-collapse:separate; border-spacing:0; width:max-content; min-width:100%; font-size:12px;}
+  .kor-table th, .kor-table td{padding:9px 11px; border-bottom:1px solid #e7ecf2; border-right:1px solid #eef2f6; white-space:nowrap; text-align:left; background:#fff;}
+  .kor-table thead th{position:sticky; top:0; z-index:2; background:#fff3d6; color:#4a3a12; font-size:10.5px; font-weight:800; white-space:normal; min-width:90px; max-width:170px; line-height:1.3; text-align:center; vertical-align:middle;}
+  .kor-table th .kor-x{margin-left:4px; opacity:.35; cursor:pointer; font-size:10px;}
+  .kor-table th .kor-x:hover{opacity:1; color:#c0392b;}
+  .kor-table .kor-jo{position:sticky; left:0; z-index:1; background:#dff5e6; font-weight:800; color:#0d5c2e; min-width:170px;}
+  .kor-table thead th.kor-jo{z-index:3; background:#ffe9b0; color:#4a3a12;}
+  .kor-table tbody tr:hover td{background:#f4f8fc;}
+  .kor-table tbody tr:hover td.kor-jo{background:#c9eed6;}
+  .kor-table td.kor-empty{color:#b7c0cb; text-align:center;}
 
   /* ============================================================
      WASTE REWIND — tabel compact seperti halaman Update Stock
@@ -824,14 +839,27 @@
     </div>
   </div>
 
-  <!-- KIRIMAN REGULER — MODAL DETAIL PRODUK (daftar JO + semua kolom) -->
+  <!-- KIRIMAN REGULER — MODAL DETAIL PRODUK (tabel JO x kolom, kolom bisa di-hide) -->
   <div id="korDetailOverlay" onclick="if(event.target===this)closeKoDetail()">
-    <div class="wrw-modal">
+    <div class="wrw-modal kor-modal">
       <div class="wrw-modal-head">
-        <div><h3 id="korDetailTitle">Detail Produk</h3><div id="korDetailSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+        <div><div style="font-size:10.5px;opacity:.75;font-weight:700;letter-spacing:.04em;">NAMA ITEM</div><h3 id="korDetailTitle">Detail Produk</h3><div id="korDetailSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
         <button class="wrw-modal-close" onclick="closeKoDetail()">✕</button>
       </div>
-      <div class="kor-modal-body" id="korDetailBody"></div>
+      <div class="kor-modal-body">
+        <div class="kor-modal-tools">
+          <button onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
+          <span class="kor-hidden-info" id="korHiddenInfo"></span>
+          <div class="kor-colpicker" id="korColPicker" onclick="event.stopPropagation()">
+            <div class="kor-modal-tools kor-cp-actions">
+              <button onclick="koShowAllCols()">Tampilkan semua</button>
+              <button onclick="koHideAllCols()">Sembunyikan semua</button>
+            </div>
+            <div class="kor-cp-list" id="korColList"></div>
+          </div>
+        </div>
+        <div class="kor-table-wrap" id="korTableWrap"></div>
+      </div>
     </div>
   </div>
 
@@ -3137,25 +3165,49 @@
       </div>`;
     }).join("");
   }
+  // Kolom yang di-hide disimpan per-browser (localStorage) biar pilihan
+  // nggak hilang tiap buka modal / refresh halaman.
+  const KO_HIDE_KEY = "ksa_ko_reguler_hidden_cols";
+  let koHiddenCols = new Set();
+  try{ koHiddenCols = new Set(JSON.parse(localStorage.getItem(KO_HIDE_KEY) || "[]")); }catch(e){}
+  let koDetailIdx = -1;
+  function koSaveHidden(){ try{ localStorage.setItem(KO_HIDE_KEY, JSON.stringify([...koHiddenCols])); }catch(e){} }
+  function koDataCols(){ return koHeaders.filter(h => h !== koJoCol && h !== koProdukCol); }
   function openKoDetail(idx){
     const p = koRendered[idx]; if(!p) return;
+    koDetailIdx = idx;
     document.getElementById("korDetailTitle").innerText = p.produk;
     document.getElementById("korDetailSub").innerText = `${p.jo_count} JO aktif`;
-    const skip = [koJoCol, koProdukCol];
-    const cols = koHeaders.filter(h => !skip.includes(h));
-    const blocks = p.rows.map((r, i)=>{
-      const jo = String(r[koJoCol]??"").trim() || "(JO kosong)";
-      const grid = cols.map(h=>{
-        const val = String(r[h]??"").trim();
-        return `<div class="wrw-detail-item"><div class="lbl">${escHtml(koAlias(h))}</div><div class="val">${escHtml(val)||"-"}</div></div>`;
-      }).join("");
-      return `<details class="kor-jo-block"${i===0?" open":""}><summary>${escHtml(koAlias(koJoCol))}: ${escHtml(jo)}</summary><div class="wrw-detail-grid">${grid}</div></details>`;
-    }).join("");
-    const tools = p.rows.length>1 ? `<div class="kor-modal-tools"><button onclick="koToggleAll(true)">Buka semua</button><button onclick="koToggleAll(false)">Tutup semua</button></div>` : "";
-    document.getElementById("korDetailBody").innerHTML = tools + blocks;
+    document.getElementById("korColPicker").classList.remove("open");
+    koRenderPicker(); koRenderTable();
     document.getElementById("korDetailOverlay").style.display = "flex";
   }
-  function koToggleAll(open){ document.querySelectorAll("#korDetailBody details").forEach(d=>d.open=open); }
+  function koRenderTable(){
+    const p = koRendered[koDetailIdx]; if(!p) return;
+    const cols = koDataCols().filter(h => !koHiddenCols.has(h));
+    const head = `<th class="kor-jo">${escHtml(koAlias(koJoCol))}</th>` + cols.map(h =>
+      `<th>${escHtml(koAlias(h))}<span class="kor-x" title="Sembunyikan kolom ini" onclick="koToggleCol('${escHtml(h).replace(/'/g,"\\'")}', false)">✕</span></th>`).join("");
+    const body = p.rows.map(r =>
+      `<tr><td class="kor-jo">${escHtml(String(r[koJoCol]??"").trim() || "-")}</td>` + cols.map(h=>{
+        const v = String(r[h]??"").trim();
+        return v ? `<td>${escHtml(v)}</td>` : `<td class="kor-empty">-</td>`;
+      }).join("") + `</tr>`).join("");
+    document.getElementById("korTableWrap").innerHTML = `<table class="kor-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    const hid = koDataCols().filter(h => koHiddenCols.has(h)).length;
+    document.getElementById("korHiddenInfo").innerText = hid ? `${hid} kolom disembunyikan` : "";
+  }
+  function koRenderPicker(){
+    document.getElementById("korColList").innerHTML = koDataCols().map(h =>
+      `<label><input type="checkbox" ${koHiddenCols.has(h)?"":"checked"} onchange="koToggleCol(this.dataset.h, this.checked)" data-h="${escHtml(h)}"> ${escHtml(koAlias(h))}</label>`).join("");
+  }
+  function koToggleCol(h, show){
+    if(show) koHiddenCols.delete(h); else koHiddenCols.add(h);
+    koSaveHidden(); koRenderTable(); koRenderPicker();
+  }
+  function koShowAllCols(){ koHiddenCols.clear(); koSaveHidden(); koRenderTable(); koRenderPicker(); }
+  function koHideAllCols(){ koDataCols().forEach(h=>koHiddenCols.add(h)); koSaveHidden(); koRenderTable(); koRenderPicker(); }
+  function koTogglePicker(ev){ ev.stopPropagation(); document.getElementById("korColPicker").classList.toggle("open"); }
+  document.addEventListener("click", ()=>{ const el=document.getElementById("korColPicker"); if(el) el.classList.remove("open"); });
   function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape") closeKoDetail();});
 
