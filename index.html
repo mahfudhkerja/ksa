@@ -915,6 +915,7 @@
           </div>
           <div class="nav-item" onclick="toggleGroup('g-kiriman')"><span class="ic">🚚</span> Kiriman</div>
           <div class="nav-children" id="g-kiriman">
+            <div class="nav-child" data-page="kirimanHariIni" onclick="go('kirimanHariIni', this)">Kiriman Hari Ini</div>
             <div class="nav-sub-header" onclick="toggleSubGroup('gs-kartuOrder')">Kartu Order <span class="ic-arrow">▶</span></div>
             <div class="nav-sub-children" id="gs-kartuOrder">
               <div class="nav-child" data-page="koReguler" onclick="go('koReguler', this)">Reguler</div>
@@ -1225,6 +1226,61 @@
             </div>
           </div>
 
+          <!-- ==================== KIRIMAN — KIRIMAN HARI INI ==================== -->
+          <div class="page" id="page-kirimanHariIni" style="display:none">
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                  <h3>🚚 Kiriman Hari Ini</h3>
+                  <p class="desc" style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">
+                    Jadwal dan status pengiriman barang per hari ini.
+                  </p>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <button class="btn-outline" id="btnRefreshKirimanHariIni" onclick="loadKirimanHariIni()">
+                    <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              <div class="toolbar" style="margin-top:14px; margin-bottom:0;">
+                <div class="search-wrap">
+                  <span class="ic">🔍</span>
+                  <input id="khiSearch" placeholder="Cari No SJ, Customer, Produk, JO..." oninput="filterKHITable()">
+                </div>
+                <span style="font-size:12px; color:var(--ink-faint);" id="khiRowCount"></span>
+              </div>
+            </div>
+
+            <div class="card" style="padding:0; overflow:hidden;">
+              <div class="table-wrap tw-sticky" id="khiTableWrap">
+                <table id="tblKirimanHariIni">
+                  <thead>
+                    <tr>
+                      <th>No SJ</th>
+                      <th>Tanggal</th>
+                      <th>Customer</th>
+                      <th>Product</th>
+                      <th>No JO</th>
+                      <th>Kendaraan / Driver</th>
+                      <th>Ukuran</th>
+                      <th>Qty / Unit</th>
+                      <th>Status</th>
+                      <th>Keterangan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="khiBody">
+                    <tr>
+                      <td colspan="10">
+                        <div class="empty"><span class="ic">🚚</span>Belum ada data pengiriman hari ini.</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           <!-- ==================== KIRIMAN — KARTU ORDER REGULER ==================== -->
           <div class="page" id="page-koReguler" style="display:none">
             <div class="card">
@@ -1261,10 +1317,39 @@
           <!-- ==================== KIRIMAN — HISTORY PENGIRIMAN ==================== -->
           <div class="page" id="page-historyPengiriman" style="display:none">
             <div class="card">
-              <h3>🚚 History Pengiriman</h3>
-              <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Riwayat lengkap semua pengiriman yang telah dilakukan.</p>
-              <div style="margin-top:20px;">
-                <div class="empty"><span class="ic">📦</span>Halaman History Pengiriman — segera hadir.</div>
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                  <h3>🚚 History Pengiriman</h3>
+                  <p style="color:var(--ink-soft); font-size:12.5px; margin-top:4px;">Data surat jalan dari sheet <b>SURAT_JALAN</b>. Import data lewat halaman <b>Input Data Produksi</b> (kartu History Pengiriman).</p>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <button class="btn-outline" id="btnRefreshSJ" onclick="loadHistoryPengiriman()">
+                    <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                    Refresh
+                  </button>
+                </div>
+              </div>
+              <div class="toolbar" style="margin-top:14px; margin-bottom:0;">
+                <div class="search-wrap">
+                  <span class="ic">🔍</span>
+                  <input id="sjSearch" placeholder="Cari No SJ, Customer, Produk, JO..." oninput="filterSJTable()">
+                </div>
+                <span style="font-size:12px; color:var(--ink-faint);" id="sjRowCount"></span>
+              </div>
+            </div>
+            <div class="card" style="padding:0; overflow:hidden;">
+              <div class="table-wrap tw-sticky" id="sjTableWrap">
+                <table id="tblSJ">
+                  <thead>
+                    <tr>
+                      <th>No SJ</th><th>Tanggal</th><th>Tgl SJ</th><th>Customer</th>
+                      <th>Product</th><th>No JO</th><th>JO Master</th><th>Kendaraan</th>
+                      <th>Ukuran</th><th>Unit</th><th>Kg/Unit</th><th>Status</th>
+                      <th>Ket. Internal</th><th>Keterangan</th>
+                    </tr>
+                  </thead>
+                  <tbody id="sjBody"></tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -1626,7 +1711,7 @@
     document.querySelectorAll(".page").forEach(p=>p.style.display="none");
     const pg = document.getElementById("page-"+page);
     pg.style.display="block"; pg.style.animation="none"; pg.offsetHeight; pg.style.animation="fadeUp .3s var(--ease)";
-    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", koReguler:"Kartu Order — Reguler", koForisa:"Kartu Order — Forisa", koDDCT:"Kartu Order — DDCT", historyPengiriman:"History Pengiriman", actionPlan:"Action Plan", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
+    const titles = { dashboard:"Dashboard", produksi:"Input Data Produksi", rekap:"Rekap Data Validasi", validasi:"Data Validasi", updateStock:"Update Stock Bahan Baku", stockBahan:"Stock Bahan Baku", gudangBjb:"Data Gudang BJB", gudangBjl:"Data Gudang BJL", kirimanHariIni:"Kiriman Hari Ini", koReguler:"Kartu Order — Reguler", koForisa:"Kartu Order — Forisa", koDDCT:"Kartu Order — DDCT", historyPengiriman:"History Pengiriman", actionPlan:"Action Plan", fstlWaste:"FSTL — Lampiran Waste", wasteRewind:"Waste Rewind", chatbot:"Tanya JO (Chatbot)" };
     document.getElementById("pageTitle").innerText = titles[page];
     if(page === "produksi"){ loadProduksiSources(); loadScriptList(); loadGudangCardInfo(); loadUpdateStockSourceCard(); loadFormSt2SourceCard(); loadVal2SourceCard(); }
     if(page === "validasi") loadValidasi();
@@ -1635,6 +1720,7 @@
     if(page === "stockBahan") loadStockBahan();
     if(page === "gudangBjb") loadGudangStatus("gudangBjb");
     if(page === "gudangBjl") loadGudangStatus("gudangBjl");
+    if(page === "kirimanHariIni") loadKirimanHariIni();
     if(page === "fstlWaste") fstlLoadList();
     if(page === "wasteRewind") loadWasteRewind();
     if(page === "chatbot") chatInit();
@@ -2342,6 +2428,7 @@
     if(key === "form_st") return "🤝";
     if(key === "lp") return "📈";
     if(key === "update_stock") return "📦";
+    if(key === "surat_jalan") return "🚚";
     return "📄";
   }
 
@@ -3735,6 +3822,81 @@
     }
     fstlCloseModal();
     fstlLoadList(); // refresh biar kartu nunjukin keterangan versi terbaru
+  }
+
+  // ---------------- KIRIMAN HARI INI ----------------
+  let khiInitialized = false;
+  let dataKirimanHariIni = [];
+
+  function loadKirimanHariIni(){
+    if(!khiInitialized){
+      makeColumnsResizable("tblKirimanHariIni");
+      khiInitialized = true;
+    }
+    const body = document.getElementById("khiBody");
+    const countEl = document.getElementById("khiRowCount");
+    if(countEl) countEl.innerText = "";
+    if(!dataKirimanHariIni || dataKirimanHariIni.length === 0){
+      if(body) {
+        body.innerHTML = `<tr><td colspan="10"><div class="empty"><span class="ic">🚚</span>Belum ada data pengiriman hari ini.</div></td></tr>`;
+      }
+      return;
+    }
+    renderKHITable(dataKirimanHariIni);
+  }
+
+  function renderKHITable(rows){
+    const body = document.getElementById("khiBody");
+    const countEl = document.getElementById("khiRowCount");
+    if(!body) return;
+    if(!rows || rows.length === 0){
+      body.innerHTML = `<tr><td colspan="10"><div class="empty"><span class="ic">📭</span>Data tidak ditemukan.</div></td></tr>`;
+      if(countEl) countEl.innerText = "0 baris";
+      return;
+    }
+    let html = "";
+    rows.forEach(r => {
+      const statusClass = (r.status || "").toLowerCase().includes("selesai") || (r.status || "").toLowerCase().includes("kirim") ? "ok" :
+                          (r.status || "").toLowerCase().includes("batal") || (r.status || "").toLowerCase().includes("tunda") ? "warn" : "amber";
+      html += `<tr>
+        <td><b>${r.no_sj || "-"}</b></td>
+        <td>${r.tanggal || "-"}</td>
+        <td>${r.customer || "-"}</td>
+        <td>${r.product || "-"}</td>
+        <td>${r.no_jo || "-"}</td>
+        <td>${r.kendaraan || "-"}</td>
+        <td>${r.ukuran || "-"}</td>
+        <td>${r.qty || "-"}</td>
+        <td><span class="badge ${statusClass}">${r.status || "Proses"}</span></td>
+        <td style="color:var(--ink-soft);">${r.keterangan || "-"}</td>
+      </tr>`;
+    });
+    body.innerHTML = html;
+    if(countEl) countEl.innerText = `${rows.length} baris`;
+  }
+
+  function filterKHITable(){
+    const kw = (document.getElementById("khiSearch")?.value || "").toLowerCase().trim();
+    if(!dataKirimanHariIni || dataKirimanHariIni.length === 0){
+      const rows = document.querySelectorAll("#khiBody tr");
+      let visible = 0;
+      rows.forEach(r => {
+        if(r.querySelector(".empty")) return;
+        const match = r.innerText.toLowerCase().includes(kw);
+        r.style.display = match ? "" : "none";
+        if(match) visible++;
+      });
+      const countEl = document.getElementById("khiRowCount");
+      if(countEl && rows.length > 0 && !rows[0].querySelector(".empty")){
+        countEl.innerText = `${visible} baris ditemukan`;
+      }
+      return;
+    }
+    const filtered = dataKirimanHariIni.filter(item => {
+      const text = `${item.no_sj || ""} ${item.customer || ""} ${item.product || ""} ${item.no_jo || ""} ${item.kendaraan || ""}`.toLowerCase();
+      return text.includes(kw);
+    });
+    renderKHITable(filtered);
   }
 </script>
 </body>
