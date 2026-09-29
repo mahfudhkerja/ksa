@@ -540,8 +540,19 @@
   .kor-table thead th .kor-x:hover{opacity:1;}
   .kor-table tbody td{white-space:nowrap; background:var(--card); overflow-wrap:normal; word-break:normal;}
   .kor-table tbody tr:hover td{background:var(--blue-50);}
-  .kor-table .kor-jo{position:sticky; left:0; z-index:1; min-width:170px; font-weight:700; color:var(--blue-dark); background:var(--card); box-shadow:1px 0 0 var(--line);}
-  .kor-table thead th.kor-jo{z-index:3; background:var(--blue-dark); color:white; box-shadow:none;}
+  /* Kolom beku (JO + kolom di KO_FREEZE_COLS): lebar dipatok pasti lewat inline
+     style dan offset left dihitung di JS, jadi tidak saling menimpa. */
+  .kor-table .kor-frz{position:sticky; z-index:1; background:var(--card); overflow:hidden; text-overflow:ellipsis;}
+  .kor-table thead th.kor-frz{z-index:3; background:var(--blue-dark); color:white;}
+  .kor-table .kor-frz-last{box-shadow:2px 0 0 var(--line);}
+  .kor-table thead th.kor-frz-last{box-shadow:2px 0 0 rgba(0,0,0,.18);}
+  .kor-table .kor-jo{font-weight:700; color:var(--blue-dark);}
+  .kor-table thead th.kor-jo{color:white;}
+  @media(max-width:700px){
+    /* layar sempit: cuma kolom JO yang beku, sisanya scroll biasa */
+    .kor-table td.kor-frz:not(.kor-jo){position:static;}
+    .kor-table thead th.kor-frz:not(.kor-jo){left:auto !important;}
+  }
   .kor-table td.kor-empty{color:var(--ink-faint); text-align:center;}
 
   /* ============================================================
@@ -3196,15 +3207,27 @@
     koRenderPicker(); koRenderTable();
     document.getElementById("korDetailOverlay").style.display = "flex";
   }
+  // Kolom yang ikut beku (freeze) di sebelah kolom JO, sampai Planning Rol/Pcs.
+  // Lebar (px) tiap kolom beku dipatok supaya offset left-nya pasti.
+  const KO_JO_WIDTH = 180;
+  const KO_FREEZE_COLS = { "PLANNING_METER":120, "PLANNING_ROL_PCS":130 };
   function koRenderTable(){
     const p = koRendered[koDetailIdx]; if(!p) return;
     const cols = koDataCols().filter(h => !koHiddenCols.has(h));
-    const head = `<th class="kor-jo">${escHtml(koAlias(koJoCol))}</th>` + cols.map(h =>
-      `<th>${escHtml(koAlias(h))}<span class="kor-x" title="Sembunyikan kolom ini" onclick="koToggleCol('${escHtml(h).replace(/'/g,"\\'")}', false)">✕</span></th>`).join("");
+    // hitung offset left tiap kolom beku (JO selalu pertama)
+    const frz = {}; let left = KO_JO_WIDTH; let lastFrz = null;
+    cols.forEach(h => { if(KO_FREEZE_COLS[h]){ frz[h] = {left, w:KO_FREEZE_COLS[h]}; left += KO_FREEZE_COLS[h]; lastFrz = h; } });
+    const boxStyle = (l,w) => `left:${l}px; width:${w}px; min-width:${w}px; max-width:${w}px;`;
+    const cellCls = (h) => frz[h] ? ` class="kor-frz${h===lastFrz?" kor-frz-last":""}"` : "";
+    const cellStyle = (h) => frz[h] ? ` style="${boxStyle(frz[h].left, frz[h].w)}"` : "";
+    const joLast = lastFrz === null ? " kor-frz-last" : "";
+    const head = `<th class="kor-frz kor-jo${joLast}" style="${boxStyle(0,KO_JO_WIDTH)}">${escHtml(koAlias(koJoCol))}</th>` + cols.map(h =>
+      `<th${cellCls(h)}${cellStyle(h)}>${escHtml(koAlias(h))}<span class="kor-x" title="Sembunyikan kolom ini" onclick="koToggleCol(this.dataset.h, false)" data-h="${escHtml(h)}">✕</span></th>`).join("");
     const body = p.rows.map(r =>
-      `<tr><td class="kor-jo">${escHtml(String(r[koJoCol]??"").trim() || "-")}</td>` + cols.map(h=>{
+      `<tr><td class="kor-frz kor-jo${joLast}" style="${boxStyle(0,KO_JO_WIDTH)}">${escHtml(String(r[koJoCol]??"").trim() || "-")}</td>` + cols.map(h=>{
         const v = String(r[h]??"").trim();
-        return v ? `<td>${escHtml(v)}</td>` : `<td class="kor-empty">-</td>`;
+        const cls = frz[h] ? `kor-frz${h===lastFrz?" kor-frz-last":""}${v?"":" kor-empty"}` : (v?"":"kor-empty");
+        return `<td${cls?` class="${cls}"`:""}${cellStyle(h)}>${v ? escHtml(v) : "-"}</td>`;
       }).join("") + `</tr>`).join("");
     document.getElementById("korTableWrap").innerHTML = `<table class="kor-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
     const hid = koDataCols().filter(h => koHiddenCols.has(h)).length;

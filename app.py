@@ -1577,7 +1577,7 @@ REGULER_KO_ALIASES = {
     "NAMA_PRODUK": "Nama Produk",
     "PLANNING_METER": "Planning Meter",
     "PLANNING_ROL_PCS": "Planning Rol/Pcs",
-    "PRINTING_1": "Printing",
+    "PRINTING_1": "Printing 1",
     "PRINTING_2": "Printing 2",
     "PRINTING_3": "Printing 3",
     "PRINTING_4": "Printing 4",
