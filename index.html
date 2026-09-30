@@ -555,6 +555,13 @@
   }
   .kor-table td.kor-empty{color:var(--ink-faint); text-align:center;}
 
+  /* Kiriman Hari Ini: memakai kartu .kor-card yang sama dengan Reguler */
+  .khi-sec{display:flex; align-items:center; gap:8px; margin:4px 2px 10px; font-size:13px; font-weight:800; color:var(--ink);}
+  .khi-x{margin-left:6px; opacity:.55; cursor:pointer; font-size:10px; transition:opacity .12s var(--ease);}
+  .khi-x:hover{opacity:1;}
+  .khi-warn{background:var(--amber-bg); border:1px solid var(--line); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:var(--ink); line-height:1.5;}
+  .khi-warn .kor-jo-chip{background:white;}
+
   /* ============================================================
      WASTE REWIND — tabel compact seperti halaman Update Stock
      Header wrap + action detail + modal detail lengkap
@@ -1312,52 +1319,32 @@
                 <div>
                   <h3>🚚 Kiriman Hari Ini</h3>
                   <p class="desc" style="font-size:12.5px; color:var(--ink-soft); margin-top:4px;">
-                    Jadwal dan status pengiriman barang per hari ini.
+                    Ketik JO yang dikirim hari ini, kartu ordernya dipanggil dari Reguler, Forisa, dan DDCT. Data sumber tidak dipindah.
                   </p>
                 </div>
                 <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                  <button class="btn-outline" id="btnRefreshKirimanHariIni" onclick="loadKirimanHariIni()">
+                  <button class="btn-outline" id="khiRefreshBtn" onclick="loadKirimanHariIni(true)">
                     <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
                     Refresh
                   </button>
+                  <button class="btn-danger-outline" id="khiClearBtn" onclick="khiClear()">Kosongkan</button>
                 </div>
               </div>
               <div class="toolbar" style="margin-top:14px; margin-bottom:0;">
+                <div class="search-wrap" style="flex:2; max-width:440px;">
+                  <span class="ic">🚚</span>
+                  <input id="khiAddInput" placeholder="Ketik JO kirim (pisah koma / spasi / baris baru)" onkeydown="if(event.key==='Enter'){event.preventDefault();khiAdd();}">
+                </div>
+                <button class="btn-outline" id="khiAddBtn" style="background:var(--blue); color:white;" onclick="khiAdd()">Panggil</button>
                 <div class="search-wrap">
                   <span class="ic">🔍</span>
-                  <input id="khiSearch" placeholder="Cari No SJ, Customer, Produk, JO..." oninput="filterKHITable()">
+                  <input id="khiSearch" placeholder="Cari produk atau JO di daftar..." oninput="renderKirimanHariIni()">
                 </div>
-                <span style="font-size:12px; color:var(--ink-faint);" id="khiRowCount"></span>
+                <span id="khiInfo" style="font-size:12px; font-weight:600; color:var(--ink-soft); margin-left:auto;"></span>
               </div>
             </div>
-
-            <div class="card" style="padding:0; overflow:hidden;">
-              <div class="table-wrap tw-sticky" id="khiTableWrap">
-                <table id="tblKirimanHariIni">
-                  <thead>
-                    <tr>
-                      <th>No SJ</th>
-                      <th>Tanggal</th>
-                      <th>Customer</th>
-                      <th>Product</th>
-                      <th>No JO</th>
-                      <th>Kendaraan / Driver</th>
-                      <th>Ukuran</th>
-                      <th>Qty / Unit</th>
-                      <th>Status</th>
-                      <th>Keterangan</th>
-                    </tr>
-                  </thead>
-                  <tbody id="khiBody">
-                    <tr>
-                      <td colspan="10">
-                        <div class="empty"><span class="ic">🚚</span>Belum ada data pengiriman hari ini.</div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <div id="khiWarn"></div>
+            <div id="khiSections"></div>
           </div>
 
           <!-- ==================== KIRIMAN — KARTU ORDER REGULER ==================== -->
@@ -3148,7 +3135,10 @@
   // berisi semua JO produk itu, lengkap dengan seluruh kolom (pakai alias).
   let koProducts = [], koAliases = {}, koJoCol = "KUMPULAN_JO_AKTIF", koProdukCol = "NAMA_PRODUK", koHeaders = [];
   let koRendered = [];
-  function koAlias(h){ return koAliases[h] || String(h).replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
+  // Konteks modal detail yang sedang terbuka ({p, headers, aliases, joCol, produkCol}) --
+  // dipakai bareng halaman Reguler & Kiriman Hari Ini (yang datanya bisa dari Forisa/DDCT).
+  let koDetail = null;
+  function koAlias(h){ const al = (koDetail && koDetail.aliases) || koAliases; return al[h] || String(h).replace(/_/g," ").replace(/\b\w/g,c=>c.toUpperCase()); }
   async function loadKoReguler(force=false){
     const grid = document.getElementById("korGrid"); if(!grid) return;
     const btn = document.getElementById("korRefreshBtn");
@@ -3197,12 +3187,16 @@
   try{ koHiddenCols = new Set(JSON.parse(localStorage.getItem(KO_HIDE_KEY) || "[]")); }catch(e){}
   let koDetailIdx = -1;
   function koSaveHidden(){ try{ localStorage.setItem(KO_HIDE_KEY, JSON.stringify([...koHiddenCols])); }catch(e){} }
-  function koDataCols(){ return koHeaders.filter(h => h !== koJoCol && h !== koProdukCol); }
+  function koDataCols(){ const c = koDetail; return c.headers.filter(h => h !== c.joCol && h !== c.produkCol); }
   function openKoDetail(idx){
     const p = koRendered[idx]; if(!p) return;
     koDetailIdx = idx;
+    koOpenDetailWith(p, {headers:koHeaders, aliases:koAliases, joCol:koJoCol, produkCol:koProdukCol}, `${p.jo_count} JO aktif`);
+  }
+  function koOpenDetailWith(p, ctx, sub){
+    koDetail = {p, headers:ctx.headers, aliases:ctx.aliases, joCol:ctx.joCol, produkCol:ctx.produkCol};
     document.getElementById("korDetailTitle").innerText = p.produk;
-    document.getElementById("korDetailSub").innerText = `${p.jo_count} JO aktif`;
+    document.getElementById("korDetailSub").innerText = sub;
     document.getElementById("korColPicker").classList.remove("open");
     koRenderPicker(); koRenderTable();
     document.getElementById("korDetailOverlay").style.display = "flex";
@@ -3212,7 +3206,8 @@
   const KO_JO_WIDTH = 180;
   const KO_FREEZE_COLS = { "PLANNING_METER":120, "PLANNING_ROL_PCS":130 };
   function koRenderTable(){
-    const p = koRendered[koDetailIdx]; if(!p) return;
+    const p = koDetail && koDetail.p; if(!p) return;
+    const koJoCol = koDetail.joCol;  // sengaja menimpa global: kolom JO milik sumber yang sedang dibuka
     const cols = koDataCols().filter(h => !koHiddenCols.has(h));
     // hitung offset left tiap kolom beku (JO selalu pertama)
     const frz = {}; let left = KO_JO_WIDTH; let lastFrz = null;
@@ -4023,78 +4018,133 @@
   }
 
   // ---------------- KIRIMAN HARI INI ----------------
-  let khiInitialized = false;
-  let dataKirimanHariIni = [];
+  // Daftar JO kirim diinput manual (disimpan di tab KIRIMAN_HARI_INI, dipakai bersama
+  // semua user). Kartunya "dipanggil" dari REGULER_KO / FORISA_KO / DDCT_KO lewat
+  // /api/kiriman/hari-ini -- data sumber tidak diubah atau dipindah. Depan kartu
+  // menampilkan JO kirimnya; klik kartu membuka modal detail yang sama dengan Reguler.
+  const KHI_SOURCE_ORDER = ["Reguler","Forisa","DDCT"];
+  let khiGroups = [], khiRendered = [], khiNotFound = [], khiWarnings = [], khiTotalJo = 0;
+  let khiMeta = {sources:{}, joCol:"KUMPULAN_JO_AKTIF", produkCol:"NAMA_PRODUK"};
+  let khiLoadedOnce = false;
 
-  function loadKirimanHariIni(){
-    if(!khiInitialized){
-      makeColumnsResizable("tblKirimanHariIni");
-      khiInitialized = true;
+  async function loadKirimanHariIni(force=false){
+    const sec = document.getElementById("khiSections"); if(!sec) return;
+    const btn = document.getElementById("khiRefreshBtn");
+    if(btn){ btn.disabled = true; btn.classList.add("spinning"); }
+    if(!khiLoadedOnce || force){
+      sec.innerHTML = `<div class="kor-grid">` + Array(3).fill(`<div class="kor-card" style="cursor:default;"><div class="skeleton" style="height:14px;width:80%;"></div><div class="skeleton" style="height:12px;width:45%;margin-top:14px;"></div><div class="skeleton" style="height:22px;width:30%;margin-top:18px;"></div></div>`).join("") + `</div>`;
     }
-    const body = document.getElementById("khiBody");
-    const countEl = document.getElementById("khiRowCount");
-    if(countEl) countEl.innerText = "";
-    if(!dataKirimanHariIni || dataKirimanHariIni.length === 0){
-      if(body) {
-        body.innerHTML = `<tr><td colspan="10"><div class="empty"><span class="ic">🚚</span>Belum ada data pengiriman hari ini.</div></td></tr>`;
-      }
-      return;
-    }
-    renderKHITable(dataKirimanHariIni);
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/hari-ini${force?"?refresh=1":""}`, {cache:"no-store"});
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat Kiriman Hari Ini");
+      khiGroups = data.groups || []; khiNotFound = data.not_found || []; khiWarnings = data.warnings || [];
+      khiTotalJo = data.count_jo || 0;
+      khiMeta = {sources: data.sources || {}, joCol: data.jo_col || khiMeta.joCol, produkCol: data.produk_col || khiMeta.produkCol};
+      khiLoadedOnce = true;
+      renderKirimanHariIni();
+      if(force) toast("Kiriman Hari Ini diperbarui", "success");
+    }catch(e){
+      sec.innerHTML = `<div class="card"><div class="empty"><span class="ic">⚠️</span>${escHtml(e.message)}</div></div>`;
+    }finally{ if(btn){ btn.disabled = false; btn.classList.remove("spinning"); } }
   }
 
-  function renderKHITable(rows){
-    const body = document.getElementById("khiBody");
-    const countEl = document.getElementById("khiRowCount");
-    if(!body) return;
-    if(!rows || rows.length === 0){
-      body.innerHTML = `<tr><td colspan="10"><div class="empty"><span class="ic">📭</span>Data tidak ditemukan.</div></td></tr>`;
-      if(countEl) countEl.innerText = "0 baris";
+  function renderKirimanHariIni(){
+    const sec = document.getElementById("khiSections"); if(!sec) return;
+    const kw = (document.getElementById("khiSearch")?.value || "").trim().toLowerCase();
+    const info = document.getElementById("khiInfo");
+    const clearBtn = document.getElementById("khiClearBtn");
+    if(clearBtn) clearBtn.style.display = khiTotalJo ? "" : "none";
+    if(info) info.innerText = khiGroups.length ? `${khiGroups.length} produk · ${khiTotalJo} JO kirim` : "";
+
+    // peringatan: JO yang sudah tidak ada di kartu order + sumber yang gagal dibaca
+    let warn = "";
+    if(khiNotFound.length){
+      warn += `<div class="khi-warn">⚠️ JO berikut sudah tidak ditemukan di Kartu Order (mungkin selesai atau JO-nya berubah). Hapus dari daftar bila tidak perlu:<div class="kor-jo-preview">` +
+        khiNotFound.map(j=>`<span class="kor-jo-chip">${escHtml(j)}<span class="khi-x" data-jo="${escHtml(j)}" title="Hapus dari daftar" onclick="khiRemove(this.dataset.jo)">✕</span></span>`).join("") + `</div></div>`;
+    }
+    if(khiWarnings.length){
+      warn += `<div class="khi-warn">⚠️ ${khiWarnings.map(escHtml).join("<br>")}</div>`;
+    }
+    document.getElementById("khiWarn").innerHTML = warn;
+
+    khiRendered = khiGroups.filter(g => !kw
+      || g.produk.toLowerCase().includes(kw)
+      || g.jo_kirim.some(j => j.toLowerCase().includes(kw)));
+    if(!khiRendered.length){
+      sec.innerHTML = `<div class="card"><div class="empty"><span class="ic">${kw ? "🗂️" : "🚚"}</span>${kw ? "Tidak ada produk atau JO yang cocok dengan pencarian." : "Belum ada JO kirim. Ketik JO di atas lalu klik Panggil."}</div></div>`;
       return;
     }
-    let html = "";
-    rows.forEach(r => {
-      const statusClass = (r.status || "").toLowerCase().includes("selesai") || (r.status || "").toLowerCase().includes("kirim") ? "ok" :
-                          (r.status || "").toLowerCase().includes("batal") || (r.status || "").toLowerCase().includes("tunda") ? "warn" : "amber";
-      html += `<tr>
-        <td><b>${r.no_sj || "-"}</b></td>
-        <td>${r.tanggal || "-"}</td>
-        <td>${r.customer || "-"}</td>
-        <td>${r.product || "-"}</td>
-        <td>${r.no_jo || "-"}</td>
-        <td>${r.kendaraan || "-"}</td>
-        <td>${r.ukuran || "-"}</td>
-        <td>${r.qty || "-"}</td>
-        <td><span class="badge ${statusClass}">${r.status || "Proses"}</span></td>
-        <td style="color:var(--ink-soft);">${r.keterangan || "-"}</td>
-      </tr>`;
-    });
-    body.innerHTML = html;
-    if(countEl) countEl.innerText = `${rows.length} baris`;
-  }
-
-  function filterKHITable(){
-    const kw = (document.getElementById("khiSearch")?.value || "").toLowerCase().trim();
-    if(!dataKirimanHariIni || dataKirimanHariIni.length === 0){
-      const rows = document.querySelectorAll("#khiBody tr");
-      let visible = 0;
-      rows.forEach(r => {
-        if(r.querySelector(".empty")) return;
-        const match = r.innerText.toLowerCase().includes(kw);
-        r.style.display = match ? "" : "none";
-        if(match) visible++;
+    const labels = [...KHI_SOURCE_ORDER, ...new Set(khiRendered.map(g=>g.sumber).filter(s=>!KHI_SOURCE_ORDER.includes(s)))];
+    khiRendered.sort((a,b)=> labels.indexOf(a.sumber) - labels.indexOf(b.sumber));  // sort stabil: urutan input tetap terjaga di tiap sumber
+    let html = "", idx = 0;
+    labels.forEach(label=>{
+      const items = khiRendered.filter(g=>g.sumber===label);
+      if(!items.length) return;
+      html += `<div class="khi-sec">${escHtml(label)} <span class="badge info">${items.length} produk</span></div><div class="kor-grid">`;
+      items.forEach(g=>{
+        const i = khiRendered.indexOf(g);
+        const chips = g.jo_kirim.map(j=>`<span class="kor-jo-chip" title="${escHtml(j)}">${escHtml(j)}<span class="khi-x" data-jo="${escHtml(j)}" title="Hapus dari daftar" onclick="event.stopPropagation(); khiRemove(this.dataset.jo)">✕</span></span>`).join("");
+        html += `<div class="kor-card" style="animation-delay:${Math.min(idx*12,250)}ms" tabindex="0" role="button" onclick="openKhiDetail(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openKhiDetail(${i});}">
+          <h4>${escHtml(g.produk)}</h4>
+          <div class="kor-jo-preview">${chips}</div>
+          <div class="kor-card-foot"><span class="badge info">🚚 ${g.jo_kirim.length} JO kirim</span><span class="kor-link">Lihat detail ›</span></div>
+        </div>`;
+        idx++;
       });
-      const countEl = document.getElementById("khiRowCount");
-      if(countEl && rows.length > 0 && !rows[0].querySelector(".empty")){
-        countEl.innerText = `${visible} baris ditemukan`;
-      }
-      return;
-    }
-    const filtered = dataKirimanHariIni.filter(item => {
-      const text = `${item.no_sj || ""} ${item.customer || ""} ${item.product || ""} ${item.no_jo || ""} ${item.kendaraan || ""}`.toLowerCase();
-      return text.includes(kw);
+      html += `</div>`;
     });
-    renderKHITable(filtered);
+    sec.innerHTML = html;
+  }
+
+  function openKhiDetail(i){
+    const g = khiRendered[i]; if(!g) return;
+    const src = khiMeta.sources[g.sumber] || {headers:[], aliases:{}};
+    koOpenDetailWith(g, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol}, `${g.sumber} · ${g.jo_count} JO aktif`);
+  }
+
+  async function khiPost(path, payload){
+    const res = await fetch(`${API_BASE}/api/kiriman/hari-ini/${path}`, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)});
+    const data = await res.json();
+    if(!res.ok || !data.success) throw new Error(data.message || "Permintaan gagal");
+    return data;
+  }
+
+  async function khiAdd(){
+    const input = document.getElementById("khiAddInput");
+    const btn = document.getElementById("khiAddBtn");
+    const jos = input.value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
+    if(!jos.length){ toast("Ketik JO dulu.", "error"); return; }
+    btn.disabled = true;
+    try{
+      const d = await khiPost("add", {jos, user: currentUser ? currentUser.nama : "Tidak diketahui"});
+      const parts = [];
+      if(d.added.length) parts.push(`${d.added.length} JO dipanggil`);
+      if(d.duplicates.length) parts.push(`${d.duplicates.length} sudah ada di daftar`);
+      if(d.not_found.length) parts.push(`tidak ditemukan: ${d.not_found.map(escHtml).join(", ")}`);
+      toast(parts.join(" · ") || "Tidak ada perubahan", d.added.length ? "success" : "error");
+      if(d.warnings && d.warnings.length) toast(d.warnings.map(escHtml).join("<br>"), "error");
+      input.value = d.not_found.join(", ");  // sisakan yang tidak ketemu supaya bisa dikoreksi
+      await loadKirimanHariIni();
+    }catch(e){
+      toast(escHtml(e.message), "error");
+    }finally{ btn.disabled = false; }
+  }
+
+  async function khiRemove(jo){
+    try{
+      await khiPost("remove", {jo});
+      await loadKirimanHariIni();
+    }catch(e){ toast(escHtml(e.message), "error"); }
+  }
+
+  async function khiClear(){
+    if(!(await askConfirm("Kosongkan daftar?", "Semua JO kirim di daftar akan dihapus. Data Kartu Order tidak terpengaruh."))) return;
+    try{
+      await khiPost("clear", {});
+      toast("Daftar Kiriman Hari Ini dikosongkan", "success");
+      await loadKirimanHariIni();
+    }catch(e){ toast(escHtml(e.message), "error"); }
   }
 </script>
 </body>

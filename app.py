@@ -1614,9 +1614,16 @@ REGULER_KO_ALIASES = {
     "TUNGGU_PERMINTAAN": "Tunggu Permintaan",
 }
 
-_reguler_ko_cache = {"ts": 0.0, "payload": None}
-_reguler_ko_cache_lock = threading.Lock()
+# Tab Forisa & DDCT ada di spreadsheet yang SAMA dengan REGULER_KO, strukturnya
+# diasumsikan sama (kolom KUMPULAN_JO_AKTIF & NAMA_PRODUK).
+FORISA_KO_SHEET_NAME = os.environ.get("FORISA_KO_SHEET_NAME", "FORISA_KO")
+DDCT_KO_SHEET_NAME = os.environ.get("DDCT_KO_SHEET_NAME", "DDCT_KO")
+
+_ko_cache = {}  # nama sheet -> {"ts": float, "payload": dict}
+_ko_cache_lock = threading.Lock()
 _REGULER_KO_CACHE_TTL = int(os.environ.get("REGULER_KO_CACHE_TTL_SECONDS", "60"))
+_ko_spreadsheet_handle = {"sh": None}
+_ko_spreadsheet_lock = threading.Lock()
 
 
 def _reguler_ko_alias(header):
@@ -1628,16 +1635,29 @@ def _reguler_ko_alias(header):
     return h.replace("_", " ").strip().title()
 
 
-def _read_reguler_ko(force=False):
-    now = time.time()
-    with _reguler_ko_cache_lock:
-        cached = _reguler_ko_cache["payload"]
-        fresh = cached is not None and (now - _reguler_ko_cache["ts"]) < _REGULER_KO_CACHE_TTL
-    if fresh and not force:
-        return cached
-
+def _ko_spreadsheet():
+    """Handle spreadsheet kartu order (Reguler/Forisa/DDCT satu spreadsheet),
+    dibuka sekali lalu dipakai ulang."""
+    with _ko_spreadsheet_lock:
+        if _ko_spreadsheet_handle["sh"] is not None:
+            return _ko_spreadsheet_handle["sh"]
     sh = get_client().open_by_key(REGULER_KO_SPREADSHEET_ID)
-    values = sh.worksheet(REGULER_KO_SHEET_NAME).get_all_values()
+    with _ko_spreadsheet_lock:
+        _ko_spreadsheet_handle["sh"] = sh
+    return sh
+
+
+def _read_ko_sheet(sheet_name, force=False):
+    """Baca satu tab kartu order (REGULER_KO / FORISA_KO / DDCT_KO), dikelompokkan
+    per NAMA_PRODUK. Cache TTL pendek per nama sheet."""
+    now = time.time()
+    with _ko_cache_lock:
+        entry = _ko_cache.get(sheet_name)
+        fresh = entry is not None and (now - entry["ts"]) < _REGULER_KO_CACHE_TTL
+    if fresh and not force:
+        return entry["payload"]
+
+    values = _ko_spreadsheet().worksheet(sheet_name).get_all_values()
     if not values:
         payload = {"headers": [], "aliases": {}, "products": [], "total_rows": 0}
     else:
@@ -1672,10 +1692,13 @@ def _read_reguler_ko(force=False):
             "total_rows": total_rows,
         }
 
-    with _reguler_ko_cache_lock:
-        _reguler_ko_cache["ts"] = now
-        _reguler_ko_cache["payload"] = payload
+    with _ko_cache_lock:
+        _ko_cache[sheet_name] = {"ts": now, "payload": payload}
     return payload
+
+
+def _read_reguler_ko(force=False):
+    return _read_ko_sheet(REGULER_KO_SHEET_NAME, force=force)
 
 
 @app.route("/api/kiriman/reguler", methods=["GET"])
@@ -1697,6 +1720,209 @@ def get_kiriman_reguler():
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal membaca {REGULER_KO_SHEET_NAME}: {e}"}), 500
 
+
+
+# --------------------------------------------------------------------------
+# 6c.1 KIRIMAN HARI INI -- daftar JO kirim diinput MANUAL oleh user; kartunya
+#      "dipanggil" dari REGULER_KO / FORISA_KO / DDCT_KO (satu spreadsheet).
+#      Data sumber TIDAK diubah / dipindah: yang disimpan cuma daftar JO-nya,
+#      di tab KIRIMAN_HARI_INI (spreadsheet utama, dibuat otomatis kalau belum
+#      ada) sehingga dilihat sama oleh semua user.
+#      Yang disimpan adalah teks JO LENGKAP hasil pencocokan (bukan yang
+#      diketik), jadi user boleh mengetik cukup nomor belakangnya (mis. 3034).
+# --------------------------------------------------------------------------
+KHI_SHEET_NAME = os.environ.get("KIRIMAN_HARI_INI_SHEET_NAME", "KIRIMAN_HARI_INI")
+KHI_HEADER = ["TANGGAL", "USER", "JO"]
+_KHI_SPLIT_RE = re.compile(r"[\s,;]+")        # pemisah JO yang diketik user
+_KHI_CELL_SPLIT_RE = re.compile(r"[,;\n|]+")  # jaga-jaga kalau 1 sel berisi >1 JO
+
+
+def _ko_sources():
+    return [
+        ("Reguler", REGULER_KO_SHEET_NAME),
+        ("Forisa", FORISA_KO_SHEET_NAME),
+        ("DDCT", DDCT_KO_SHEET_NAME),
+    ]
+
+
+def _khi_norm(text):
+    return re.sub(r"\s+", "", str(text or "")).upper()
+
+
+def _khi_worksheet():
+    try:
+        return get_sheet(KHI_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        sh = _spreadsheet_handle["sh"]  # sudah terisi oleh get_sheet() barusan
+        ws = sh.add_worksheet(title=KHI_SHEET_NAME, rows=500, cols=len(KHI_HEADER))
+        ws.append_row(KHI_HEADER)
+        with _worksheet_cache_lock:
+            _worksheet_cache[KHI_SHEET_NAME] = ws
+        return ws
+
+
+def _khi_read_entries(ws):
+    entries = []
+    for i, row in enumerate(ws.get_all_values()[1:], start=2):
+        jo = row[2].strip() if len(row) > 2 else ""
+        if jo:
+            entries.append({
+                "row": i,
+                "tanggal": row[0].strip() if len(row) > 0 else "",
+                "user": row[1].strip() if len(row) > 1 else "",
+                "jo": jo,
+            })
+    return entries
+
+
+def _khi_build_index(force=False):
+    """Baca ketiga tab kartu order, balikin (sources, index, warnings).
+    Tab yang gagal dibaca (mis. belum ada) cuma jadi warning, tidak menggagalkan
+    sumber lain."""
+    sources, index, warnings = {}, [], []
+    for label, sheet_name in _ko_sources():
+        try:
+            payload = _read_ko_sheet(sheet_name, force=force)
+        except Exception as e:
+            warnings.append(f"{label}: gagal membaca sheet {sheet_name} ({e or type(e).__name__})")
+            continue
+        sources[label] = {"headers": payload["headers"], "aliases": payload["aliases"]}
+        for pi, prod in enumerate(payload["products"]):
+            for row in prod["rows"]:
+                cell = str(row.get(REGULER_KO_JO_COL, "")).strip()
+                if not cell:
+                    continue
+                tokens = [t.strip() for t in _KHI_CELL_SPLIT_RE.split(cell) if t.strip()]
+                index.append({
+                    "label": label, "pi": pi, "prod": prod, "cell": cell,
+                    "norms": {_khi_norm(cell), *(_khi_norm(t) for t in tokens)},
+                    "suffixes": {k for k in (_fstl_suffix_key(t) for t in tokens) if k},
+                })
+    return sources, index, warnings
+
+
+def _khi_lookup(index, typed, exact_only=False):
+    """Cocokkan JO ke index. Urutan: sama persis dulu; kalau tidak ada dan yang
+    diketik cuma nomor (tanpa '/'), cocokkan nomor belakangnya."""
+    t = _khi_norm(typed)
+    if not t:
+        return []
+    hits = [it for it in index if t in it["norms"]]
+    if hits or exact_only or "/" in t:
+        return hits
+    k = _fstl_suffix_key(t)
+    return [it for it in index if k in it["suffixes"]] if k else []
+
+
+@app.route("/api/kiriman/hari-ini", methods=["GET"])
+def khi_get():
+    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
+    try:
+        entries = _khi_read_entries(_khi_worksheet())
+        sources, index, warnings = _khi_build_index(force=force)
+        groups, not_found, seen = {}, [], set()
+        for e in entries:
+            n = _khi_norm(e["jo"])
+            if n in seen:
+                continue
+            seen.add(n)
+            hits = _khi_lookup(index, e["jo"], exact_only=True)
+            if not hits:
+                not_found.append(e["jo"])
+                continue
+            for it in hits:
+                g = groups.setdefault((it["label"], it["pi"]), {
+                    "sumber": it["label"], "produk": it["prod"]["produk"],
+                    "jo_count": it["prod"]["jo_count"], "rows": it["prod"]["rows"], "jo_kirim": [],
+                })
+                if it["cell"] not in g["jo_kirim"]:
+                    g["jo_kirim"].append(it["cell"])
+        return jsonify({
+            "success": True,
+            "jo_col": REGULER_KO_JO_COL,
+            "produk_col": REGULER_KO_PRODUK_COL,
+            "sources": sources,
+            "groups": list(groups.values()),
+            "not_found": not_found,
+            "warnings": warnings,
+            "count_jo": len(seen),
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal memuat Kiriman Hari Ini: {e}"}), 500
+
+
+@app.route("/api/kiriman/hari-ini/add", methods=["POST"])
+def khi_add():
+    """Body: {jos: "3034, 3120" | ["3034", ...], user}. Tiap JO dicocokkan ke
+    Reguler/Forisa/DDCT; yang ketemu disimpan (JO lengkap), yang tidak ketemu
+    dilaporkan balik."""
+    body = request.get_json(silent=True) or {}
+    raw = body.get("jos")
+    if isinstance(raw, str):
+        raw = [raw]
+    typed = []
+    for item in (raw or []):
+        for part in _KHI_SPLIT_RE.split(str(item)):
+            part = part.strip()
+            if part and part not in typed:
+                typed.append(part)
+    if not typed:
+        return jsonify({"success": False, "message": "JO wajib diisi"}), 400
+    user = str(body.get("user", "")).strip() or "Tidak diketahui"
+    try:
+        _sources, index, warnings = _khi_build_index()
+        ws = _khi_worksheet()
+        existing = {_khi_norm(e["jo"]) for e in _khi_read_entries(ws)}
+        added, duplicates, not_found, new_rows = [], [], [], []
+        now = _wib_now_str()
+        for t in typed:
+            hits = _khi_lookup(index, t)
+            if not hits:
+                not_found.append(t)
+                continue
+            for it in hits:
+                n = _khi_norm(it["cell"])
+                if n in existing:
+                    if it["cell"] not in duplicates:
+                        duplicates.append(it["cell"])
+                    continue
+                existing.add(n)
+                added.append(it["cell"])
+                new_rows.append([now, user, it["cell"]])
+        if new_rows:
+            ws.append_rows(new_rows, value_input_option="RAW")
+        return jsonify({"success": True, "added": added, "duplicates": duplicates,
+                        "not_found": not_found, "warnings": warnings})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menambah JO: {e}"}), 500
+
+
+@app.route("/api/kiriman/hari-ini/remove", methods=["POST"])
+def khi_remove():
+    body = request.get_json(silent=True) or {}
+    jo = str(body.get("jo", "")).strip()
+    if not jo:
+        return jsonify({"success": False, "message": "JO wajib diisi"}), 400
+    try:
+        ws = _khi_worksheet()
+        rows = [e["row"] for e in _khi_read_entries(ws) if _khi_norm(e["jo"]) == _khi_norm(jo)]
+        for r in sorted(rows, reverse=True):
+            ws.delete_rows(r)
+        return jsonify({"success": True, "deleted": len(rows)})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menghapus JO: {e}"}), 500
+
+
+@app.route("/api/kiriman/hari-ini/clear", methods=["POST"])
+def khi_clear():
+    try:
+        ws = _khi_worksheet()
+        n = len(_khi_read_entries(ws))
+        if n:
+            ws.batch_clear([f"A2:C{max(ws.row_count, 2)}"])
+        return jsonify({"success": True, "deleted": n})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal mengosongkan daftar: {e}"}), 500
 
 
 # --------------------------------------------------------------------------
