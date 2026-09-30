@@ -1951,6 +1951,82 @@ def ko_add_jo_bulk():
         return jsonify({"success": False, "message": f"Gagal menambah JO bulk: {e}"}), 500
 
 
+# --- Revisi kartu order -> tab REGULER_KO_REVISI (spreadsheet yang sama dengan REGULER_KO) ---
+KO_REVISI_SHEET_NAME = os.environ.get("REGULER_KO_REVISI_SHEET_NAME", "REGULER_KO_REVISI")
+KO_REVISI_HEADER = [
+    "TANGGAL", "USER", "SUMBER", "NAMA_PRODUK", "JO",
+    "KOLOM", "NILAI_LAMA", "NILAI_BARU", "KETERANGAN", "STATUS",
+]
+
+
+def _ko_revisi_worksheet():
+    """Tab REGULER_KO_REVISI di spreadsheet kartu order. Dibuat otomatis (lengkap
+    dengan header) kalau belum ada -- service account harus punya akses Editor."""
+    sh = _ko_spreadsheet()
+    try:
+        return sh.worksheet(KO_REVISI_SHEET_NAME)
+    except gspread.exceptions.WorksheetNotFound:
+        try:
+            ws = sh.add_worksheet(title=KO_REVISI_SHEET_NAME, rows=1000, cols=len(KO_REVISI_HEADER))
+            ws.append_row(KO_REVISI_HEADER)
+            return ws
+        except gspread.exceptions.APIError as e:
+            raise RuntimeError(
+                f"Tidak bisa membuat tab {KO_REVISI_SHEET_NAME} di spreadsheet kartu order "
+                f"(pastikan service account punya akses Editor): {e}")
+
+
+@app.route("/api/kiriman/reguler/revisi", methods=["POST"])
+def ko_revisi():
+    """Catat permintaan revisi kartu order sebagai 1 baris baru di REGULER_KO_REVISI.
+    Data di REGULER_KO / FORISA_KO / DDCT_KO TIDAK diubah -- ini hanya log revisi.
+
+    Body JSON:
+        nama_produk : nama produk                          (wajib)
+        keterangan  : alasan / isi revisi                  (wajib)
+        jo          : nomor JO ("" = seluruh produk)       (opsional)
+        kolom       : nama kolom yang direvisi             (opsional)
+        nilai_lama, nilai_baru                             (opsional)
+        sumber      : "Reguler" | "Forisa" | "DDCT"        (opsional)
+        user        : nama pengirim                        (opsional)
+    """
+    body = request.get_json(silent=True) or {}
+    g = lambda k: str(body.get(k, "") or "").strip()
+    nama_produk, keterangan = g("nama_produk"), g("keterangan")
+    if not nama_produk:
+        return jsonify({"success": False, "message": "Field 'nama_produk' wajib diisi."}), 400
+    if not keterangan:
+        return jsonify({"success": False, "message": "Field 'keterangan' wajib diisi."}), 400
+
+    # Waktu WIB (server Render biasanya UTC)
+    wib = timezone(timedelta(hours=7))
+    data = {
+        "TANGGAL": datetime.now(wib).strftime("%d-%m-%Y %H:%M"),
+        "USER": g("user") or "Tidak diketahui",
+        "SUMBER": g("sumber") or "Reguler",
+        "NAMA_PRODUK": nama_produk,
+        "JO": g("jo") or "(Seluruh produk)",
+        "KOLOM": g("kolom"),
+        "NILAI_LAMA": g("nilai_lama"),
+        "NILAI_BARU": g("nilai_baru"),
+        "KETERANGAN": keterangan,
+        "STATUS": "BARU",
+    }
+    try:
+        ws = _ko_revisi_worksheet()
+        header = [str(x).strip() for x in (ws.row_values(1) or [])]
+        if not any(header):          # tab ada tapi masih kosong -> tulis header dulu
+            ws.append_row(KO_REVISI_HEADER)   # sheet kosong -> baris 1
+            header = list(KO_REVISI_HEADER)
+        # Isi sesuai urutan header yang ada di sheet (kalau kamu ubah/urutkan ulang kolom, tetap aman)
+        row = [data.get(h.upper(), "") for h in header]
+        # RAW: teks apa adanya, tidak ditafsirkan sebagai rumus/tanggal oleh Sheets
+        ws.append_row(row, value_input_option="RAW")
+        return jsonify({"success": True, "message": f"Revisi untuk '{nama_produk}' terkirim ke {KO_REVISI_SHEET_NAME}."})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal mengirim revisi: {e}"}), 500
+
+
 # --------------------------------------------------------------------------
 # 6c.1 KIRIMAN HARI INI -- daftar JO kirim diinput MANUAL oleh user; kartunya
 #      "dipanggil" dari REGULER_KO / FORISA_KO / DDCT_KO (satu spreadsheet).

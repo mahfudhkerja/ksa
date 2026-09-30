@@ -874,6 +874,7 @@
       <div class="kor-modal-body">
         <div class="kor-modal-tools">
           <button class="btn-outline" onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
+          <button class="btn-outline" id="korRevisiBtn" style="border-color:var(--warn); color:var(--warn);" onclick="koOpenRevisi()">✏️ Revisi</button>
           <span class="badge amber" id="korHiddenInfo" style="display:none;"></span>
           <div class="kor-colpicker" id="korColPicker" onclick="event.stopPropagation()">
             <div class="kor-cp-actions">
@@ -955,6 +956,48 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             Simpan JO
           </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- KIRIMAN — MODAL REVISI (dikirim ke sheet REGULER_KO_REVISI) -->
+  <div id="korRevisiOverlay" style="display:none; position:fixed; inset:0; background:rgba(18,44,71,.5); z-index:1300; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target===this)koCloseRevisi()">
+    <div style="background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:100%; max-width:540px; max-height:92vh; overflow-y:auto; animation:popIn .22s var(--ease);">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:18px 22px 14px; border-bottom:1px solid var(--line);">
+        <div>
+          <div style="font-size:11px; font-weight:700; color:var(--warn); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;">Revisi Kartu Order</div>
+          <h3 style="margin:0; font-size:15px; line-height:1.4; overflow-wrap:anywhere;" id="korRevisiTitle">Revisi</h3>
+        </div>
+        <button class="wrw-modal-close" onclick="koCloseRevisi()">✕</button>
+      </div>
+      <div style="padding:20px 22px;">
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nomor JO</label>
+          <select id="korRevJo" onchange="koRevisiFillOld()" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;"></select>
+        </div>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Kolom yang direvisi <span style="font-weight:500; color:var(--ink-faint);">(opsional)</span></label>
+          <select id="korRevKolom" onchange="koRevisiFillOld()" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;"></select>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:14px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nilai Saat Ini</label>
+            <input id="korRevLama" readonly style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box; background:var(--blue-50); color:var(--ink-soft);" placeholder="-">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nilai Baru</label>
+            <input id="korRevBaru" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="Nilai yang benar" autocomplete="off">
+          </div>
+        </div>
+        <div style="margin-bottom:18px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Keterangan Revisi <span style="color:var(--warn);">*</span></label>
+          <textarea id="korRevKet" style="width:100%; min-height:90px; border:1.5px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box; resize:vertical; line-height:1.5;" placeholder="Jelaskan apa yang perlu direvisi / alasannya..."></textarea>
+        </div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn-outline" onclick="koCloseRevisi()">Batal</button>
+          <button class="btn-outline" id="korRevSubmitBtn" style="background:var(--warn); color:white; border-color:var(--warn);" onclick="koSubmitRevisi()">Kirim Revisi</button>
         </div>
       </div>
     </div>
@@ -3274,7 +3317,7 @@
     koOpenDetailWith(p, {headers:koHeaders, aliases:koAliases, joCol:koJoCol, produkCol:koProdukCol}, `${p.jo_count} JO aktif`);
   }
   function koOpenDetailWith(p, ctx, sub){
-    koDetail = {p, headers:ctx.headers, aliases:ctx.aliases, joCol:ctx.joCol, produkCol:ctx.produkCol};
+    koDetail = {p, headers:ctx.headers, aliases:ctx.aliases, joCol:ctx.joCol, produkCol:ctx.produkCol, sumber:ctx.sumber || "Reguler"};
     document.getElementById("korDetailTitle").innerText = p.produk;
     document.getElementById("korDetailSub").innerText = sub;
     document.getElementById("korColPicker").classList.remove("open");
@@ -3323,7 +3366,69 @@
   function koTogglePicker(ev){ ev.stopPropagation(); document.getElementById("korColPicker").classList.toggle("open"); }
   document.addEventListener("click", ()=>{ const el=document.getElementById("korColPicker"); if(el) el.classList.remove("open"); });
   function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
-  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ closeKoDetail(); koCloseAddJoModal(); }});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ const rv=document.getElementById("korRevisiOverlay"); if(rv && rv.style.display==="flex"){ koCloseRevisi(); return; } closeKoDetail(); koCloseAddJoModal(); }});
+
+  // ── Revisi kartu order → dikirim ke sheet REGULER_KO_REVISI ─────────────
+  function koOpenRevisi(){
+    const d = koDetail; if(!d) return;
+    document.getElementById("korRevisiTitle").innerText = d.p.produk;
+    const jos = d.p.rows.map(r => String(r[d.joCol] ?? "").trim()).filter(Boolean);
+    document.getElementById("korRevJo").innerHTML =
+      `<option value="">(Seluruh produk ini)</option>` +
+      jos.map(j => `<option value="${escHtml(j)}">${escHtml(j)}</option>`).join("");
+    document.getElementById("korRevKolom").innerHTML =
+      `<option value="">(Umum / tidak spesifik)</option>` +
+      koDataCols().map(h => `<option value="${escHtml(h)}">${escHtml(koAlias(h))}</option>`).join("");
+    document.getElementById("korRevLama").value = "";
+    document.getElementById("korRevBaru").value = "";
+    document.getElementById("korRevKet").value = "";
+    document.getElementById("korRevisiOverlay").style.display = "flex";
+    setTimeout(()=> document.getElementById("korRevKet").focus(), 80);
+  }
+  function koCloseRevisi(){ document.getElementById("korRevisiOverlay").style.display = "none"; }
+  // Isi otomatis "Nilai Saat Ini" dari data kartu, berdasarkan JO + kolom yang dipilih.
+  function koRevisiFillOld(){
+    const d = koDetail; if(!d) return;
+    const jo = document.getElementById("korRevJo").value;
+    const kol = document.getElementById("korRevKolom").value;
+    let v = "";
+    if(jo && kol){
+      const row = d.p.rows.find(r => String(r[d.joCol] ?? "").trim() === jo);
+      v = row ? String(row[kol] ?? "").trim() : "";
+    }
+    document.getElementById("korRevLama").value = v;
+  }
+  async function koSubmitRevisi(){
+    const d = koDetail; if(!d) return;
+    const ket = document.getElementById("korRevKet").value.trim();
+    const kol = document.getElementById("korRevKolom").value;
+    const baru = document.getElementById("korRevBaru").value.trim();
+    if(!ket){ toast("Keterangan revisi wajib diisi", "error"); return; }
+    if(kol && !baru){ toast("Isi Nilai Baru untuk kolom yang dipilih", "error"); return; }
+    const btn = document.getElementById("korRevSubmitBtn");
+    btn.disabled = true; btn.innerText = "Mengirim...";
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/revisi`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          sumber: d.sumber, nama_produk: d.p.produk,
+          jo: document.getElementById("korRevJo").value,
+          kolom: kol ? koAlias(kol) : "",
+          nilai_lama: document.getElementById("korRevLama").value,
+          nilai_baru: baru, keterangan: ket,
+          user: currentUser ? currentUser.nama : "Tidak diketahui"
+        })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal mengirim revisi");
+      toast(data.message, "success");
+      koCloseRevisi();
+    }catch(e){
+      toast("Gagal: " + e.message, "error");
+    }finally{
+      btn.disabled = false; btn.innerText = "Kirim Revisi";
+    }
+  }
 
   // ── Tambah JO Baru ──────────────────────────────────────────
   function koOpenAddJoModal(sheetName){
@@ -4335,7 +4440,7 @@
   function openKhiDetail(i){
     const g = khiRendered[i]; if(!g) return;
     const src = khiMeta.sources[g.sumber] || {headers:[], aliases:{}};
-    koOpenDetailWith(g, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol}, `${g.sumber} · ${g.jo_count} JO aktif`);
+    koOpenDetailWith(g, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol, sumber:g.sumber}, `${g.sumber} · ${g.jo_count} JO aktif`);
   }
 
   async function khiPost(path, payload){
