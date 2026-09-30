@@ -508,6 +508,8 @@
   .kor-card:hover{transform:translateY(-2px); box-shadow:var(--shadow-lg); border-color:var(--blue-200);}
   .kor-card:active{transform:translateY(0) scale(.98);}
   .kor-card:focus-visible{outline:none; border-color:var(--blue); box-shadow:0 0 0 4px var(--blue-50);}
+  .kor-dd-item{padding:9px 14px; font-size:13px; line-height:1.45; cursor:pointer; border-bottom:1px solid var(--line-soft); white-space:normal; overflow-wrap:anywhere; word-break:break-word;}
+  .kor-dd-item:hover{background:var(--blue-50);}
   .kor-card h4{font-size:13.5px; font-weight:700; color:var(--ink); line-height:1.45; overflow-wrap:anywhere;}
   .kor-jo-preview{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px;}
   .kor-jo-chip{font-size:11px; font-weight:600; color:var(--blue-dark); background:var(--blue-50); border:1px solid var(--blue-100); padding:3px 9px; border-radius:20px; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
@@ -888,7 +890,7 @@
 
   <!-- KIRIMAN REGULER — MODAL TAMBAH JO BARU -->
   <div id="korAddJoOverlay" style="display:none; position:fixed; inset:0; background:rgba(18,44,71,.45); z-index:1080; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target===this)koCloseAddJoModal()">
-    <div style="background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:100%; max-width:460px; overflow:hidden; animation:popIn .22s var(--ease);">
+    <div style="background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:100%; max-width:560px; max-height:92vh; overflow-y:auto; animation:popIn .22s var(--ease);">
       <div style="display:flex; justify-content:space-between; align-items:center; padding:18px 22px 14px; border-bottom:1px solid var(--line);">
         <div>
           <div style="font-size:11px; font-weight:700; color:var(--blue); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;">Kartu Order</div>
@@ -898,6 +900,13 @@
       </div>
       <div style="padding:20px 22px;">
         <input type="hidden" id="korAddJoSheet" value="REGULER_KO">
+        <input type="hidden" id="korAddJoMode" value="single">
+
+        <!-- Tab mode: satu JO / bulk -->
+        <div style="display:flex; gap:6px; background:var(--blue-50); padding:4px; border-radius:10px; margin-bottom:16px;">
+          <button type="button" id="korModeSingleBtn" onclick="korSetAddMode('single')" style="flex:1; height:34px; border:none; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer;">Satu JO</button>
+          <button type="button" id="korModeBulkBtn" onclick="korSetAddMode('bulk')" style="flex:1; height:34px; border:none; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer;">Bulk (banyak JO)</button>
+        </div>
 
         <!-- Nama Produk -->
         <div style="margin-bottom:14px;">
@@ -910,6 +919,7 @@
           <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;" id="korAddJoProdukHint">Pilih produk existing → JO disisipkan di bawah grup produk tersebut. Produk baru → diletakkan di bawah semua data.</div>
         </div>
 
+        <div id="korAddJoSingle">
         <!-- Nomor JO -->
         <div style="margin-bottom:14px;">
           <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nomor JO <span style="color:var(--warn);">*</span></label>
@@ -926,6 +936,14 @@
             <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Planning Rol/Pcs</label>
             <input id="korAddJoRol" type="number" min="0" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
           </div>
+        </div>
+        </div>
+        <!-- Bulk: satu JO per baris -->
+        <div id="korAddJoBulk" style="display:none; margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Daftar JO <span style="color:var(--warn);">*</span></label>
+          <textarea id="korAddJoBulkText" oninput="korBulkUpdateCount()" spellcheck="false" style="width:100%; min-height:170px; border:1.5px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13px; font-family:ui-monospace,Menlo,Consolas,monospace; background:#fbfcfe; box-sizing:border-box; resize:vertical; line-height:1.6;" placeholder="JO/25/X/1/3456&#10;JO/25/X/1/3457&#9;12000&#9;8&#10;JO/25/X/1/3458&#9;5000"></textarea>
+          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px; line-height:1.55;">Satu JO per baris. Planning Meter &amp; Rol/Pcs opsional — pisahkan dengan <b>tab</b> (bisa langsung paste dari Excel), spasi, atau <b>;</b> &nbsp;→&nbsp; <code>JO &nbsp;meter &nbsp;rol</code>. Semua JO masuk ke produk yang dipilih di atas.</div>
+          <div id="korBulkCount" style="font-size:12px; font-weight:700; color:var(--blue-dark); margin-top:8px;"></div>
         </div>
 
         <!-- Info posisi sisip -->
@@ -3317,11 +3335,47 @@
     document.getElementById("korAddJoInput").value = "";
     document.getElementById("korAddJoMeter").value = "";
     document.getElementById("korAddJoRol").value = "";
+    document.getElementById("korAddJoBulkText").value = "";
+    document.getElementById("korBulkCount").innerText = "";
+    korSetAddMode("single");
     document.getElementById("korAddJoInsertInfo").style.display = "none";
     document.getElementById("korProdukDropdown").style.display = "none";
     const ov = document.getElementById("korAddJoOverlay");
     ov.style.display = "flex";
     setTimeout(()=> document.getElementById("korAddJoProdukInput").focus(), 80);
+  }
+  function korSetAddMode(mode){
+    document.getElementById("korAddJoMode").value = mode;
+    const bulk = mode === "bulk";
+    document.getElementById("korAddJoSingle").style.display = bulk ? "none" : "";
+    document.getElementById("korAddJoBulk").style.display   = bulk ? "" : "none";
+    const on  = "background:var(--card); color:var(--blue-dark); box-shadow:var(--shadow);";
+    const off = "background:transparent; color:var(--ink-soft); box-shadow:none;";
+    const base = "flex:1; height:34px; border:none; border-radius:8px; font-size:12.5px; font-weight:700; cursor:pointer;";
+    document.getElementById("korModeSingleBtn").style.cssText = base + (bulk ? off : on);
+    document.getElementById("korModeBulkBtn").style.cssText   = base + (bulk ? on : off);
+    document.getElementById("korAddJoSubmitBtn").lastChild.textContent = bulk ? " Simpan Semua JO" : " Simpan JO";
+    if(bulk) korBulkUpdateCount();
+  }
+  // Parse textarea bulk -> [{jo, planning_meter, planning_rol}], plus daftar duplikat di dalam input.
+  function korParseBulk(){
+    const raw = document.getElementById("korAddJoBulkText").value || "";
+    const items = [], seen = new Set(); let dupes = 0;
+    raw.split(/\r?\n/).forEach(line => {
+      const t = line.trim(); if(!t) return;
+      const parts = (t.includes("\t") ? t.split("\t") : t.split(/[;\s]+/)).map(s => s.trim());
+      const jo = parts[0]; if(!jo) return;
+      const key = jo.toUpperCase();
+      if(seen.has(key)){ dupes++; return; }
+      seen.add(key);
+      items.push({ jo, planning_meter: parts[1] || "", planning_rol: parts[2] || "" });
+    });
+    return { items, dupes };
+  }
+  function korBulkUpdateCount(){
+    const { items, dupes } = korParseBulk();
+    const el = document.getElementById("korBulkCount");
+    el.innerText = items.length ? `${items.length} JO siap disimpan` + (dupes ? ` · ${dupes} baris ganda diabaikan` : "") : "";
   }
   function koCloseAddJoModal(){
     document.getElementById("korAddJoOverlay").style.display = "none";
@@ -3337,13 +3391,18 @@
     const all = koProducts.map(p => p.produk);
     const filtered = kw ? all.filter(p => p.toLowerCase().includes(kw)) : all;
     if(!filtered.length){ dd.style.display = "none"; korUpdateInsertInfo(kw, false); return; }
-    dd.innerHTML = filtered.slice(0, 60).map(p =>
-      `<div style="padding:9px 14px; font-size:13px; cursor:pointer; border-bottom:1px solid var(--line-soft);" onmousedown="korSelectProduk(${JSON.stringify(p)})" onmouseover="this.style.background='var(--blue-50)'" onmouseout="this.style.background=''">${escHtml(p)}</div>`
+    korProdukFiltered = filtered.slice(0, 60);
+    // Nama produk disimpan di array & dipanggil lewat index -> aman dari tanda kutip/karakter khusus di nama produk.
+    dd.innerHTML = korProdukFiltered.map((p, i) =>
+      `<div class="kor-dd-item" data-i="${i}" title="${escHtml(p)}" onmousedown="event.preventDefault(); korPickProduk(${i})">${escHtml(p)}</div>`
     ).join("");
     dd.style.display = "block";
   }
+  let korProdukFiltered = [];
+  function korPickProduk(i){ if(korProdukFiltered[i] != null) korSelectProduk(korProdukFiltered[i]); }
   function korSelectProduk(nama){
-    document.getElementById("korAddJoProdukInput").value = nama;
+    const inp = document.getElementById("korAddJoProdukInput");
+    inp.value = nama; inp.title = nama;
     document.getElementById("korProdukDropdown").style.display = "none";
     korUpdateInsertInfo(nama, true);
   }
@@ -3363,7 +3422,32 @@
     if(dd && !dd.contains(ev.target) && ev.target.id !== "korAddJoProdukInput") dd.style.display = "none";
   });
 
+  async function koSubmitAddJoBulk(){
+    const sheet      = document.getElementById("korAddJoSheet").value;
+    const namaProduk = document.getElementById("korAddJoProdukInput").value.trim();
+    const { items }  = korParseBulk();
+    if(!namaProduk){ toast("Nama Produk wajib diisi", "error"); return; }
+    if(!items.length){ toast("Isi minimal satu JO", "error"); return; }
+    const btn = document.getElementById("korAddJoSubmitBtn");
+    btn.disabled = true; btn.lastChild.textContent = " Menyimpan...";
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/add-jo-bulk`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ sheet, nama_produk: namaProduk, items })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal menyimpan JO");
+      toast(data.message, "success");
+      koCloseAddJoModal();
+      loadKoReguler(true);
+    }catch(e){
+      toast("Gagal: " + e.message, "error");
+    }finally{
+      btn.disabled = false; btn.lastChild.textContent = document.getElementById("korAddJoMode").value === "bulk" ? " Simpan Semua JO" : " Simpan JO";
+    }
+  }
   async function koSubmitAddJo(){
+    if(document.getElementById("korAddJoMode").value === "bulk") return koSubmitAddJoBulk();
     const sheet      = document.getElementById("korAddJoSheet").value;
     const jo         = document.getElementById("korAddJoInput").value.trim();
     const namaProduk = document.getElementById("korAddJoProdukInput").value.trim();
@@ -3372,7 +3456,7 @@
     if(!namaProduk){ toast("Nama Produk wajib diisi", "error"); return; }
     if(!jo){ toast("Nomor JO wajib diisi", "error"); return; }
     const btn = document.getElementById("korAddJoSubmitBtn");
-    btn.disabled = true; btn.innerText = "⏳ Menyimpan...";
+    btn.disabled = true; btn.lastChild.textContent = " Menyimpan...";
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler/add-jo`, {
         method: "POST", headers: {"Content-Type":"application/json"},
@@ -3386,7 +3470,7 @@
     }catch(e){
       toast("Gagal: " + e.message, "error");
     }finally{
-      btn.disabled = false; btn.innerText = "✓ Simpan JO";
+      btn.disabled = false; btn.lastChild.textContent = " Simpan JO";
     }
   }
 

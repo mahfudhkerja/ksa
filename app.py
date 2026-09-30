@@ -1842,6 +1842,115 @@ def ko_add_jo():
         return jsonify({"success": False, "message": f"Gagal menambah JO: {e}"}), 500
 
 
+@app.route("/api/kiriman/reguler/add-jo-bulk", methods=["POST"])
+def ko_add_jo_bulk():
+    """Tambah BANYAK JO sekaligus ke satu produk di sheet kartu order.
+
+    Semua JO disisipkan berurutan (sesuai urutan input) TEPAT SETELAH baris terakhir
+    grup produk tsb; produk baru -> di bawah semua data. Hanya 1x baca + 1x tulis ke
+    Google Sheets (jauh lebih cepat & hemat kuota daripada add-jo berulang).
+    JO yang sudah ada di grup produk itu dilewati (dilaporkan di respons).
+
+    Body JSON:
+        sheet       : "REGULER_KO" | "FORISA_KO" | "DDCT_KO"      (wajib)
+        nama_produk : nama produk                                   (wajib)
+        items       : [{"jo": "...", "planning_meter": "", "planning_rol": ""}, ...]  (wajib)
+    """
+    body = request.get_json(silent=True) or {}
+    sheet_name  = str(body.get("sheet", REGULER_KO_SHEET_NAME)).strip()
+    nama_produk = str(body.get("nama_produk", "")).strip()
+    items       = body.get("items") or []
+
+    allowed_sheets = {REGULER_KO_SHEET_NAME, FORISA_KO_SHEET_NAME, DDCT_KO_SHEET_NAME}
+    if sheet_name not in allowed_sheets:
+        return jsonify({"success": False, "message": f"Sheet '{sheet_name}' tidak dikenal."}), 400
+    if not nama_produk:
+        return jsonify({"success": False, "message": "Field 'nama_produk' wajib diisi."}), 400
+    if not isinstance(items, list) or not items:
+        return jsonify({"success": False, "message": "Field 'items' wajib berisi minimal satu JO."}), 400
+    if len(items) > 500:
+        return jsonify({"success": False, "message": "Maksimal 500 JO per sekali simpan."}), 400
+
+    try:
+        ws = _ko_spreadsheet().worksheet(sheet_name)
+        all_values = ws.get_all_values()
+        if not all_values:
+            return jsonify({"success": False, "message": f"Sheet {sheet_name} kosong/belum ada header."}), 400
+
+        headers = [str(x).strip() for x in all_values[0]]
+        col_jo_idx     = headers.index(REGULER_KO_JO_COL)     if REGULER_KO_JO_COL in headers else 0
+        col_produk_idx = headers.index(REGULER_KO_PRODUK_COL) if REGULER_KO_PRODUK_COL in headers else 1
+        col_pm_idx = headers.index("PLANNING_METER")   if "PLANNING_METER" in headers else None
+        col_pr_idx = headers.index("PLANNING_ROL_PCS") if "PLANNING_ROL_PCS" in headers else None
+
+        norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().upper()
+        target_key = norm(nama_produk)
+
+        last_row_of_product = None
+        last_data_row = 1
+        existing_jo = set()
+        for row_idx, row in enumerate(all_values[1:], start=2):
+            if any(c.strip() for c in row):
+                last_data_row = row_idx
+            cell_produk = row[col_produk_idx] if col_produk_idx < len(row) else ""
+            if norm(cell_produk) == target_key:
+                last_row_of_product = row_idx
+                cell_jo = row[col_jo_idx] if col_jo_idx < len(row) else ""
+                if cell_jo.strip():
+                    existing_jo.add(norm(cell_jo))
+
+        new_rows, added, skipped = [], [], []
+        seen = set()
+        for it in items:
+            jo = str((it or {}).get("jo", "")).strip()
+            if not jo:
+                continue
+            k = norm(jo)
+            if k in seen or k in existing_jo:
+                skipped.append(jo)
+                continue
+            seen.add(k)
+            r = [""] * len(headers)
+            r[col_jo_idx] = jo
+            r[col_produk_idx] = nama_produk
+            pm = str((it or {}).get("planning_meter", "")).strip()
+            pr = str((it or {}).get("planning_rol", "")).strip()
+            if pm and col_pm_idx is not None:
+                r[col_pm_idx] = pm
+            if pr and col_pr_idx is not None:
+                r[col_pr_idx] = pr
+            new_rows.append(r)
+            added.append(jo)
+
+        if not new_rows:
+            return jsonify({
+                "success": False,
+                "message": f"Tidak ada JO baru yang disimpan ({len(skipped)} JO sudah ada di produk ini).",
+                "skipped": skipped,
+            }), 400
+
+        insert_at = (last_row_of_product + 1) if last_row_of_product is not None else (last_data_row + 1)
+        try:
+            ws.insert_rows(new_rows, row=insert_at, value_input_option="USER_ENTERED")
+        except AttributeError:   # gspread versi lama tanpa insert_rows
+            for offset, r in enumerate(new_rows):
+                ws.insert_row(r, index=insert_at + offset, value_input_option="USER_ENTERED")
+
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet_name, None)
+
+        msg = f"{len(added)} JO berhasil ditambahkan ke '{nama_produk}' (mulai baris {insert_at})."
+        if skipped:
+            msg += f" {len(skipped)} JO dilewati karena sudah ada."
+        return jsonify({
+            "success": True, "message": msg, "added": added, "skipped": skipped,
+            "inserted_at_row": insert_at, "sheet": sheet_name,
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menambah JO bulk: {e}"}), 500
+
+
 # --------------------------------------------------------------------------
 # 6c.1 KIRIMAN HARI INI -- daftar JO kirim diinput MANUAL oleh user; kartunya
 #      "dipanggil" dari REGULER_KO / FORISA_KO / DDCT_KO (satu spreadsheet).
