@@ -4027,12 +4027,18 @@
   let khiMeta = {sources:{}, joCol:"KUMPULAN_JO_AKTIF", produkCol:"NAMA_PRODUK"};
   let khiLoadedOnce = false;
 
+  // Kerangka kartu saat loading: judul sumber + 3 kartu (nama produk, chip JO, badge)
+  function khiSkeleton(n=3){
+    const card = `<div class="kor-card" style="cursor:default;"><div class="skeleton" style="height:14px;width:80%;"></div><div style="display:flex;gap:6px;margin-top:14px;"><div class="skeleton" style="height:22px;width:42%;border-radius:20px;"></div><div class="skeleton" style="height:22px;width:30%;border-radius:20px;"></div></div><div class="skeleton" style="height:22px;width:30%;margin-top:18px;"></div></div>`;
+    return `<div class="khi-sec"><div class="skeleton" style="height:14px;width:90px;"></div></div><div class="kor-grid">${Array(n).fill(card).join("")}</div>`;
+  }
+
   async function loadKirimanHariIni(force=false){
     const sec = document.getElementById("khiSections"); if(!sec) return;
     const btn = document.getElementById("khiRefreshBtn");
     if(btn){ btn.disabled = true; btn.classList.add("spinning"); }
     if(!khiLoadedOnce || force){
-      sec.innerHTML = `<div class="kor-grid">` + Array(3).fill(`<div class="kor-card" style="cursor:default;"><div class="skeleton" style="height:14px;width:80%;"></div><div class="skeleton" style="height:12px;width:45%;margin-top:14px;"></div><div class="skeleton" style="height:22px;width:30%;margin-top:18px;"></div></div>`).join("") + `</div>`;
+      sec.innerHTML = khiSkeleton();
     }
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/hari-ini${force?"?refresh=1":""}`, {cache:"no-store"});
@@ -4116,6 +4122,8 @@
     const jos = input.value.split(/[\s,;]+/).map(s=>s.trim()).filter(Boolean);
     if(!jos.length){ toast("Ketik JO dulu.", "error"); return; }
     btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span>Memanggil...`;
+    document.getElementById("khiSections").innerHTML = khiSkeleton();  // tampil sampai kartu baru selesai dimuat
     try{
       const d = await khiPost("add", {jos, user: currentUser ? currentUser.nama : "Tidak diketahui"});
       const parts = [];
@@ -4128,23 +4136,34 @@
       await loadKirimanHariIni();
     }catch(e){
       toast(escHtml(e.message), "error");
-    }finally{ btn.disabled = false; }
+      renderKirimanHariIni();  // gagal: kembalikan tampilan sebelumnya, jangan biarkan skeleton menggantung
+    }finally{ btn.disabled = false; btn.innerText = "Panggil"; }
   }
 
   async function khiRemove(jo){
+    document.getElementById("khiSections").innerHTML = khiSkeleton();
     try{
       await khiPost("remove", {jo});
       await loadKirimanHariIni();
-    }catch(e){ toast(escHtml(e.message), "error"); }
+    }catch(e){
+      toast(escHtml(e.message), "error");
+      renderKirimanHariIni();  // gagal: kembalikan tampilan sebelumnya
+    }
   }
 
   async function khiClear(){
     if(!(await askConfirm("Kosongkan daftar?", "Semua JO kirim di daftar akan dihapus. Data Kartu Order tidak terpengaruh."))) return;
+    const btn = document.getElementById("khiClearBtn");
+    btn.disabled = true;
+    document.getElementById("khiSections").innerHTML = khiSkeleton();
     try{
       await khiPost("clear", {});
       toast("Daftar Kiriman Hari Ini dikosongkan", "success");
       await loadKirimanHariIni();
-    }catch(e){ toast(escHtml(e.message), "error"); }
+    }catch(e){
+      toast(escHtml(e.message), "error");
+      renderKirimanHariIni();
+    }finally{ btn.disabled = false; }
   }
 </script>
 </body>
