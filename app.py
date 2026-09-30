@@ -1721,6 +1721,126 @@ def get_kiriman_reguler():
         return jsonify({"success": False, "message": f"Gagal membaca {REGULER_KO_SHEET_NAME}: {e}"}), 500
 
 
+@app.route("/api/kiriman/reguler/add-jo", methods=["POST"])
+def ko_add_jo():
+    """Tambah JO baru ke sheet kartu order (REGULER_KO / FORISA_KO / DDCT_KO).
+
+    Logika sisip:
+    1. Scan kolom NAMA_PRODUK dari atas ke bawah.
+    2. Catat baris terakhir yang NAMA_PRODUK-nya cocok dengan produk yang dikirim.
+    3. Sisipkan baris baru TEPAT SETELAH baris terakhir itu (insert_row),
+       sehingga JO baru ada di bagian paling bawah grup produk tsb.
+    4. Kalau nama produk belum ada di sheet → append di baris paling bawah data
+       (setelah baris non-kosong terakhir).
+
+    Body JSON:
+        sheet      : "REGULER_KO" | "FORISA_KO" | "DDCT_KO"  (wajib)
+        jo         : nomor/kode JO baru                        (wajib)
+        nama_produk: nama produk                               (wajib)
+        planning_meter : angka / string                        (opsional)
+        planning_rol   : angka / string                        (opsional)
+        extra_cols     : {HEADER: nilai, ...}                  (opsional, kolom lain)
+    """
+    body = request.get_json(silent=True) or {}
+    sheet_name = str(body.get("sheet", REGULER_KO_SHEET_NAME)).strip()
+    jo          = str(body.get("jo", "")).strip()
+    nama_produk = str(body.get("nama_produk", "")).strip()
+
+    # Validasi sheet diizinkan
+    allowed_sheets = {REGULER_KO_SHEET_NAME, FORISA_KO_SHEET_NAME, DDCT_KO_SHEET_NAME}
+    if sheet_name not in allowed_sheets:
+        return jsonify({"success": False, "message": f"Sheet '{sheet_name}' tidak dikenal."}), 400
+    if not jo:
+        return jsonify({"success": False, "message": "Field 'jo' wajib diisi."}), 400
+    if not nama_produk:
+        return jsonify({"success": False, "message": "Field 'nama_produk' wajib diisi."}), 400
+
+    try:
+        sh = _ko_spreadsheet()
+        ws = sh.worksheet(sheet_name)
+        all_values = ws.get_all_values()
+
+        if not all_values:
+            return jsonify({"success": False, "message": f"Sheet {sheet_name} kosong/belum ada header."}), 400
+
+        # --- Baca header (baris pertama) ---
+        headers = [str(x).strip() for x in all_values[0]]
+
+        # Temukan index kolom kunci
+        try:
+            col_jo_idx      = headers.index(REGULER_KO_JO_COL)    # KUMPULAN_JO_AKTIF
+        except ValueError:
+            col_jo_idx = 0
+        try:
+            col_produk_idx  = headers.index(REGULER_KO_PRODUK_COL) # NAMA_PRODUK
+        except ValueError:
+            col_produk_idx = 1
+
+        # Kolom opsional dari alias
+        extra_cols = body.get("extra_cols") or {}
+        planning_meter = str(body.get("planning_meter", "")).strip()
+        planning_rol   = str(body.get("planning_rol", "")).strip()
+        try:
+            col_pm_idx = headers.index("PLANNING_METER")
+        except ValueError:
+            col_pm_idx = None
+        try:
+            col_pr_idx = headers.index("PLANNING_ROL_PCS")
+        except ValueError:
+            col_pr_idx = None
+
+        # Bangun baris baru (panjang = jumlah kolom header)
+        new_row = [""] * len(headers)
+        new_row[col_jo_idx]     = jo
+        new_row[col_produk_idx] = nama_produk
+        if planning_meter and col_pm_idx is not None:
+            new_row[col_pm_idx] = planning_meter
+        if planning_rol and col_pr_idx is not None:
+            new_row[col_pr_idx] = planning_rol
+        for col_name, val in extra_cols.items():
+            if col_name in headers:
+                new_row[headers.index(col_name)] = str(val)
+
+        # --- Cari baris terakhir grup produk (1-based, termasuk header di baris 1) ---
+        target_key = re.sub(r"\s+", " ", nama_produk).strip().upper()
+        last_row_of_product = None   # 1-based sheet row number
+        last_data_row       = 1      # baris data non-kosong terakhir (1-based)
+
+        for row_idx, row in enumerate(all_values[1:], start=2):  # start=2: baris 1 = header
+            # Cek apakah baris ini non-kosong
+            if any(c.strip() for c in row):
+                last_data_row = row_idx
+            # Cocokkan nama produk (normalisasi spasi, uppercase)
+            cell_produk = row[col_produk_idx].strip() if col_produk_idx < len(row) else ""
+            key = re.sub(r"\s+", " ", cell_produk).strip().upper()
+            if key == target_key:
+                last_row_of_product = row_idx
+
+        if last_row_of_product is not None:
+            # Produk ditemukan → sisipkan tepat setelah baris terakhir grup
+            insert_at = last_row_of_product + 1
+            ws.insert_row(new_row, index=insert_at, value_input_option="USER_ENTERED")
+            action = f"disisipkan setelah baris {last_row_of_product} (grup produk '{nama_produk}')"
+        else:
+            # Produk belum ada → append setelah baris data terakhir
+            insert_at = last_data_row + 1
+            ws.insert_row(new_row, index=insert_at, value_input_option="USER_ENTERED")
+            action = f"ditambahkan di baris {insert_at} (produk baru, di bawah semua data)"
+
+        # Invalidasi cache sheet ini supaya fetch berikutnya baca data terbaru
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet_name, None)
+
+        return jsonify({
+            "success": True,
+            "message": f"JO '{jo}' berhasil {action}.",
+            "inserted_at_row": insert_at,
+            "sheet": sheet_name,
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menambah JO: {e}"}), 500
+
 
 # --------------------------------------------------------------------------
 # 6c.1 KIRIMAN HARI INI -- daftar JO kirim diinput MANUAL oleh user; kartunya

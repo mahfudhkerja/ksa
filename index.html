@@ -886,6 +886,62 @@
     </div>
   </div>
 
+  <!-- KIRIMAN REGULER — MODAL TAMBAH JO BARU -->
+  <div id="korAddJoOverlay" style="display:none; position:fixed; inset:0; background:rgba(18,44,71,.45); z-index:1080; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target===this)koCloseAddJoModal()">
+    <div style="background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:100%; max-width:460px; overflow:hidden; animation:popIn .22s var(--ease);">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:18px 22px 14px; border-bottom:1px solid var(--line);">
+        <div>
+          <div style="font-size:11px; font-weight:700; color:var(--blue); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;">Kartu Order</div>
+          <h3 style="margin:0;" id="korAddJoTitle">Tambah JO Baru</h3>
+        </div>
+        <button class="wrw-modal-close" onclick="koCloseAddJoModal()">✕</button>
+      </div>
+      <div style="padding:20px 22px;">
+        <input type="hidden" id="korAddJoSheet" value="REGULER_KO">
+
+        <!-- Nama Produk -->
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nama Produk <span style="color:var(--warn);">*</span></label>
+          <div style="position:relative;">
+            <input id="korAddJoProdukInput" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;"
+              placeholder="Ketik atau pilih produk dari daftar..." oninput="korFilterProdukList()" onfocus="korShowProdukList()" autocomplete="off">
+            <div id="korProdukDropdown" style="display:none; position:absolute; top:44px; left:0; right:0; background:var(--card); border:1.5px solid var(--blue); border-radius:10px; box-shadow:var(--shadow-lg); max-height:200px; overflow-y:auto; z-index:10;"></div>
+          </div>
+          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px;" id="korAddJoProdukHint">Pilih produk existing → JO disisipkan di bawah grup produk tersebut. Produk baru → diletakkan di bawah semua data.</div>
+        </div>
+
+        <!-- Nomor JO -->
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nomor JO <span style="color:var(--warn);">*</span></label>
+          <input id="korAddJoInput" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="Contoh: JO/25/X/1/3456">
+        </div>
+
+        <!-- Planning Meter & Rol/Pcs -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Planning Meter</label>
+            <input id="korAddJoMeter" type="number" min="0" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Planning Rol/Pcs</label>
+            <input id="korAddJoRol" type="number" min="0" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
+          </div>
+        </div>
+
+        <!-- Info posisi sisip -->
+        <div id="korAddJoInsertInfo" style="display:none; background:var(--blue-50); border:1px solid var(--blue-200); border-radius:10px; padding:10px 14px; font-size:12px; color:var(--blue-dark); margin-bottom:16px;"></div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button class="btn-outline" onclick="koCloseAddJoModal()">Batal</button>
+          <button class="btn-outline" id="korAddJoSubmitBtn" style="background:var(--ok); color:white; border-color:var(--ok);" onclick="koSubmitAddJo()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            Simpan JO
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="wrwStokOverlay" onclick="if(event.target===this)closeWrwCekStok()">
     <div class="wrw-stok-modal">
       <div class="wrw-modal-head">
@@ -1355,10 +1411,16 @@
                   <h3>🚚 Kartu Order — Reguler</h3>
                   <p style="color:var(--ink-soft); font-size:13px; margin-top:6px;">Pilih produk untuk melihat daftar JO aktif dan seluruh detailnya.</p>
                 </div>
-                <button class="btn-outline" id="korRefreshBtn" onclick="loadKoReguler(true)">
-                  <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
-                  Refresh
-                </button>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <button class="btn-outline" id="korRefreshBtn" onclick="loadKoReguler(true)">
+                    <svg class="ic ic-refresh" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>
+                    Refresh
+                  </button>
+                  <button class="btn-outline" style="border-color:var(--ok); color:var(--ok);" onclick="koOpenAddJoModal('REGULER_KO')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Tambah JO
+                  </button>
+                </div>
               </div>
               <div class="toolbar" style="margin-top:14px; margin-bottom:0;">
                 <div class="search-wrap"><span class="ic">🔍</span><input id="korSearch" placeholder="Cari produk atau JO..." oninput="renderKoReguler()"></div>
@@ -3243,7 +3305,90 @@
   function koTogglePicker(ev){ ev.stopPropagation(); document.getElementById("korColPicker").classList.toggle("open"); }
   document.addEventListener("click", ()=>{ const el=document.getElementById("korColPicker"); if(el) el.classList.remove("open"); });
   function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
-  document.addEventListener("keydown",e=>{if(e.key==="Escape") closeKoDetail();});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ closeKoDetail(); koCloseAddJoModal(); }});
+
+  // ── Tambah JO Baru ──────────────────────────────────────────
+  function koOpenAddJoModal(sheetName){
+    document.getElementById("korAddJoSheet").value = sheetName || "REGULER_KO";
+    document.getElementById("korAddJoTitle").innerText =
+      sheetName === "FORISA_KO" ? "Tambah JO — Forisa" :
+      sheetName === "DDCT_KO"   ? "Tambah JO — DDCT"   : "Tambah JO — Reguler";
+    document.getElementById("korAddJoProdukInput").value = "";
+    document.getElementById("korAddJoInput").value = "";
+    document.getElementById("korAddJoMeter").value = "";
+    document.getElementById("korAddJoRol").value = "";
+    document.getElementById("korAddJoInsertInfo").style.display = "none";
+    document.getElementById("korProdukDropdown").style.display = "none";
+    const ov = document.getElementById("korAddJoOverlay");
+    ov.style.display = "flex";
+    setTimeout(()=> document.getElementById("korAddJoProdukInput").focus(), 80);
+  }
+  function koCloseAddJoModal(){
+    document.getElementById("korAddJoOverlay").style.display = "none";
+  }
+
+  function korShowProdukList(){
+    korFilterProdukList();
+  }
+  function korFilterProdukList(){
+    const kw = (document.getElementById("korAddJoProdukInput").value || "").trim().toLowerCase();
+    const dd  = document.getElementById("korProdukDropdown");
+    // Kumpulkan nama produk dari data yang sudah di-load (koProducts)
+    const all = koProducts.map(p => p.produk);
+    const filtered = kw ? all.filter(p => p.toLowerCase().includes(kw)) : all;
+    if(!filtered.length){ dd.style.display = "none"; korUpdateInsertInfo(kw, false); return; }
+    dd.innerHTML = filtered.slice(0, 60).map(p =>
+      `<div style="padding:9px 14px; font-size:13px; cursor:pointer; border-bottom:1px solid var(--line-soft);" onmousedown="korSelectProduk(${JSON.stringify(p)})" onmouseover="this.style.background='var(--blue-50)'" onmouseout="this.style.background=''">${escHtml(p)}</div>`
+    ).join("");
+    dd.style.display = "block";
+  }
+  function korSelectProduk(nama){
+    document.getElementById("korAddJoProdukInput").value = nama;
+    document.getElementById("korProdukDropdown").style.display = "none";
+    korUpdateInsertInfo(nama, true);
+  }
+  function korUpdateInsertInfo(nama, isExisting){
+    const el = document.getElementById("korAddJoInsertInfo");
+    if(!nama){ el.style.display = "none"; return; }
+    const produk = koProducts.find(p => p.produk.toLowerCase() === nama.toLowerCase());
+    if(produk){
+      el.innerHTML = `✅ Produk <b>${escHtml(produk.produk)}</b> ditemukan (<b>${produk.jo_count} JO</b>). JO baru akan disisipkan <b>setelah JO terakhir</b> grup produk ini.`;
+    } else {
+      el.innerHTML = `🆕 Produk <b>${escHtml(nama)}</b> belum ada di sheet. JO akan ditambahkan di <b>bawah semua data</b> sebagai grup baru.`;
+    }
+    el.style.display = "block";
+  }
+  document.addEventListener("click", ev => {
+    const dd = document.getElementById("korProdukDropdown");
+    if(dd && !dd.contains(ev.target) && ev.target.id !== "korAddJoProdukInput") dd.style.display = "none";
+  });
+
+  async function koSubmitAddJo(){
+    const sheet      = document.getElementById("korAddJoSheet").value;
+    const jo         = document.getElementById("korAddJoInput").value.trim();
+    const namaProduk = document.getElementById("korAddJoProdukInput").value.trim();
+    const meter      = document.getElementById("korAddJoMeter").value.trim();
+    const rol        = document.getElementById("korAddJoRol").value.trim();
+    if(!namaProduk){ toast("Nama Produk wajib diisi", "error"); return; }
+    if(!jo){ toast("Nomor JO wajib diisi", "error"); return; }
+    const btn = document.getElementById("korAddJoSubmitBtn");
+    btn.disabled = true; btn.innerText = "⏳ Menyimpan...";
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/add-jo`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ sheet, jo, nama_produk: namaProduk, planning_meter: meter, planning_rol: rol })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal menyimpan JO");
+      toast(data.message, "success");
+      koCloseAddJoModal();
+      loadKoReguler(true);   // reload data supaya grid diperbarui
+    }catch(e){
+      toast("Gagal: " + e.message, "error");
+    }finally{
+      btn.disabled = false; btn.innerText = "✓ Simpan JO";
+    }
+  }
 
   // ============================================================
   // DATA GUDANG — file diupload lewat kartu "Data Gudang" di halaman
