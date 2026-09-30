@@ -1726,8 +1726,9 @@ def get_kiriman_reguler():
 # 6c.1 KIRIMAN HARI INI -- daftar JO kirim diinput MANUAL oleh user; kartunya
 #      "dipanggil" dari REGULER_KO / FORISA_KO / DDCT_KO (satu spreadsheet).
 #      Data sumber TIDAK diubah / dipindah: yang disimpan cuma daftar JO-nya,
-#      di tab KIRIMAN_HARI_INI (spreadsheet utama, dibuat otomatis kalau belum
-#      ada) sehingga dilihat sama oleh semua user.
+#      di tab KIRIMAN_HARI_INI pada spreadsheet kartu order yang sama dengan
+#      REGULER_KO (REGULER_KO_SPREADSHEET_ID; dibuat otomatis kalau belum ada)
+#      sehingga dilihat sama oleh semua user.
 #      Yang disimpan adalah teks JO LENGKAP hasil pencocokan (bukan yang
 #      diketik), jadi user boleh mengetik cukup nomor belakangnya (mis. 3034).
 # --------------------------------------------------------------------------
@@ -1749,16 +1750,31 @@ def _khi_norm(text):
     return re.sub(r"\s+", "", str(text or "")).upper()
 
 
+_khi_ws_cache = {"ws": None}
+_khi_ws_lock = threading.Lock()
+
+
 def _khi_worksheet():
+    """Tab KIRIMAN_HARI_INI di spreadsheet kartu order (REGULER_KO_SPREADSHEET_ID),
+    BUKAN di spreadsheet utama (Login/Validasi/dst). Dibuat otomatis kalau belum
+    ada -- service account harus punya akses Editor ke spreadsheet itu."""
+    with _khi_ws_lock:
+        if _khi_ws_cache["ws"] is not None:
+            return _khi_ws_cache["ws"]
+    sh = _ko_spreadsheet()
     try:
-        return get_sheet(KHI_SHEET_NAME)
+        ws = sh.worksheet(KHI_SHEET_NAME)
     except gspread.exceptions.WorksheetNotFound:
-        sh = _spreadsheet_handle["sh"]  # sudah terisi oleh get_sheet() barusan
-        ws = sh.add_worksheet(title=KHI_SHEET_NAME, rows=500, cols=len(KHI_HEADER))
-        ws.append_row(KHI_HEADER)
-        with _worksheet_cache_lock:
-            _worksheet_cache[KHI_SHEET_NAME] = ws
-        return ws
+        try:
+            ws = sh.add_worksheet(title=KHI_SHEET_NAME, rows=500, cols=len(KHI_HEADER))
+            ws.append_row(KHI_HEADER)
+        except gspread.exceptions.APIError as e:
+            raise RuntimeError(
+                f"Tidak bisa membuat tab {KHI_SHEET_NAME} di spreadsheet kartu order "
+                f"(pastikan service account punya akses Editor): {e}")
+    with _khi_ws_lock:
+        _khi_ws_cache["ws"] = ws
+    return ws
 
 
 def _khi_read_entries(ws):
