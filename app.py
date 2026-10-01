@@ -2130,6 +2130,70 @@ def ko_revisi():
         return jsonify({"success": False, "message": f"Gagal mengirim revisi: {e}"}), 500
 
 
+# --- Hitung JO terpilih (checkbox di detail kartu order) ---------------------
+# Data yang dipakai dipilih lewat dropdown tahun di detail (2021-2026, default 2026).
+# RUMUS MENYUSUL per tahun: daftarkan fungsi di KO_HITUNG_RUMUS, contoh:
+#     def _rumus_2026(sheet_name, row): return {"SELISIH": "123"}
+#     KO_HITUNG_RUMUS[2026] = _rumus_2026
+# Fungsi menerima 1 baris kartu order (dict header -> nilai, SUDAH termasuk revisi)
+# dan mengembalikan {NAMA_KOLOM: nilai_hasil}. Tahun tanpa rumus -> hasil kosong.
+KO_HITUNG_TAHUN = list(range(2021, 2027))
+KO_HITUNG_TAHUN_DEFAULT = 2026
+KO_HITUNG_RUMUS = {}      # {tahun: fungsi(sheet_name, row) -> dict}
+
+
+def _ko_hitung_row(sheet_name, row, tahun):
+    fn = KO_HITUNG_RUMUS.get(tahun)
+    return fn(sheet_name, row) if fn else {}
+
+
+@app.route("/api/kiriman/reguler/hitung", methods=["POST"])
+def ko_hitung():
+    """Body JSON: sumber, tahun (angka ATAU list angka, 2021-2026, default 2026),
+    items: [{src_jo, src_produk}, ...] (JO yang dicentang), user."""
+    body = request.get_json(silent=True) or {}
+    sheet = _ko_sheet_for_sumber(body.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    raw_t = body.get("tahun")
+    if raw_t in (None, "", []):
+        raw_t = [KO_HITUNG_TAHUN_DEFAULT]
+    if not isinstance(raw_t, (list, tuple)):
+        raw_t = [raw_t]
+    try:
+        tahun_list = sorted({int(t) for t in raw_t})
+    except (TypeError, ValueError):
+        tahun_list = []
+    if not tahun_list or any(t not in KO_HITUNG_TAHUN for t in tahun_list):
+        return jsonify({"success": False, "message": f"Tahun harus {KO_HITUNG_TAHUN[0]}-{KO_HITUNG_TAHUN[-1]}."}), 400
+    items = body.get("items")
+    if not isinstance(items, list) or not items:
+        return jsonify({"success": False, "message": "Belum ada JO yang dipilih."}), 400
+    try:
+        payload = _read_ko_sheet(sheet, force=True)
+        hasil, hilang = [], []
+        for it in items:                       # hanya JO terpilih yang diproses
+            row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
+            if row is None:
+                hilang.append(str((it or {}).get("src_jo") or "-"))
+                continue
+            for t in tahun_list:               # tiap tahun dihitung sendiri-sendiri
+                hasil.append({"jo": row.get(REGULER_KO_JO_COL, ""), "tahun": t,
+                              "hasil": _ko_hitung_row(sheet, row, t)})
+        if not hasil:
+            return jsonify({"success": False, "message": "JO terpilih tidak ditemukan di sheet sumber. Refresh dulu."}), 404
+        n_jo = len(hasil) // len(tahun_list)
+        msg = f"{n_jo} JO diproses (data {', '.join(map(str, tahun_list))})."
+        tanpa = [t for t in tahun_list if t not in KO_HITUNG_RUMUS]
+        if tanpa:
+            msg += f" Rumus tahun {', '.join(map(str, tanpa))} belum diisi, belum ada nilai yang berubah."
+        if hilang:
+            msg += f" Tidak ditemukan: {', '.join(hilang)}."
+        return jsonify({"success": True, "tahun": tahun_list, "message": msg, "results": hasil})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menghitung: {e}"}), 500
+
+
 @app.route("/api/kiriman/reguler/hapus-revisi", methods=["POST"])
 def ko_hapus_revisi():
     """Hapus SEMUA baris revisi milik satu baris sumber (JO_ASAL + PRODUK_ASAL)

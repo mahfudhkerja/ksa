@@ -874,6 +874,11 @@
       <div class="kor-modal-body">
         <div class="kor-modal-tools">
           <button class="btn-outline" onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
+          <div style="position:relative;">
+            <button class="btn-outline" id="korTahunBtn" title="Pilih satu atau lebih tahun data untuk menghitung" onclick="koTahunToggle(event)">📅 Data 2026 ▾</button>
+            <div class="kor-colpicker" id="korTahunPicker" style="width:190px;" onclick="event.stopPropagation()"><div class="kor-cp-list" id="korTahunList"></div></div>
+          </div>
+          <button class="btn-outline" id="korHitungBtn" style="border-color:var(--ok); color:var(--ok);" disabled onclick="koHitung(this)">🧮 Hitung</button>
           <button class="btn-outline" id="korRevisiBtn" style="border-color:var(--warn); color:var(--warn);" onclick="koOpenRevisi()">✏️ Revisi</button>
           <span class="badge amber" id="korHiddenInfo" style="display:none;"></span>
           <span class="wrw-rev-legend" id="korRevLegend" style="display:none; margin-right:0;">* = hasil revisi</span>
@@ -3293,6 +3298,8 @@
     koOpenDetailWith(p, {headers:koHeaders, aliases:koAliases, joCol:koJoCol, produkCol:koProdukCol}, `${p.jo_count} JO aktif`);
   }
   function koOpenDetailWith(p, ctx, sub){
+    koSel = new Set();
+    koTahun = new Set([KO_TAHUN_DEFAULT]); koTahunRender();
     koDetail = {p, headers:ctx.headers, aliases:ctx.aliases, joCol:ctx.joCol, produkCol:ctx.produkCol, sumber:ctx.sumber || "Reguler", khi:!!ctx.khi};
     document.getElementById("korDetailTitle").innerText = p.produk;
     document.getElementById("korDetailSub").innerText = sub;
@@ -3315,10 +3322,11 @@
     const cellCls = (h) => frz[h] ? ` class="kor-frz${h===lastFrz?" kor-frz-last":""}"` : "";
     const cellStyle = (h) => frz[h] ? ` style="${boxStyle(frz[h].left, frz[h].w)}"` : "";
     const joLast = lastFrz === null ? " kor-frz-last" : "";
-    const head = `<th class="kor-frz kor-jo${joLast}" style="${boxStyle(0,KO_JO_WIDTH)}">${escHtml(koAlias(koJoCol))}</th>` + cols.map(h =>
+    const allOn = p.rows.length && koSel.size === p.rows.length;
+    const head = `<th class="kor-frz kor-jo${joLast}" style="${boxStyle(0,KO_JO_WIDTH)}"><input type="checkbox" title="Pilih semua JO" ${allOn?"checked":""} onclick="koSelAll(this.checked)" style="margin-right:6px; vertical-align:middle; cursor:pointer;">${escHtml(koAlias(koJoCol))}</th>` + cols.map(h =>
       `<th${cellCls(h)}${cellStyle(h)}>${escHtml(koAlias(h))}<span class="kor-x" title="Sembunyikan kolom ini" onclick="koToggleCol(this.dataset.h, false)" data-h="${escHtml(h)}">✕</span></th>`).join("");
-    const body = p.rows.map(r =>
-      `<tr><td class="kor-frz kor-jo${joLast}" style="${boxStyle(0,KO_JO_WIDTH)}">${escHtml(String(r[koJoCol]??"").trim() || "-")}${(r.__rev||[]).includes(koJoCol) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : ""}</td>` + cols.map(h=>{
+    const body = p.rows.map((r, ri) =>
+      `<tr${koSel.has(ri) ? ' style="background:#f1faf4;"' : ""}><td class="kor-frz kor-jo${joLast}" style="${boxStyle(0,KO_JO_WIDTH)}"><input type="checkbox" ${koSel.has(ri)?"checked":""} onclick="koSelToggle(${ri}, this.checked)" style="margin-right:6px; vertical-align:middle; cursor:pointer;">${escHtml(String(r[koJoCol]??"").trim() || "-")}${(r.__rev||[]).includes(koJoCol) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : ""}</td>` + cols.map(h=>{
         const v = String(r[h]??"").trim();
         const cls = frz[h] ? `kor-frz${h===lastFrz?" kor-frz-last":""}${v?"":" kor-empty"}` : (v?"":"kor-empty");
         const star = (r.__rev||[]).includes(h) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : "";
@@ -3329,8 +3337,69 @@
     const hi = document.getElementById("korHiddenInfo");
     hi.innerText = hid ? `${hid} kolom disembunyikan` : "";
     hi.style.display = hid ? "inline-flex" : "none";
+    koSelUpdateBtn();
     const lg = document.getElementById("korRevLegend");
     if(lg) lg.style.display = p.rows.some(r => (r.__rev||[]).length) ? "inline" : "none";
+  }
+  // ── Pilih tahun data (boleh lebih dari satu), default 2026 ─────────────
+  const KO_TAHUN_LIST = [2026, 2025, 2024, 2023, 2022, 2021], KO_TAHUN_DEFAULT = 2026;
+  let koTahun = new Set([KO_TAHUN_DEFAULT]);
+  function koTahunSorted(){ return [...koTahun].sort((a,b)=>b-a); }
+  function koTahunRender(){
+    const list = document.getElementById("korTahunList"); if(!list) return;
+    list.innerHTML = KO_TAHUN_LIST.map(y =>
+      `<label><input type="checkbox" ${koTahun.has(y)?"checked":""} onchange="koTahunSet(${y}, this.checked)"> Data ${y}</label>`).join("");
+    document.getElementById("korTahunBtn").innerText = `📅 Data ${koTahunSorted().join(", ")} ▾`;
+  }
+  function koTahunSet(y, on){
+    if(on) koTahun.add(y);
+    else if(koTahun.size > 1) koTahun.delete(y);
+    else toast("Minimal satu tahun harus dipilih", "info");
+    koTahunRender();
+  }
+  function koTahunToggle(ev){
+    ev.stopPropagation();
+    document.getElementById("korColPicker").classList.remove("open");
+    document.getElementById("korTahunPicker").classList.toggle("open");
+  }
+  document.addEventListener("click", ()=>{ const el=document.getElementById("korTahunPicker"); if(el) el.classList.remove("open"); });
+
+  // ── Checkbox JO + tombol Hitung ─────────────────────────────────────────
+  let koSel = new Set();   // indeks baris (di koDetail.p.rows) yang dicentang
+  function koSelUpdateBtn(){
+    const b = document.getElementById("korHitungBtn"); if(!b) return;
+    b.disabled = koSel.size === 0;
+    b.innerText = koSel.size ? `🧮 Hitung (${koSel.size} JO)` : "🧮 Hitung";
+  }
+  function koSelToggle(i, on){ if(on) koSel.add(i); else koSel.delete(i); koRenderTable(); }
+  function koSelAll(on){
+    koSel = new Set(on ? koDetail.p.rows.map((_, i) => i) : []);
+    koRenderTable();
+  }
+  async function koHitung(btn){
+    const d = koDetail; if(!d || !koSel.size) return;
+    const rows = [...koSel].sort((a,b)=>a-b).map(i => d.p.rows[i]).filter(Boolean);
+    const jos = rows.map(r => String(r[d.joCol] ?? "").trim() || "-");
+    const tahun = koTahunSorted();
+    if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
+    const old = btn.innerHTML; btn.disabled = true; btn.innerText = "Menghitung...";
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/hitung`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          sumber: d.sumber, tahun,
+          items: rows.map(r => ({src_jo: r.__src.jo, src_produk: r.__src.produk})),
+          user: currentUser ? currentUser.nama : "Tidak diketahui"
+        })
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal menghitung");
+      toast(data.message, "success");
+    }catch(e){
+      toast("Gagal: " + e.message, "error");
+    }finally{
+      btn.innerHTML = old; koSelUpdateBtn();
+    }
   }
   function koRenderPicker(){
     document.getElementById("korColList").innerHTML = koDataCols().map(h =>
@@ -3342,7 +3411,7 @@
   }
   function koShowAllCols(){ koHiddenCols.clear(); koSaveHidden(); koRenderTable(); koRenderPicker(); }
   function koHideAllCols(){ koDataCols().forEach(h=>koHiddenCols.add(h)); koSaveHidden(); koRenderTable(); koRenderPicker(); }
-  function koTogglePicker(ev){ ev.stopPropagation(); document.getElementById("korColPicker").classList.toggle("open"); }
+  function koTogglePicker(ev){ ev.stopPropagation(); const tp=document.getElementById("korTahunPicker"); if(tp) tp.classList.remove("open"); document.getElementById("korColPicker").classList.toggle("open"); }
   document.addEventListener("click", ()=>{ const el=document.getElementById("korColPicker"); if(el) el.classList.remove("open"); });
   function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
   document.addEventListener("keydown",e=>{if(e.key==="Escape"){ const rv=document.getElementById("korRevisiOverlay"); if(rv && rv.style.display==="flex"){ koCloseRevisi(); return; } closeKoDetail(); koCloseAddJoModal(); }});
