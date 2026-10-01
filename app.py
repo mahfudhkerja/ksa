@@ -1647,9 +1647,61 @@ def _ko_spreadsheet():
     return sh
 
 
+# Kolom tambahan di tab *_REVISI (di kanan kolom-kolom kartu order).
+KO_REVISI_EXTRA = ["TANGGAL_REVISI", "USER_REVISI", "JO_ASAL", "PRODUK_ASAL"]
+
+
+def _ko_revisi_sheet_name(sheet_name):
+    return f"{sheet_name}_REVISI"          # REGULER_KO -> REGULER_KO_REVISI, dst.
+
+
+def _ko_norm_h(h):
+    return re.sub(r"\s+", " ", str(h or "")).strip().upper()
+
+
+def _ko_src_key(produk, jo):
+    """Identitas baris SUMBER (sebelum revisi): (produk, JO) ternormalisasi."""
+    return (re.sub(r"\s+", " ", str(produk or "")).strip().upper(),
+            re.sub(r"\s+", "", str(jo or "")).upper())
+
+
+def _ko_read_revisions(sheet_name):
+    """{src_key: {HEADER_UPPER: nilai_baru}} dari tab <sheet>_REVISI.
+    Baris diproses atas -> bawah, jadi revisi PALING AKHIR menang per kolom.
+    Sel kosong = tidak direvisi. Tab tidak ada / gagal dibaca -> {} (kartu tetap tampil)."""
+    try:
+        vals = _ko_spreadsheet().worksheet(_ko_revisi_sheet_name(sheet_name)).get_all_values()
+    except Exception as e:
+        print(f"[ko revisi] dilewati ({sheet_name}): {e}")
+        return {}
+    if len(vals) < 2:
+        return {}
+    hdr = [_ko_norm_h(h) for h in vals[0]]
+    if "JO_ASAL" not in hdr or "PRODUK_ASAL" not in hdr:
+        return {}
+    i_jo, i_pr = hdr.index("JO_ASAL"), hdr.index("PRODUK_ASAL")
+    skip = set(KO_REVISI_EXTRA)
+    out = {}
+    for raw in vals[1:]:
+        g = lambda i: raw[i].strip() if i < len(raw) else ""
+        jo, pr = g(i_jo), g(i_pr)
+        if not jo and not pr:
+            continue
+        slot = out.setdefault(_ko_src_key(pr, jo), {})
+        for j, h in enumerate(hdr):
+            if not h or h in skip:
+                continue
+            v = g(j)
+            if v:
+                slot[h] = v
+    return out
+
+
 def _read_ko_sheet(sheet_name, force=False):
-    """Baca satu tab kartu order (REGULER_KO / FORISA_KO / DDCT_KO), dikelompokkan
-    per NAMA_PRODUK. Cache TTL pendek per nama sheet."""
+    """Baca satu tab kartu order (REGULER_KO / FORISA_KO / DDCT_KO), terapkan
+    revisi dari tab *_REVISI, lalu kelompokkan per NAMA_PRODUK. Cache TTL pendek.
+    Tiap baris membawa: __src = {jo, produk} identitas asli di sheet sumber, dan
+    __rev = daftar kolom hasil revisi (untuk tanda * di frontend)."""
     now = time.time()
     with _ko_cache_lock:
         entry = _ko_cache.get(sheet_name)
@@ -1663,9 +1715,7 @@ def _read_ko_sheet(sheet_name, force=False):
     else:
         headers = [str(x).strip() for x in values[0]]
         cols = [(i, h) for i, h in enumerate(headers) if h]
-        groups = {}   # key produk (normalisasi) -> {"produk": nama asli, "rows": [...]}
-        order = []
-        total_rows = 0
+        rows_all = []
         for raw in values[1:]:
             row = {}
             for i, h in cols:
@@ -1674,7 +1724,27 @@ def _read_ko_sheet(sheet_name, force=False):
                 row[h] = raw[i].strip() if i < len(raw) else ""
             if not any(row.values()):
                 continue
-            total_rows += 1
+            rows_all.append(row)
+
+        # --- terapkan revisi (revisi terakhir menang; hasilnya menimpa nilai sumber) ---
+        revs = _ko_read_revisions(sheet_name)
+        hmap = {}
+        for _, h in cols:
+            hmap.setdefault(_ko_norm_h(h), h)
+        for row in rows_all:
+            src_pr, src_jo = row.get(REGULER_KO_PRODUK_COL, ""), row.get(REGULER_KO_JO_COL, "")
+            row["__src"] = {"jo": src_jo, "produk": src_pr}
+            changed = []
+            for hu, val in (revs.get(_ko_src_key(src_pr, src_jo)) or {}).items():
+                h = hmap.get(hu)
+                if h is not None and row.get(h, "") != val:
+                    row[h] = val
+                    changed.append(h)
+            row["__rev"] = changed
+
+        groups = {}   # key produk (normalisasi) -> {"produk": nama asli, "rows": [...]}
+        order = []
+        for row in rows_all:
             produk = row.get(REGULER_KO_PRODUK_COL, "") or "(Tanpa nama produk)"
             key = re.sub(r"\s+", " ", produk).strip().upper()
             if key not in groups:
@@ -1689,7 +1759,7 @@ def _read_ko_sheet(sheet_name, force=False):
             "headers": [h for _, h in cols],
             "aliases": {h: _reguler_ko_alias(h) for _, h in cols},
             "products": products,
-            "total_rows": total_rows,
+            "total_rows": len(rows_all),
         }
 
     with _ko_cache_lock:
@@ -1951,80 +2021,145 @@ def ko_add_jo_bulk():
         return jsonify({"success": False, "message": f"Gagal menambah JO bulk: {e}"}), 500
 
 
-# --- Revisi kartu order -> tab REGULER_KO_REVISI (spreadsheet yang sama dengan REGULER_KO) ---
-KO_REVISI_SHEET_NAME = os.environ.get("REGULER_KO_REVISI_SHEET_NAME", "REGULER_KO_REVISI")
-KO_REVISI_HEADER = [
-    "TANGGAL", "USER", "SUMBER", "NAMA_PRODUK", "JO",
-    "KOLOM", "NILAI_LAMA", "NILAI_BARU", "KETERANGAN", "STATUS",
-]
+# --- Revisi kartu order -> tab REGULER_KO_REVISI / FORISA_KO_REVISI / DDCT_KO_REVISI ---
+# Header tab revisi = header tab sumber + TANGGAL_REVISI, USER_REVISI, JO_ASAL,
+# PRODUK_ASAL. Satu revisi = satu baris: hanya kolom yang direvisi yang terisi
+# (plus JO & NAMA_PRODUK terkini biar gampang dibaca). JO_ASAL/PRODUK_ASAL = identitas
+# baris di sheet sumber, supaya JO/produk pun boleh direvisi (JO pindah produk).
+# Data di sheet sumber TIDAK diubah; revisi ditimpa saat dibaca (_read_ko_sheet).
+def _ko_sheet_for_sumber(sumber):
+    return {"reguler": REGULER_KO_SHEET_NAME, "forisa": FORISA_KO_SHEET_NAME,
+            "ddct": DDCT_KO_SHEET_NAME}.get(str(sumber or "Reguler").strip().lower())
 
 
-def _ko_revisi_worksheet():
-    """Tab REGULER_KO_REVISI di spreadsheet kartu order. Dibuat otomatis (lengkap
-    dengan header) kalau belum ada -- service account harus punya akses Editor."""
+def _ko_revisi_worksheet(sheet_name):
+    """Tab *_REVISI untuk sheet sumber. Dibuat otomatis kalau belum ada; kolom yang
+    kurang (kolom tambahan / kolom sumber baru) ditambahkan di kanan header."""
     sh = _ko_spreadsheet()
+    src_header = [str(x).strip() for x in (sh.worksheet(sheet_name).row_values(1) or []) if str(x).strip()]
+    want = src_header + KO_REVISI_EXTRA
+    name = _ko_revisi_sheet_name(sheet_name)
     try:
-        return sh.worksheet(KO_REVISI_SHEET_NAME)
+        ws = sh.worksheet(name)
     except gspread.exceptions.WorksheetNotFound:
         try:
-            ws = sh.add_worksheet(title=KO_REVISI_SHEET_NAME, rows=1000, cols=len(KO_REVISI_HEADER))
-            ws.append_row(KO_REVISI_HEADER)
+            ws = sh.add_worksheet(title=name, rows=1000, cols=len(want))
+            ws.append_row(want)
             return ws
         except gspread.exceptions.APIError as e:
-            raise RuntimeError(
-                f"Tidak bisa membuat tab {KO_REVISI_SHEET_NAME} di spreadsheet kartu order "
-                f"(pastikan service account punya akses Editor): {e}")
+            raise RuntimeError(f"Tidak bisa membuat tab {name} (pastikan service account punya akses Editor): {e}")
+    cur = [str(x).strip() for x in (ws.row_values(1) or [])]
+    if not any(cur):
+        ws.append_row(want)
+        return ws
+    have = {_ko_norm_h(h) for h in cur}
+    missing = [h for h in want if _ko_norm_h(h) not in have]
+    if missing:
+        need = len(cur) + len(missing)
+        if ws.col_count < need:
+            ws.add_cols(need - ws.col_count)
+        for k, h in enumerate(missing):
+            ws.update_cell(1, len(cur) + 1 + k, h)
+    return ws
+
+
+def _ko_find_row(payload, src_jo, src_produk):
+    key = _ko_src_key(src_produk, src_jo)
+    for prod in payload["products"]:
+        for r in prod["rows"]:
+            sr = r.get("__src") or {}
+            if _ko_src_key(sr.get("produk"), sr.get("jo")) == key:
+                return r
+    return None
 
 
 @app.route("/api/kiriman/reguler/revisi", methods=["POST"])
 def ko_revisi():
-    """Catat permintaan revisi kartu order sebagai 1 baris baru di REGULER_KO_REVISI.
-    Data di REGULER_KO / FORISA_KO / DDCT_KO TIDAK diubah -- ini hanya log revisi.
-
-    Body JSON:
-        nama_produk : nama produk                          (wajib)
-        keterangan  : alasan / isi revisi                  (wajib)
-        jo          : nomor JO ("" = seluruh produk)       (opsional)
-        kolom       : nama kolom yang direvisi             (opsional)
-        nilai_lama, nilai_baru                             (opsional)
-        sumber      : "Reguler" | "Forisa" | "DDCT"        (opsional)
-        user        : nama pengirim                        (opsional)
+    """Body JSON:
+        sumber     : "Reguler" | "Forisa" | "DDCT"
+        src_jo, src_produk : identitas baris sumber (dari field __src baris)  (wajib)
+        changes    : {NAMA_KOLOM: nilai_baru} -- HANYA kolom yang berubah        (wajib)
+        user       : nama pengirim
     """
     body = request.get_json(silent=True) or {}
+    sheet = _ko_sheet_for_sumber(body.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
     g = lambda k: str(body.get(k, "") or "").strip()
-    nama_produk, keterangan = g("nama_produk"), g("keterangan")
-    if not nama_produk:
-        return jsonify({"success": False, "message": "Field 'nama_produk' wajib diisi."}), 400
-    if not keterangan:
-        return jsonify({"success": False, "message": "Field 'keterangan' wajib diisi."}), 400
-
-    # Waktu WIB (server Render biasanya UTC)
-    wib = timezone(timedelta(hours=7))
-    data = {
-        "TANGGAL": datetime.now(wib).strftime("%d-%m-%Y %H:%M"),
-        "USER": g("user") or "Tidak diketahui",
-        "SUMBER": g("sumber") or "Reguler",
-        "NAMA_PRODUK": nama_produk,
-        "JO": g("jo") or "(Seluruh produk)",
-        "KOLOM": g("kolom"),
-        "NILAI_LAMA": g("nilai_lama"),
-        "NILAI_BARU": g("nilai_baru"),
-        "KETERANGAN": keterangan,
-        "STATUS": "BARU",
-    }
+    src_jo, src_produk = g("src_jo"), g("src_produk")
+    changes_in = body.get("changes")
+    if not isinstance(changes_in, dict) or not changes_in:
+        return jsonify({"success": False, "message": "Tidak ada kolom yang diubah."}), 400
     try:
-        ws = _ko_revisi_worksheet()
+        payload = _read_ko_sheet(sheet, force=True)
+        row = _ko_find_row(payload, src_jo, src_produk)
+        if row is None:
+            return jsonify({"success": False, "message": "Baris JO tidak ditemukan di sheet sumber (mungkin sudah berubah). Refresh dulu."}), 404
+        hmap = {_ko_norm_h(h): h for h in payload["headers"]}
+        changes = {}
+        for k, v in changes_in.items():
+            real = hmap.get(_ko_norm_h(k))
+            if real is None:
+                return jsonify({"success": False, "message": f"Kolom '{k}' tidak ada di {sheet}."}), 400
+            v = str(v if v is not None else "").strip()
+            if not v:
+                return jsonify({"success": False, "message": f"Nilai baru kolom '{real}' tidak boleh kosong."}), 400
+            if v != row.get(real, ""):
+                changes[real] = v
+        if not changes:
+            return jsonify({"success": False, "message": "Tidak ada nilai yang berbeda dari data saat ini."}), 400
+
+        ws = _ko_revisi_worksheet(sheet)
         header = [str(x).strip() for x in (ws.row_values(1) or [])]
-        if not any(header):          # tab ada tapi masih kosong -> tulis header dulu
-            ws.append_row(KO_REVISI_HEADER)   # sheet kosong -> baris 1
-            header = list(KO_REVISI_HEADER)
-        # Isi sesuai urutan header yang ada di sheet (kalau kamu ubah/urutkan ulang kolom, tetap aman)
-        row = [data.get(h.upper(), "") for h in header]
-        # RAW: teks apa adanya, tidak ditafsirkan sebagai rumus/tanggal oleh Sheets
-        ws.append_row(row, value_input_option="RAW")
-        return jsonify({"success": True, "message": f"Revisi untuk '{nama_produk}' terkirim ke {KO_REVISI_SHEET_NAME}."})
+        wib = timezone(timedelta(hours=7))
+        data = {_ko_norm_h(h): v for h, v in changes.items()}
+        # JO & NAMA_PRODUK terkini selalu diisi (nilai setelah revisi) biar baris mudah dibaca
+        data.setdefault(_ko_norm_h(REGULER_KO_JO_COL), row.get(REGULER_KO_JO_COL, ""))
+        data.setdefault(_ko_norm_h(REGULER_KO_PRODUK_COL), row.get(REGULER_KO_PRODUK_COL, ""))
+        data["TANGGAL_REVISI"] = datetime.now(wib).strftime("%d-%m-%Y %H:%M")
+        data["USER_REVISI"] = g("user") or "Tidak diketahui"
+        data["JO_ASAL"] = row["__src"]["jo"]
+        data["PRODUK_ASAL"] = row["__src"]["produk"]
+        out = [data.get(_ko_norm_h(h), "") for h in header]
+        ws.append_row(out, value_input_option="RAW")   # RAW: teks apa adanya
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet, None)
+        return jsonify({"success": True, "changed": list(changes.keys()),
+                        "message": f"{len(changes)} kolom revisi dikirim ke {_ko_revisi_sheet_name(sheet)}."})
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal mengirim revisi: {e}"}), 500
+
+
+@app.route("/api/kiriman/reguler/hapus-revisi", methods=["POST"])
+def ko_hapus_revisi():
+    """Hapus SEMUA baris revisi milik satu baris sumber (JO_ASAL + PRODUK_ASAL)
+    -> kartu kembali ke data sumber."""
+    body = request.get_json(silent=True) or {}
+    sheet = _ko_sheet_for_sumber(body.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    key = _ko_src_key(body.get("src_produk"), body.get("src_jo"))
+    try:
+        ws = _ko_spreadsheet().worksheet(_ko_revisi_sheet_name(sheet))
+        vals = ws.get_all_values()
+        hdr = [_ko_norm_h(h) for h in (vals[0] if vals else [])]
+        if "JO_ASAL" not in hdr or "PRODUK_ASAL" not in hdr:
+            return jsonify({"success": False, "message": "Header JO_ASAL / PRODUK_ASAL tidak ada di tab revisi."}), 400
+        i_jo, i_pr = hdr.index("JO_ASAL"), hdr.index("PRODUK_ASAL")
+        gv = lambda r, i: r[i].strip() if i < len(r) else ""
+        hits = [n for n, r in enumerate(vals[1:], start=2)
+                if _ko_src_key(gv(r, i_pr), gv(r, i_jo)) == key]
+        if not hits:
+            return jsonify({"success": False, "message": "Tidak ada revisi untuk JO ini."}), 404
+        for n in reversed(hits):          # dari bawah, supaya nomor baris tidak bergeser
+            ws.delete_rows(n)
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet, None)
+        return jsonify({"success": True, "message": f"{len(hits)} baris revisi dihapus."})
+    except gspread.exceptions.WorksheetNotFound:
+        return jsonify({"success": False, "message": "Tab revisi belum ada."}), 404
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menghapus revisi: {e}"}), 500
 
 
 # --------------------------------------------------------------------------
