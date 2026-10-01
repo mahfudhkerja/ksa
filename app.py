@@ -1716,7 +1716,7 @@ def _read_ko_sheet(sheet_name, force=False):
         headers = [str(x).strip() for x in values[0]]
         cols = [(i, h) for i, h in enumerate(headers) if h]
         rows_all = []
-        for raw in values[1:]:
+        for rn, raw in enumerate(values[1:], start=2):
             row = {}
             for i, h in cols:
                 if h in row:      # header kembar: pakai kemunculan pertama
@@ -1724,6 +1724,7 @@ def _read_ko_sheet(sheet_name, force=False):
                 row[h] = raw[i].strip() if i < len(raw) else ""
             if not any(row.values()):
                 continue
+            row["__row"] = rn     # nomor baris di sheet sumber (untuk tulis hasil hitung)
             rows_all.append(row)
 
         # --- terapkan revisi (revisi terakhir menang; hasilnya menimpa nilai sumber) ---
@@ -2131,20 +2132,164 @@ def ko_revisi():
 
 
 # --- Hitung JO terpilih (checkbox di detail kartu order) ---------------------
-# Data yang dipakai dipilih lewat dropdown tahun di detail (2021-2026, default 2026).
-# RUMUS MENYUSUL per tahun: daftarkan fungsi di KO_HITUNG_RUMUS, contoh:
-#     def _rumus_2026(sheet_name, row): return {"SELISIH": "123"}
-#     KO_HITUNG_RUMUS[2026] = _rumus_2026
-# Fungsi menerima 1 baris kartu order (dict header -> nilai, SUDAH termasuk revisi)
-# dan mengembalikan {NAMA_KOLOM: nilai_hasil}. Tahun tanpa rumus -> hasil kosong.
+# Tahun data dipilih di dropdown detail (boleh lebih dari satu, 2021-2026, default 2026);
+# hasil antar tahun DIJUMLAHKAN. Hasil ditulis LANGSUNG ke sheet kartu order (REGULER_KO /
+# FORISA_KO / DDCT_KO) di baris JO yang dicentang, kolom sesuai header.
 KO_HITUNG_TAHUN = list(range(2021, 2027))
 KO_HITUNG_TAHUN_DEFAULT = 2026
-KO_HITUNG_RUMUS = {}      # {tahun: fungsi(sheet_name, row) -> dict}
+
+# Spreadsheet data PRINTING per tahun. Service account harus punya akses (minimal Viewer).
+PRINTING_SPREADSHEET_ID = {
+    2026: "1FRWpza_fa65jt8-n1-rN4rFFrfNBLixRxOLS_uUgYYU",
+    2025: "1xx4H5CiA_glBzbjn9tEQItvlFXbMe9T0IDVvp120eSE",
+    2024: "1S0ndjRqcXlYzQ4PKNeIFKxDA34b6BjWMCt3CcIxw0uU",
+    2023: "1jE83DZPTV5zCHkaY-S-sahHnFHLVxJE0o1GFWinm2qQ",
+    2022: "1AwcDK8ApokLB8NE7xgecYKJqXY_R09UPPLLVtIqF9w4",
+    2021: "1ooe2dWJe3D4aSdwqS0YmwDLuLv8x3SxjTSezdqpU6uM",
+}
+PRINTING_COLS = [f"PRINTING_{n}" for n in range(1, 6)]
+PRINTING_TOTAL_COL = "TOTAL_PRINTING"
+_PRINTING_CACHE_TTL = 120
+_printing_cache = {}          # tahun -> {"ts": float, "idx": {kunci: {no_printing: meter}}}
+_printing_cache_lock = threading.Lock()
 
 
-def _ko_hitung_row(sheet_name, row, tahun):
-    fn = KO_HITUNG_RUMUS.get(tahun)
-    return fn(sheet_name, row) if fn else {}
+def _hdr_find(header, *names):
+    """Index kolom (0-based) yang namanya sama (spasi/underscore/huruf besar diabaikan)."""
+    norm = lambda h: re.sub(r"[\s_]+", " ", str(h or "")).strip().upper()
+    want = [norm(n) for n in names]
+    hs = [norm(h) for h in header]
+    for w in want:
+        if w in hs:
+            return hs.index(w)
+    return None
+
+
+def _printing_key(tahun, jo_text):
+    """Kunci pencocokan JO. 2026: segmen belakang persis (huruf ikut dihitung).
+    2021-2025: hanya angka di depan segmen belakang (4437A -> 4437)."""
+    if tahun == 2026:
+        return str(import_engine._last_segment(jo_text) or "").strip().upper()
+    return _fstl_suffix_key(jo_text) or ""
+
+
+def _printing_build_index(tahun):
+    sh = get_client().open_by_key(PRINTING_SPREADSHEET_ID[tahun])
+    idx = {}
+
+    def add(key, no, val):
+        if key and 1 <= no <= 5:
+            idx.setdefault(key, {})
+            idx[key][no] = idx[key].get(no, 0.0) + val
+
+    num = lambda s: import_engine._parse_flexible_number(str(s).strip()) if str(s).strip() else None
+    cell = lambda r, i: r[i] if i < len(r) else ""
+
+    if tahun == 2026:
+        found = 0
+        for ws in sh.worksheets():                       # tab printing_1 ... printing_5
+            m = re.match(r"^printing[_\s-]*(\d+)$", ws.title.strip(), re.I)
+            if not m or not 1 <= int(m.group(1)) <= 5:
+                continue
+            found += 1
+            vals = ws.get_all_values()
+            if not vals:
+                continue
+            c_jo, c_m = _hdr_find(vals[0], "JO"), _hdr_find(vals[0], "METER AKHIR")
+            if c_jo is None or c_m is None:
+                raise RuntimeError(f"Tab {ws.title} ({tahun}): kolom JO / METER_AKHIR tidak ditemukan di baris 1 (header: {vals[0][:12]}).")
+            for r in vals[1:]:
+                v = num(cell(r, c_m))
+                if v is not None:
+                    add(_printing_key(2026, cell(r, c_jo)), int(m.group(1)), v)
+        if not found:
+            raise RuntimeError(f"Spreadsheet {tahun}: tab printing_1 ... printing_5 tidak ditemukan.")
+    else:
+        ws = next((w for w in sh.worksheets() if w.title.strip().lower() == "printing"), None)
+        if ws is None:
+            raise RuntimeError(f"Spreadsheet {tahun}: tab 'Printing' tidak ditemukan.")
+        vals = ws.get_all_values()
+        if vals:
+            c_jo, c_m, c_mc = (_hdr_find(vals[0], "JO"), _hdr_find(vals[0], "HASIL METER"), _hdr_find(vals[0], "MC"))
+            if None in (c_jo, c_m, c_mc):
+                raise RuntimeError(f"Tab Printing ({tahun}): kolom JO / HASIL METER / Mc tidak ditemukan di baris 1 (header: {vals[0][:12]}).")
+            for r in vals[1:]:
+                v = num(cell(r, c_m))
+                mc = re.search(r"\d+", str(cell(r, c_mc)))
+                if v is not None and mc:
+                    add(_printing_key(tahun, cell(r, c_jo)), int(mc.group()), v)
+    return idx
+
+
+def _printing_index(tahun, force=False):
+    now = time.time()
+    with _printing_cache_lock:
+        e = _printing_cache.get(tahun)
+        if e and not force and (now - e["ts"]) < _PRINTING_CACHE_TTL:
+            return e["idx"]
+    idx = _printing_build_index(tahun)
+    with _printing_cache_lock:
+        _printing_cache[tahun] = {"ts": now, "idx": idx}
+    return idx
+
+
+def _num_out(v):
+    v = round(float(v), 2)
+    return int(v) if v == int(v) else v
+
+
+def _ko_rumus_printing(sheet_name, row, tahun_list):
+    """PRINTING_1..5 = jumlah meter di tahun terpilih (antar tahun dijumlah);
+    TOTAL_PRINTING = jumlah PRINTING_1..5. Tidak ketemu -> 0."""
+    cell = row.get(REGULER_KO_JO_COL, "")
+    tokens = [t.strip() for t in _KHI_CELL_SPLIT_RE.split(cell) if t.strip()]
+    sums = [0.0] * 5
+    for tahun in tahun_list:                     # fokus hanya di tahun yang dipilih
+        idx = _printing_index(tahun)
+        for key in {_printing_key(tahun, t) for t in tokens}:
+            for no, v in (idx.get(key) or {}).items():
+                sums[no - 1] += v
+    out = {PRINTING_COLS[n]: _num_out(sums[n]) for n in range(5)}
+    out[PRINTING_TOTAL_COL] = _num_out(sum(sums))
+    return out
+
+
+KO_HITUNG_FORMULAS = [_ko_rumus_printing]      # rumus lain (slitting dst) menyusul di sini
+
+
+def _ko_hitung_row(sheet_name, row, tahun_list):
+    out = {}
+    for fn in KO_HITUNG_FORMULAS:
+        out.update(fn(sheet_name, row, tahun_list))
+    return out
+
+
+def _ko_write_hasil(sheet_name, hasil):
+    """Tulis hasil hitung ke sheet kartu order. hasil: [(row_dict, {kolom: nilai})]."""
+    ws = _ko_spreadsheet().worksheet(sheet_name)
+    header = ws.row_values(1)
+    norm = lambda h: re.sub(r"[\s_]+", " ", str(h)).strip().upper()
+    cmap = {}
+    for i, h in enumerate(header):
+        cmap.setdefault(norm(h), i)
+    needed = {c for _, vals in hasil for c in vals}
+    missing = [c for c in needed if norm(c) not in cmap]
+    if missing:
+        raise RuntimeError(f"Kolom {', '.join(sorted(missing))} tidak ada di sheet {sheet_name}.")
+    # jaga-jaga sheet berubah (baris disisip user) antara baca & tulis
+    c_jo = cmap.get(norm(REGULER_KO_JO_COL))
+    if c_jo is not None:
+        col = ws.col_values(c_jo + 1)
+        for row, _ in hasil:
+            rn = row["__row"]
+            cur = col[rn - 1].strip() if rn - 1 < len(col) else ""
+            if cur != row["__src"]["jo"]:
+                raise RuntimeError("Sheet berubah saat menghitung (baris bergeser). Refresh lalu ulangi.")
+    data = []
+    for row, vals in hasil:
+        for c, v in vals.items():
+            data.append({"range": gspread.utils.rowcol_to_a1(row["__row"], cmap[norm(c)] + 1), "values": [[v]]})
+    ws.batch_update(data, value_input_option="RAW")
 
 
 @app.route("/api/kiriman/reguler/hitung", methods=["POST"])
@@ -2171,25 +2316,33 @@ def ko_hitung():
         return jsonify({"success": False, "message": "Belum ada JO yang dipilih."}), 400
     try:
         payload = _read_ko_sheet(sheet, force=True)
-        hasil, hilang = [], []
-        for it in items:                       # hanya JO terpilih yang diproses
+        for t in tahun_list:                    # data printing dibaca ulang tiap klik Hitung
+            _printing_index(t, force=True)
+        pairs, hilang = [], []
+        for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
             if row is None:
                 hilang.append(str((it or {}).get("src_jo") or "-"))
                 continue
-            for t in tahun_list:               # tiap tahun dihitung sendiri-sendiri
-                hasil.append({"jo": row.get(REGULER_KO_JO_COL, ""), "tahun": t,
-                              "hasil": _ko_hitung_row(sheet, row, t)})
-        if not hasil:
+            pairs.append((row, _ko_hitung_row(sheet, row, tahun_list)))
+        if not pairs:
             return jsonify({"success": False, "message": "JO terpilih tidak ditemukan di sheet sumber. Refresh dulu."}), 404
-        n_jo = len(hasil) // len(tahun_list)
-        msg = f"{n_jo} JO diproses (data {', '.join(map(str, tahun_list))})."
-        tanpa = [t for t in tahun_list if t not in KO_HITUNG_RUMUS]
-        if tanpa:
-            msg += f" Rumus tahun {', '.join(map(str, tanpa))} belum diisi, belum ada nilai yang berubah."
+        _ko_write_hasil(sheet, pairs)
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet, None)
+        results, tertimpa = [], 0
+        for row, vals in pairs:
+            rev = set(row.get("__rev") or [])
+            shown = {c: v for c, v in vals.items() if c not in rev}   # sel yg direvisi tetap nilai revisi
+            tertimpa += len(vals) - len(shown)
+            results.append({"src_jo": row["__src"]["jo"], "src_produk": row["__src"]["produk"],
+                            "jo": row.get(REGULER_KO_JO_COL, ""), "values": shown})
+        msg = f"{len(pairs)} JO dihitung (data {', '.join(map(str, tahun_list))}) dan ditulis ke {sheet}."
+        if tertimpa:
+            msg += f" {tertimpa} sel tetap menampilkan nilai revisi (Hapus Revisi untuk memakai hasil hitung)."
         if hilang:
             msg += f" Tidak ditemukan: {', '.join(hilang)}."
-        return jsonify({"success": True, "tahun": tahun_list, "message": msg, "results": hasil})
+        return jsonify({"success": True, "tahun": tahun_list, "message": msg, "results": results})
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal menghitung: {e}"}), 500
 
