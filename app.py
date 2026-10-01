@@ -2210,9 +2210,9 @@ def _printing_build_index(tahun):
             raise RuntimeError(f"Spreadsheet {tahun}: tab 'Printing' tidak ditemukan.")
         vals = ws.get_all_values()
         if vals:
-            c_jo, c_m, c_mc = (_hdr_find(vals[0], "JO"), _hdr_find(vals[0], "HASIL METER"), _hdr_find(vals[0], "MC"))
+            c_jo, c_m, c_mc = (_hdr_find(vals[0], "JO"), _hdr_find(vals[0], "HASIL METER"), _hdr_find(vals[0], "MESIN", "MC"))
             if None in (c_jo, c_m, c_mc):
-                raise RuntimeError(f"Tab Printing ({tahun}): kolom JO / HASIL METER / Mc tidak ditemukan di baris 1 (header: {vals[0][:12]}).")
+                raise RuntimeError(f"Tab Printing ({tahun}): kolom JO / HASIL_METER / MESIN tidak ditemukan di baris 1 (header: {vals[0][:12]}).")
             for r in vals[1:]:
                 v = num(cell(r, c_m))
                 mc = re.search(r"\d+", str(cell(r, c_mc)))
