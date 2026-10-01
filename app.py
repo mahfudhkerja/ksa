@@ -2195,9 +2195,9 @@ def _printing_build_index(tahun):
             vals = ws.get_all_values()
             if not vals:
                 continue
-            c_jo, c_m = _hdr_find(vals[0], "JO"), _hdr_find(vals[0], "METER AKHIR")
+            c_jo, c_m = _hdr_find(vals[0], "JO"), _hdr_find(vals[0], "METER AKHIR JADI")
             if c_jo is None or c_m is None:
-                raise RuntimeError(f"Tab {ws.title} ({tahun}): kolom JO / METER_AKHIR tidak ditemukan di baris 1 (header: {vals[0][:12]}).")
+                raise RuntimeError(f"Tab {ws.title} ({tahun}): kolom JO / METER_AKHIR_JADI tidak ditemukan di baris 1 (header: {vals[0][:12]}).")
             for r in vals[1:]:
                 v = num(cell(r, c_m))
                 if v is not None:
