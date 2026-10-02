@@ -8,6 +8,7 @@
       "source_id": "18P0PovrtCGAtC0argpNInFGujoUYLCgBqKmMXUD0x_k",
       "source_name": "PRINTING 2 -THN. 2026.",
       "sheets": [
+        "OKTOBER 2026",
         "SEPTEMBER 2026",
         "AGS 2026",
         "JULY 2026",
@@ -342,8 +343,8 @@
       "label": "Validasi (VAL)",
       "type": "gsheet",
       "script": "import_val.py",
-      "source_id": "1VskM8j2zVMIlF492CO_t7dzfhUnK3Pg9KM8mRJqmukU",
-      "source_name": "VALIDASI SEPTEMBER",
+      "source_id": "1TMbPkVAi8oJba2BCTEuONMBInktn02EBUbcNrXkUeZY",
+      "source_name": "VALIDASI OKTOBER",
       "sheets": [
         "04/09/2026/1"
       ],
