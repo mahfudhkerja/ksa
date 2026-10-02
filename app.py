@@ -2257,86 +2257,114 @@ def _ko_rumus_printing(sheet_name, row, tahun_list):
 # --- Rumus SLITTING (SLITTING_ROL & SLITTING_METER) ---------------------------
 # Cara hitung SAMA dengan kolom Slitting di Waste Rewind (REWIND_PY):
 #   SLITTING_ROL   = import_engine._compute_hasil_slitting(sl_matches)
-#                    (= Hasil_Slitting_(Rol), format modus mis. '42 + 3@530')
-#   SLITTING_METER = jumlah TOTAL_METER (= Hasil_Slitting_(Meter))
-# Sumber 2026: sheet SL_1 (kolom SPK/JO, HASIL_ROL, METER/ROL, TOTAL_METER).
-# Beda dgn Waste Rewind (cocok pasangan SPK+JO): kartu order cuma punya JO,
-# jadi dicocokkan lewat segmen BELAKANG kolom SPK/JO, persis (huruf ikut),
-# sama seperti aturan printing 2026.
-# Rumus 2021-2025 (sheet "Slitting" di spreadsheet tiap tahun) BELUM dibuat:
-# kalau 2026 tidak ikut dipilih, kolom slitting tidak disentuh.
+#                    (= Hasil_Slitting_(Rol), format modus mis. '42 + 3@530';
+#                    modus = panjang yang muncul di >1 BARIS & tidak seri;
+#                    kalau tidak ada modus semua ditulis 'jumlah@panjang')
+#   SLITTING_METER = jumlah kolom total meter (= Hasil_Slitting_(Meter))
+# 2026      : sheet SL_1 (spreadsheet FSTL): kolom SPK/JO, HASIL_ROL, METER/ROL,
+#             TOTAL_METER. Cocok = segmen belakang SPK/JO persis (huruf ikut).
+# 2021-2025 : tab "Slitting" di spreadsheet tiap tahun: kolom JO, HASIL_ROLL,
+#             METER_POTONGAN, TOTAL_METER. JO bisa 0123 / 123 / 123A / 123B ->
+#             cocok lewat ANGKA depannya saja (123).
+# Beberapa tahun dipilih -> baris cocok dari semua tahun digabung, lalu
+# SLITTING_ROL dihitung SEKALI dari gabungan itu; SLITTING_METER dijumlah.
 SLITTING_ROL_COL = "SLITTING_ROL"
 SLITTING_METER_COL = "SLITTING_METER"
-SLITTING_RUMUS_TAHUN = (2026,)
 _SLITTING_CACHE_TTL = 120
-_slitting_cache = {"ts": 0.0, "idx": None}
+_slitting_cache = {}                 # tahun -> {"ts": float, "idx": {kunci: {...}}}
 _slitting_cache_lock = threading.Lock()
 
 
-def _slitting_build_index_2026():
+def _slitting_collect(idx, key, hasil_rol, meter_rol, total_meter):
+    """Tambah satu baris sumber ke index. Pasangan (rol, panjang) hanya ikut
+    kalau dua-duanya angka valid; total meter independen (sama seperti Waste Rewind)."""
+    if key in ("", None):
+        return
+    e = idx.setdefault(key, {"sl_matches": [], "total_meter": 0.0})
+    k_val = import_engine._parse_flexible_number(hasil_rol)
+    o_val = import_engine._parse_flexible_number(meter_rol)
+    if k_val is not None and o_val is not None:
+        e["sl_matches"].append((k_val, import_engine._format_number(o_val)))
+    tm = import_engine._parse_flexible_number(total_meter)
+    if tm is not None:
+        e["total_meter"] += tm
+
+
+def _slitting_build_index(tahun):
     """{kunci_JO: {"sl_matches": [(hasil_rol, meter_rol_str)], "total_meter": float}}"""
-    with _fstl_cache_lock:                      # selalu baca SL_1 terbaru
-        _fstl_sheet_values_cache.pop(import_engine.SL_SOURCE_SHEET_NAME, None)
-    rows = _fstl_get_sheet_values(_fstl_spreadsheet(), import_engine.SL_SOURCE_SHEET_NAME)
-    if not rows:
-        raise RuntimeError(f"Sheet {import_engine.SL_SOURCE_SHEET_NAME} kosong / tidak ditemukan.")
-    header = rows[0]
-    c_jo = import_engine._find_col_index(header, "SPK/JO")
-    c_rol = import_engine._find_col_index(header, "HASIL_ROL")
-    c_mrol = import_engine._find_col_index(header, "METER/ROL")
-    c_tm = import_engine._find_col_index(header, SL1_COL_TOTAL_METER_HEADER)
-    if c_jo is None:
-        c_jo = import_engine.SL_COL_JO_FALLBACK
-    if c_rol is None:
-        c_rol = import_engine.SL_COL_HASIL_ROL_FALLBACK
-    if c_mrol is None:
-        c_mrol = import_engine.SL_COL_METER_ROL_FALLBACK
     idx = {}
     cell = lambda r, i: r[i] if i is not None and i < len(r) else ""
-    for r in rows[1:]:
-        jo_cell = str(cell(r, c_jo)).strip()
-        if not jo_cell or jo_cell == "-":
-            continue
-        key = _printing_key(2026, jo_cell)
-        if not key:
-            continue
-        e = idx.setdefault(key, {"sl_matches": [], "total_meter": 0.0})
-        k_val = import_engine._parse_flexible_number(cell(r, c_rol))
-        o_val = import_engine._parse_flexible_number(cell(r, c_mrol))
-        if k_val is not None and o_val is not None:
-            e["sl_matches"].append((k_val, import_engine._format_number(o_val)))
-        tm = import_engine._parse_flexible_number(cell(r, c_tm))
-        if tm is not None:
-            e["total_meter"] += tm
+    if tahun == 2026:
+        with _fstl_cache_lock:                  # selalu baca SL_1 terbaru
+            _fstl_sheet_values_cache.pop(import_engine.SL_SOURCE_SHEET_NAME, None)
+        rows = _fstl_get_sheet_values(_fstl_spreadsheet(), import_engine.SL_SOURCE_SHEET_NAME)
+        if not rows:
+            raise RuntimeError(f"Sheet {import_engine.SL_SOURCE_SHEET_NAME} kosong / tidak ditemukan.")
+        header = rows[0]
+        c_jo = import_engine._find_col_index(header, "SPK/JO")
+        c_rol = import_engine._find_col_index(header, "HASIL_ROL")
+        c_mrol = import_engine._find_col_index(header, "METER/ROL")
+        c_tm = import_engine._find_col_index(header, SL1_COL_TOTAL_METER_HEADER)
+        if c_jo is None:
+            c_jo = import_engine.SL_COL_JO_FALLBACK
+        if c_rol is None:
+            c_rol = import_engine.SL_COL_HASIL_ROL_FALLBACK
+        if c_mrol is None:
+            c_mrol = import_engine.SL_COL_METER_ROL_FALLBACK
+        for r in rows[1:]:
+            jo_cell = str(cell(r, c_jo)).strip()
+            if not jo_cell or jo_cell == "-":
+                continue
+            _slitting_collect(idx, _printing_key(2026, jo_cell),
+                              cell(r, c_rol), cell(r, c_mrol), cell(r, c_tm))
+    else:
+        sh = get_client().open_by_key(PRINTING_SPREADSHEET_ID[tahun])
+        ws = next((w for w in sh.worksheets() if w.title.strip().lower() == "slitting"), None)
+        if ws is None:
+            raise RuntimeError(f"Spreadsheet {tahun}: tab 'Slitting' tidak ditemukan.")
+        vals = ws.get_all_values()
+        if vals:
+            h = vals[0]
+            c_jo = _hdr_find(h, "JO")                       # bukan JO2 / JO3
+            c_rol = _hdr_find(h, "HASIL ROLL", "HASIL ROL")
+            c_mp = _hdr_find(h, "METER POTONGAN")
+            c_tm = _hdr_find(h, "TOTAL METER")
+            if None in (c_jo, c_rol, c_mp, c_tm):
+                raise RuntimeError(f"Tab Slitting ({tahun}): kolom JO / HASIL_ROLL / METER_POTONGAN / TOTAL_METER tidak ditemukan di baris 1 (header: {h[:14]}).")
+            for r in vals[1:]:
+                jo_cell = str(cell(r, c_jo)).strip()
+                if not jo_cell or jo_cell == "-":
+                    continue
+                _slitting_collect(idx, _printing_key(tahun, jo_cell),
+                                  cell(r, c_rol), cell(r, c_mp), cell(r, c_tm))
     return idx
 
 
-def _slitting_index(force=False):
+def _slitting_index(tahun, force=False):
     now = time.time()
     with _slitting_cache_lock:
-        if _slitting_cache["idx"] is not None and not force and (now - _slitting_cache["ts"]) < _SLITTING_CACHE_TTL:
-            return _slitting_cache["idx"]
-    idx = _slitting_build_index_2026()
+        e = _slitting_cache.get(tahun)
+        if e and not force and (now - e["ts"]) < _SLITTING_CACHE_TTL:
+            return e["idx"]
+    idx = _slitting_build_index(tahun)
     with _slitting_cache_lock:
-        _slitting_cache["ts"] = now
-        _slitting_cache["idx"] = idx
+        _slitting_cache[tahun] = {"ts": now, "idx": idx}
     return idx
 
 
 def _ko_rumus_slitting(sheet_name, row, tahun_list):
-    """SLITTING_ROL & SLITTING_METER. Hanya jalan kalau 2026 dipilih; tidak
-    ketemu -> ROL kosong, METER 0 (kalau 2026 dipilih, tetap diisi)."""
-    if not any(t in SLITTING_RUMUS_TAHUN for t in tahun_list):
-        return {}
+    """SLITTING_ROL & SLITTING_METER dari tahun yang dipilih (antar tahun
+    digabung). Tidak ketemu -> SLITTING_ROL kosong, SLITTING_METER 0."""
     cell = row.get(REGULER_KO_JO_COL, "")
     tokens = [t.strip() for t in _KHI_CELL_SPLIT_RE.split(cell) if t.strip()]
-    idx = _slitting_index()
     matches, total = [], 0.0
-    for key in {_printing_key(2026, t) for t in tokens}:
-        e = idx.get(key)
-        if e:
-            matches.extend(e["sl_matches"])
-            total += e["total_meter"]
+    for tahun in tahun_list:
+        idx = _slitting_index(tahun)
+        for key in {_printing_key(tahun, t) for t in tokens}:
+            e = idx.get(key)
+            if e:
+                matches.extend(e["sl_matches"])
+                total += e["total_meter"]
     return {
         SLITTING_ROL_COL: import_engine._compute_hasil_slitting(matches) if matches else "",
         SLITTING_METER_COL: _num_out(total),
@@ -2407,8 +2435,8 @@ def ko_hitung():
         payload = _read_ko_sheet(sheet, force=True)
         for t in tahun_list:                    # data printing dibaca ulang tiap klik Hitung
             _printing_index(t, force=True)
-        if any(t in SLITTING_RUMUS_TAHUN for t in tahun_list):
-            _slitting_index(force=True)         # SL_1 juga dibaca ulang tiap klik Hitung
+        for t in tahun_list:                    # data slitting juga dibaca ulang tiap klik Hitung
+            _slitting_index(t, force=True)
         pairs, hilang = [], []
         for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
