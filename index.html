@@ -351,14 +351,10 @@
   .chat-inputbar.recording .chat-mic-btn{ background:var(--warn); transform:scale(1.35); animation: micPulse 1.3s infinite; }
   .chat-inputbar.recording.locked .chat-mic-btn{ background:linear-gradient(135deg,var(--blue-light),var(--blue-dark)); transform:scale(1); animation:none; }
   @keyframes micPulse{ 0%{box-shadow:0 0 0 0 rgba(192,57,43,.45);} 70%,100%{box-shadow:0 0 0 12px rgba(192,57,43,0);} }
-  /* Mic tampil kalau input kosong, tombol kirim tampil kalau ada teks (seperti WA) */
-  .chat-inputbar .chat-send-btn{ display:none; }
-  .chat-inputbar.has-text .chat-send-btn{ display:flex; }
-  .chat-inputbar.has-text .chat-mic-btn{ display:none; }
-  .chat-inputbar.no-mic .chat-send-btn{ display:flex; }
+  /* Mic + tombol kirim teks SELALU tampil berdampingan (kirim manual lewat teks tetap ada).
+     Saat merekam, kolom input diganti panel rekam & tombol kirim teks disembunyikan sementara. */
   .chat-inputbar.no-mic .chat-mic-btn{ display:none; }
   .chat-inputbar.recording .chat-send-btn{ display:none; }
-  .chat-inputbar.recording.locked .chat-mic-btn{ display:flex; }
   /* Panel saat merekam (menggantikan kolom input) */
   .chat-rec-panel{ flex:1; display:none; align-items:center; gap:10px; min-height:38px; font-size:13px; font-weight:600; color:var(--ink); }
   .chat-inputbar.recording input{ display:none; }
@@ -1684,11 +1680,11 @@
                   <span class="chat-rec-time" id="chatRecTime">0:00</span>
                   <span class="chat-rec-hint" id="chatRecHint">‹ Geser untuk batal · ↑ geser untuk kunci</span>
                 </div>
-                <button class="chat-send-btn" id="chatSendBtn" onclick="chatSend()" aria-label="Kirim" disabled>
-                  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3.4 20.6L21 12 3.4 3.4 3.4 10 15 12 3.4 14z" fill="currentColor"/></svg>
-                </button>
                 <button class="chat-mic-btn" id="chatMicBtn" aria-label="Tahan untuk rekam suara" title="Tahan untuk rekam suara, lepas untuk kirim">
                   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+                </button>
+                <button class="chat-send-btn" id="chatSendBtn" onclick="chatSend()" aria-label="Kirim" disabled>
+                  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3.4 20.6L21 12 3.4 3.4 3.4 10 15 12 3.4 14z" fill="currentColor"/></svg>
                 </button>
               </div>
             </div>
