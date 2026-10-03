@@ -337,6 +337,21 @@
   .chat-send-btn:hover:not(:disabled){ transform:scale(1.07); }
   .chat-send-btn:active:not(:disabled){ transform:scale(.93); }
   .chat-send-btn:disabled{ background:var(--line-soft); color:var(--ink-faint); box-shadow:none; cursor:default; }
+  /* Tombol rekam suara (mic) -- se-ukuran tombol kirim, versi outline */
+  .chat-mic-btn{
+    width:38px; height:38px; min-width:38px; border-radius:50%; flex-shrink:0;
+    border:1.5px solid var(--blue-200); background:var(--card); color:var(--blue);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; position:relative;
+    transition: transform .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+  }
+  .chat-mic-btn svg{ width:17px; height:17px; }
+  .chat-mic-btn:hover{ background:var(--blue-50); border-color:var(--blue); transform:scale(1.07); }
+  .chat-mic-btn:active{ transform:scale(.93); }
+  .chat-mic-btn.recording{ background:var(--warn); border-color:var(--warn); color:#fff; animation: micPulse 1.3s infinite; }
+  .chat-mic-btn.recording:hover{ background:var(--warn); }
+  @keyframes micPulse{ 0%{box-shadow:0 0 0 0 rgba(192,57,43,.45);} 70%,100%{box-shadow:0 0 0 10px rgba(192,57,43,0);} }
+  .chat-inputbar.recording{ border-color:var(--warn); box-shadow:0 0 0 4px var(--warn-bg); }
+  .chat-inputbar.recording input::placeholder{ color:var(--warn); font-weight:600; }
   /* Label pemisah blok jawaban Tanya JO (Validasi / Form Serah Terima /
      Barang Jadi Baru (BJB) / Barang Jadi Lama (BJL)) -- dibedain dari teks
      biasa (bold + font lebih besar) biar user gampang lihat batas
@@ -1614,6 +1629,9 @@
                 <input id="chatInput" placeholder="Tulis pertanyaan lalu Enter..."
                   onkeydown="if(event.key==='Enter') chatSend();"
                   oninput="document.getElementById('chatSendBtn').disabled = !this.value.trim();">
+                <button class="chat-mic-btn" id="chatMicBtn" onclick="chatMicToggle()" aria-label="Rekam suara" title="Rekam suara" style="display:none;">
+                  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+                </button>
                 <button class="chat-send-btn" id="chatSendBtn" onclick="chatSend()" aria-label="Kirim" disabled>
                   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3.4 20.6L21 12 3.4 3.4 3.4 10 15 12 3.4 14z" fill="currentColor"/></svg>
                 </button>
@@ -1913,6 +1931,7 @@
   function chatInit(){
     if(chatInited) return;
     chatInited = true;
+    chatMicInit();
     chatSessionId = "web_" + Date.now() + "_" + Math.random().toString(36).slice(2);
     chatAppend("bot", "Halo! Tanya bebas soal JO, misal: \"no lot bahan JO 2412 pas printing apa?\" atau \"JO 2412 diproses di mesin apa saja dan berapa hasilnya, lalu sisa stocknya berapa?\"");
   }
@@ -2079,12 +2098,68 @@
     }, 1500);
     return { bubble, stop(){ clearInterval(timer); } };
   }
+  // ---- Rekam suara (Web Speech API, bahasa Indonesia) ----
+  // Hasil suara masuk ke kolom input (bisa dikoreksi dulu), kirim tetap
+  // lewat tombol kirim / Enter. Browser tanpa dukungan -> tombol mic disembunyikan.
+  let chatRec = null, chatRecActive = false, chatRecBase = "";
+  function chatMicSupported(){ return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+  function chatMicUI(on){
+    chatRecActive = on;
+    const btn = document.getElementById("chatMicBtn");
+    const bar = document.querySelector(".chat-inputbar");
+    const input = document.getElementById("chatInput");
+    btn.classList.toggle("recording", on);
+    bar.classList.toggle("recording", on);
+    btn.title = btn.ariaLabel = on ? "Berhenti merekam" : "Rekam suara";
+    input.placeholder = on ? "Mendengarkan... silakan bicara" : "Tulis pertanyaan lalu Enter...";
+  }
+  function chatMicToggle(){
+    if(chatRecActive){ try{ chatRec.stop(); }catch(e){} return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR){ toast("Browser ini belum mendukung rekam suara. Coba Chrome atau Edge.", "error"); return; }
+    const input = document.getElementById("chatInput");
+    const sendBtn = document.getElementById("chatSendBtn");
+    chatRecBase = input.value.trim();
+    const rec = new SR();
+    chatRec = rec;
+    rec.lang = "id-ID";
+    rec.interimResults = true;
+    rec.continuous = false;
+    rec.onstart = () => chatMicUI(true);
+    rec.onresult = (e) => {
+      let fin = "", interim = "";
+      for(let i = 0; i < e.results.length; i++){
+        const t = e.results[i][0].transcript;
+        if(e.results[i].isFinal) fin += t; else interim += t;
+      }
+      input.value = (chatRecBase + " " + fin + interim).trim();
+      sendBtn.disabled = !input.value.trim();
+    };
+    rec.onerror = (e) => {
+      const msg = {
+        "not-allowed": "Izin mikrofon ditolak. Aktifkan izin mikrofon di pengaturan browser lalu coba lagi.",
+        "service-not-allowed": "Izin mikrofon ditolak. Aktifkan izin mikrofon di pengaturan browser lalu coba lagi.",
+        "audio-capture": "Mikrofon tidak terdeteksi.",
+        "no-speech": "Suara tidak terdengar, coba lagi.",
+        "network": "Gagal memproses suara (koneksi bermasalah)."
+      }[e.error];
+      if(msg) toast(msg, "error");
+    };
+    rec.onend = () => { chatMicUI(false); input.focus(); };
+    try{ rec.start(); }catch(e){ chatMicUI(false); }
+  }
+  function chatMicInit(){
+    if(chatMicSupported()) document.getElementById("chatMicBtn").style.display = "flex";
+  }
+
   async function chatSend(){
     const input = document.getElementById("chatInput");
     const message = input.value.trim();
     if(!message) return;
+    if(chatRecActive){ try{ chatRec.stop(); }catch(e){} }
     chatAppend("user", message);
     input.value = "";
+    document.getElementById("chatSendBtn").disabled = true;
     const typing = chatAppendTyping();
     let answer;
     // Batasin nunggu maksimal 90 detik -- lebih baik gagal dengan pesan
