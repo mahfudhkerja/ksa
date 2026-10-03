@@ -1460,6 +1460,128 @@ SYSTEM_PROMPT = (
     "- Di Laporan Produksi: Meter Hasil 57.900"
 )
 
+# ---------------------------------------------------------------------------
+# PESAN SUARA (voice note) -- rekaman suara user ditranskripsi dulu jadi teks
+# (transcribe_audio), lalu teksnya masuk ke alur chatbot biasa dengan penanda
+# VOICE_MARKER. Hasil transkripsi bisa salah dengar (mis. "JO" tertulis "CO"),
+# jadi ada 3 lapis pengaman:
+#   1. STT_HINT   -> petunjuk kosakata pabrik ke model STT (kalau provider mendukung)
+#   2. normalize_transcript -> koreksi otomatis salah dengar yang SUDAH diketahui
+#      (CO/Joe/Jeo/Yo + angka => JO, angka yang dieja => digit)
+#   3. VOICE_RULES -> AI wajib minta konfirmasi (tombol Ya/Bukan di frontend)
+#      kalau masih ragu, bukan menebak.
+# ---------------------------------------------------------------------------
+# Model speech-to-text OpenRouter (endpoint /audio/transcriptions). Ganti lewat
+# environment variable CHATBOT_STT_MODEL tanpa edit kode.
+STT_MODEL = os.environ.get("CHATBOT_STT_MODEL", "openai/whisper-large-v3").strip()
+STT_TIMEOUT = float(os.environ.get("CHATBOT_STT_TIMEOUT", "45"))
+STT_HINT = (
+    "Percakapan staff pabrik kemasan, bahasa Indonesia. Istilah yang sering muncul: "
+    "JO (dibaca je-o, singkatan job order), nomor JO empat digit seperti 2412, "
+    "printing, slitting, rewind, dry, bag, BJB, BJL, stok, mesin, roll, meter, produk, lot."
+)
+VOICE_MARKER = "[PESAN SUARA - hasil transkripsi otomatis, bisa salah dengar] "
+VOICE_RULES = (
+    "\n\nPESAN SUARA:\n"
+    "Kalau pesan user diawali penanda '[PESAN SUARA ...]', isinya adalah hasil "
+    "transkripsi otomatis dari rekaman suara dan bisa SALAH DENGAR. Salah dengar "
+    "yang sudah diketahui: 'JO' sering tertulis CO / Joe / Jeo / Yo, dan angka "
+    "kadang tertulis dengan huruf atau terpisah (mis. 'dua empat satu dua' = 2412). "
+    "Kalau ada kata aneh yang diikuti angka di posisi nomor JO, anggap itu JO. "
+    "Aturannya:\n"
+    "- JANGAN menebak. Kalau nomor JO / nama produk / maksud pertanyaan tidak "
+    "jelas, janggal, terpotong, atau punya lebih dari satu kemungkinan, JANGAN "
+    "panggil tool dulu -- tanya konfirmasi singkat dengan menyebut apa yang "
+    "kamu tangkap, contoh: 'Saya menangkap JO 2412 dan hasil printing -- "
+    "benar begitu?'\n"
+    "- Kalau pertanyaanmu bisa dijawab Ya/Bukan, akhiri jawabanmu dengan baris "
+    "terpisah persis: [[KONFIRMASI]]  (frontend mengubahnya jadi tombol Ya/Bukan).\n"
+    "- Kalau ada 2-4 kemungkinan, sebut singkat lalu akhiri dengan baris terpisah "
+    "persis: [[PILIHAN: opsi 1 | opsi 2 | opsi 3]]  (tiap opsi singkat, mis. 'JO 2412').\n"
+    "- Penanda [[...]] hanya dipakai saat meminta konfirmasi, dan WAJIB di baris "
+    "paling akhir. Jangan pakai di jawaban data biasa.\n"
+    "- Kalau user menjawab 'Ya, benar' -> langsung lanjut cari data dengan yang "
+    "sudah kamu konfirmasi. Kalau user menjawab 'Bukan' -> minta dia menyebut "
+    "ulang nomor JO / nama produknya dengan jelas (boleh diketik atau direkam "
+    "lagi), jangan menebak lagi.\n"
+    "- Kalau sudah jelas, langsung jawab seperti biasa, tapi awali dengan satu "
+    "kalimat singkat apa yang kamu tangkap (mis. 'JO 2412, proses printing:') "
+    "supaya user bisa langsung koreksi kalau salah dengar.\n"
+    "- Jangan pernah menampilkan penanda '[PESAN SUARA ...]' ke user.\n"
+    "- Jawaban konfirmasi cukup 1-2 kalimat, tanpa tabel."
+)
+SYSTEM_PROMPT += VOICE_RULES
+
+_DIGIT_WORDS = {
+    "nol": "0", "kosong": "0", "satu": "1", "dua": "2", "tiga": "3", "empat": "4",
+    "lima": "5", "enam": "6", "tujuh": "7", "delapan": "8", "sembilan": "9",
+}
+_DW = "|".join(_DIGIT_WORDS)
+# Salah dengar "JO" yang umum dari model STT untuk logat Indonesia.
+_JO_ALIAS = r"(?:j\.?\s?o|c\.?\s?o|c\.?e\.?o|joe|jeo|jow|jou|jaw|yo|cho|geo|je\s?o|jio|cio)"
+
+
+def normalize_transcript(text):
+    """Koreksi salah dengar yang SUDAH diketahui di hasil transkripsi:
+    - 'CO 2412', 'Joe 2412', 'Yo dua empat satu dua', 'CO2412' -> 'JO 2412'
+    - angka yang dieja setelah JO ('dua empat satu dua') -> digit
+    - angka satu-satu terpisah spasi setelah JO ('2 4 1 2') -> '2412'
+    Hanya menyentuh kata yang DIIKUTI angka/kata-angka, supaya kata biasa
+    ('co' / 'yo' di kalimat lain) tidak ikut berubah."""
+    if not text:
+        return text
+    t = text
+    # kata mirip JO + (spasi/tanda baca) + angka atau kata-angka
+    t = re.sub(r"\b" + _JO_ALIAS + r"\b[\s.:,\-]*(?=\d|(?:" + _DW + r")\b)", "JO ", t, flags=re.I)
+    # kata mirip JO nempel angka: CO2412
+    t = re.sub(r"\b" + _JO_ALIAS + r"(?=\d)", "JO ", t, flags=re.I)
+    # angka dieja setelah JO -> digit
+    def _spell(m):
+        words = re.findall(r"[a-z]+", m.group(2).lower())
+        return m.group(1) + "".join(_DIGIT_WORDS[w] for w in words)
+    t = re.sub(r"(\bJO\s+)((?:(?:" + _DW + r")\b[\s,.\-]*)+)", lambda m: _spell(m) + " ", t, flags=re.I)
+    # digit satu-satu terpisah spasi setelah JO -> gabung
+    t = re.sub(r"(\bJO\s+)(\d(?:\s+\d)+)(?!\d)", lambda m: m.group(1) + re.sub(r"\s+", "", m.group(2)), t)
+    return re.sub(r"[ \t]{2,}", " ", t).strip()
+
+
+def transcribe_audio(audio_bytes, filename="voice.webm", mimetype="audio/webm"):
+    """Ubah rekaman suara jadi teks (bahasa Indonesia) lewat OpenRouter STT,
+    lalu dikoreksi normalize_transcript. Balikin string ('' kalau tidak ada
+    suara terdeteksi)."""
+    import base64
+    client = get_ai_client()
+    fmt = "m4a" if "mp4" in mimetype else ("ogg" if "ogg" in mimetype else "webm")
+    text, ok = "", False
+    # Percobaan 1: mode JSON + petunjuk kosakata (dipakai provider yang mendukung, mis. Groq).
+    try:
+        resp = client.post(
+            "/audio/transcriptions",
+            cast_to=object,
+            body={
+                "model": STT_MODEL,
+                "input_audio": {"data": base64.b64encode(audio_bytes).decode("ascii"), "format": fmt},
+                "language": "id",
+                "provider": {"options": {"groq": {"prompt": STT_HINT}}},
+            },
+            options={"timeout": STT_TIMEOUT},
+        )
+        text = (resp.get("text") or "") if isinstance(resp, dict) else ""
+        ok = True
+    except Exception as exc:
+        print(f"[chatbot] STT mode JSON gagal, coba multipart: {exc}", flush=True)
+    # Percobaan 2 (cadangan): multipart standar OpenAI.
+    if not ok:
+        result = client.audio.transcriptions.create(
+            model=STT_MODEL, file=(filename, audio_bytes, mimetype),
+            language="id", timeout=STT_TIMEOUT,
+        )
+        text = getattr(result, "text", "") or ""
+    raw = text.strip()
+    fixed = normalize_transcript(raw)
+    if fixed != raw:
+        print(f"[chatbot] transkrip dikoreksi: {raw!r} -> {fixed!r}", flush=True)
+    return fixed
 
 def trim_history(messages, max_user_turns=6):
     """Potong histori TANPA merusak pasangan assistant(tool_calls) <->
@@ -1526,7 +1648,7 @@ def _chat_create(client, messages, timeout):
             raise
 
 
-def run_agent(get_sheet_fn, user_message, history=None):
+def run_agent(get_sheet_fn, user_message, history=None, voice=False):
     """Jalankan satu putaran percakapan chatbot memakai AI.
 
     `history` opsional: list pesan sebelumnya (format OpenAI messages)
@@ -1536,7 +1658,8 @@ def run_agent(get_sheet_fn, user_message, history=None):
     """
     client = get_ai_client()
     messages = list(history) if history else [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.append({"role": "user", "content": user_message})
+    # voice=True: teks ini hasil transkripsi suara -> kasih penanda supaya AI minta konfirmasi kalau ragu.
+    messages.append({"role": "user", "content": (VOICE_MARKER + user_message) if voice else user_message})
 
     tool_call_log = []
     deadline = time.monotonic() + TOTAL_BUDGET_SECONDS

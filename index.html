@@ -337,21 +337,68 @@
   .chat-send-btn:hover:not(:disabled){ transform:scale(1.07); }
   .chat-send-btn:active:not(:disabled){ transform:scale(.93); }
   .chat-send-btn:disabled{ background:var(--line-soft); color:var(--ink-faint); box-shadow:none; cursor:default; }
-  /* Tombol rekam suara (mic) -- se-ukuran tombol kirim, versi outline */
+  /* ==== Voice note (tahan mic = rekam, lepas = kirim) ==== */
   .chat-mic-btn{
-    width:38px; height:38px; min-width:38px; border-radius:50%; flex-shrink:0;
-    border:1.5px solid var(--blue-200); background:var(--card); color:var(--blue);
+    width:38px; height:38px; min-width:38px; border-radius:50%; border:none; flex-shrink:0;
+    background:linear-gradient(135deg,var(--blue-light),var(--blue-dark)); color:#fff;
     display:flex; align-items:center; justify-content:center; cursor:pointer; position:relative;
-    transition: transform .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease);
+    box-shadow:0 4px 10px -4px rgba(53,114,182,.55);
+    touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none;
+    transition: transform .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease);
   }
-  .chat-mic-btn svg{ width:17px; height:17px; }
-  .chat-mic-btn:hover{ background:var(--blue-50); border-color:var(--blue); transform:scale(1.07); }
-  .chat-mic-btn:active{ transform:scale(.93); }
-  .chat-mic-btn.recording{ background:var(--warn); border-color:var(--warn); color:#fff; animation: micPulse 1.3s infinite; }
-  .chat-mic-btn.recording:hover{ background:var(--warn); }
-  @keyframes micPulse{ 0%{box-shadow:0 0 0 0 rgba(192,57,43,.45);} 70%,100%{box-shadow:0 0 0 10px rgba(192,57,43,0);} }
+  .chat-mic-btn svg{ width:17px; height:17px; pointer-events:none; }
+  .chat-mic-btn:hover{ transform:scale(1.07); }
+  .chat-inputbar.recording .chat-mic-btn{ background:var(--warn); transform:scale(1.35); animation: micPulse 1.3s infinite; }
+  .chat-inputbar.recording.locked .chat-mic-btn{ background:linear-gradient(135deg,var(--blue-light),var(--blue-dark)); transform:scale(1); animation:none; }
+  @keyframes micPulse{ 0%{box-shadow:0 0 0 0 rgba(192,57,43,.45);} 70%,100%{box-shadow:0 0 0 12px rgba(192,57,43,0);} }
+  /* Mic tampil kalau input kosong, tombol kirim tampil kalau ada teks (seperti WA) */
+  .chat-inputbar .chat-send-btn{ display:none; }
+  .chat-inputbar.has-text .chat-send-btn{ display:flex; }
+  .chat-inputbar.has-text .chat-mic-btn{ display:none; }
+  .chat-inputbar.no-mic .chat-send-btn{ display:flex; }
+  .chat-inputbar.no-mic .chat-mic-btn{ display:none; }
+  .chat-inputbar.recording .chat-send-btn{ display:none; }
+  .chat-inputbar.recording.locked .chat-mic-btn{ display:flex; }
+  /* Panel saat merekam (menggantikan kolom input) */
+  .chat-rec-panel{ flex:1; display:none; align-items:center; gap:10px; min-height:38px; font-size:13px; font-weight:600; color:var(--ink); }
+  .chat-inputbar.recording input{ display:none; }
+  .chat-inputbar.recording .chat-rec-panel{ display:flex; }
   .chat-inputbar.recording{ border-color:var(--warn); box-shadow:0 0 0 4px var(--warn-bg); }
-  .chat-inputbar.recording input::placeholder{ color:var(--warn); font-weight:600; }
+  .chat-rec-dot{ width:10px; height:10px; border-radius:50%; background:var(--warn); animation: recBlink 1s infinite; flex-shrink:0; }
+  @keyframes recBlink{ 0%,100%{opacity:1;} 50%{opacity:.25;} }
+  .chat-rec-time{ min-width:34px; font-variant-numeric:tabular-nums; }
+  .chat-rec-hint{ flex:1; color:var(--ink-faint); font-weight:600; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; animation: recHint 1.6s infinite var(--ease); }
+  .chat-rec-hint.cancel{ color:var(--warn); animation:none; }
+  @keyframes recHint{ 0%,100%{transform:translateX(0);} 50%{transform:translateX(-5px);} }
+  .chat-rec-trash{ display:none; width:34px; height:34px; border-radius:50%; border:1.5px solid var(--warn); background:var(--card); color:var(--warn); align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; transition: background .15s var(--ease); }
+  .chat-rec-trash svg{ width:16px; height:16px; }
+  .chat-rec-trash:hover{ background:var(--warn-bg); }
+  .chat-inputbar.locked .chat-rec-trash{ display:flex; }
+  .chat-inputbar.locked .chat-rec-hint{ animation:none; }
+  /* Bubble voice note + pemutar */
+  .chat-voice{ display:flex; align-items:center; gap:10px; min-width:210px; }
+  .chat-voice-play{ width:34px; height:34px; min-width:34px; border-radius:50%; border:none; background:var(--card); color:var(--blue-dark); display:flex; align-items:center; justify-content:center; cursor:pointer; transition: transform .15s var(--ease); }
+  .chat-voice-play:hover{ transform:scale(1.08); }
+  .chat-voice-play:active{ transform:scale(.94); }
+  .chat-voice-play svg{ width:14px; height:14px; }
+  .chat-voice-track{ flex:1; height:5px; border-radius:99px; background:rgba(255,255,255,.35); position:relative; cursor:pointer; }
+  .chat-voice-fill{ position:absolute; left:0; top:0; bottom:0; width:0; border-radius:99px; background:#fff; }
+  .chat-voice-time{ font-size:11px; font-weight:700; min-width:34px; text-align:right; font-variant-numeric:tabular-nums; }
+  .chat-voice-text{ margin-top:7px; padding-top:7px; border-top:1px solid rgba(255,255,255,.28); font-size:12px; line-height:1.45; white-space:normal; opacity:.95; animation: fadeIn .3s var(--ease); }
+  .chat-voice-text.pending{ opacity:.8; font-style:italic; }
+  /* Tombol cepat konfirmasi (Ya / Bukan / pilihan) di bawah pertanyaan konfirmasi AI */
+  .chat-chips{ align-self:flex-start; display:flex; flex-wrap:wrap; gap:8px; max-width:90%; animation: fadeUp .3s var(--ease); }
+  .chat-chip{
+    height:34px; padding:0 16px; border-radius:99px; border:1.5px solid var(--blue); background:var(--card);
+    color:var(--blue); font-family:inherit; font-size:12.5px; font-weight:700; cursor:pointer;
+    transition: transform .15s var(--ease), background .15s var(--ease), box-shadow .15s var(--ease);
+  }
+  .chat-chip:hover{ background:var(--blue-50); transform:translateY(-1px); box-shadow:var(--shadow); }
+  .chat-chip:active{ transform:translateY(0) scale(.98); }
+  .chat-chip.ok{ background:var(--ok); border-color:var(--ok); color:#fff; }
+  .chat-chip.ok:hover{ background:var(--ok); }
+  .chat-chip.no{ border-color:var(--warn); color:var(--warn); }
+  .chat-chip.no:hover{ background:var(--warn-bg); }
   /* Label pemisah blok jawaban Tanya JO (Validasi / Form Serah Terima /
      Barang Jadi Baru (BJB) / Barang Jadi Lama (BJL)) -- dibedain dari teks
      biasa (bold + font lebih besar) biar user gampang lihat batas
@@ -1625,15 +1672,23 @@
                 Tanya bebas soal satu nomor JO, misal: <em>"JO 2412 diproses di mesin apa saja dan berapa hasilnya, lalu sisa stocknya berapa?"</em>
               </p>
               <div id="chatLog" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:6px 2px;"></div>
-              <div class="chat-inputbar">
+              <div class="chat-inputbar" id="chatInputBar">
                 <input id="chatInput" placeholder="Tulis pertanyaan lalu Enter..."
                   onkeydown="if(event.key==='Enter') chatSend();"
-                  oninput="document.getElementById('chatSendBtn').disabled = !this.value.trim();">
-                <button class="chat-mic-btn" id="chatMicBtn" onclick="chatMicToggle()" aria-label="Rekam suara" title="Rekam suara" style="display:none;">
-                  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-                </button>
+                  oninput="chatSyncBtns()">
+                <div class="chat-rec-panel" id="chatRecPanel">
+                  <button class="chat-rec-trash" onclick="chatVoiceCancel()" aria-label="Batalkan rekaman" title="Batalkan">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v7M14 10v7"/></svg>
+                  </button>
+                  <span class="chat-rec-dot"></span>
+                  <span class="chat-rec-time" id="chatRecTime">0:00</span>
+                  <span class="chat-rec-hint" id="chatRecHint">‹ Geser untuk batal · ↑ geser untuk kunci</span>
+                </div>
                 <button class="chat-send-btn" id="chatSendBtn" onclick="chatSend()" aria-label="Kirim" disabled>
                   <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3.4 20.6L21 12 3.4 3.4 3.4 10 15 12 3.4 14z" fill="currentColor"/></svg>
+                </button>
+                <button class="chat-mic-btn" id="chatMicBtn" aria-label="Tahan untuk rekam suara" title="Tahan untuk rekam suara, lepas untuk kirim">
+                  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
                 </button>
               </div>
             </div>
@@ -1931,7 +1986,7 @@
   function chatInit(){
     if(chatInited) return;
     chatInited = true;
-    chatMicInit();
+    chatVoiceInit();
     chatSessionId = "web_" + Date.now() + "_" + Math.random().toString(36).slice(2);
     chatAppend("bot", "Halo! Tanya bebas soal JO, misal: \"no lot bahan JO 2412 pas printing apa?\" atau \"JO 2412 diproses di mesin apa saja dan berapa hasilnya, lalu sisa stocknya berapa?\"");
   }
@@ -2098,68 +2153,267 @@
     }, 1500);
     return { bubble, stop(){ clearInterval(timer); } };
   }
-  // ---- Rekam suara (Web Speech API, bahasa Indonesia) ----
-  // Hasil suara masuk ke kolom input (bisa dikoreksi dulu), kirim tetap
-  // lewat tombol kirim / Enter. Browser tanpa dukungan -> tombol mic disembunyikan.
-  let chatRec = null, chatRecActive = false, chatRecBase = "";
-  function chatMicSupported(){ return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
-  function chatMicUI(on){
-    chatRecActive = on;
+  // ---- Voice note ala WA: tahan mic = rekam, lepas = kirim ----
+  // Geser kiri = batal, geser atas = kunci (rekam tanpa menahan; tombol jadi
+  // "kirim", ikon tong sampah = batal). Rekaman dikirim ke /api/chatbot/transcribe,
+  // hasil teksnya ditampilkan di bawah pemutar lalu dikirim ke AI dengan
+  // voice=true -- AI akan minta konfirmasi kalau ada yang tidak jelas.
+  const CHAT_VOICE_MAX_SEC = 120;
+  const CHAT_VOICE_MIN_SEC = 0.7;
+  const chatVoice = { rec:null, stream:null, chunks:[], mime:"", t0:0, timer:null, holding:false, locked:false,
+                      cancelled:false, startX:0, startY:0, lockedAt:0, starting:false, audioEl:null };
+
+  function chatSyncBtns(){
+    const input = document.getElementById("chatInput");
+    const has = !!input.value.trim();
+    document.getElementById("chatInputBar").classList.toggle("has-text", has);
+    document.getElementById("chatSendBtn").disabled = !has;
+  }
+  function chatFmtTime(sec){
+    sec = Math.max(0, Math.round(sec));
+    return Math.floor(sec/60) + ":" + String(sec%60).padStart(2,"0");
+  }
+  function chatVoiceSupported(){
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  }
+  function chatVoiceInit(){
+    const bar = document.getElementById("chatInputBar");
     const btn = document.getElementById("chatMicBtn");
-    const bar = document.querySelector(".chat-inputbar");
-    const input = document.getElementById("chatInput");
-    btn.classList.toggle("recording", on);
+    if(!chatVoiceSupported()){ bar.classList.add("no-mic"); chatSyncBtns(); return; }
+    btn.addEventListener("contextmenu", e => e.preventDefault());
+    btn.addEventListener("pointerdown", chatVoiceDown);
+    btn.addEventListener("pointermove", chatVoiceMove);
+    btn.addEventListener("pointerup", chatVoiceUp);
+    btn.addEventListener("pointercancel", () => { if(chatVoice.holding && !chatVoice.locked) chatVoiceCancel(); });
+    btn.addEventListener("click", () => {
+      // Klik saat mode terkunci = kirim. Abaikan klik "sisa" dari gesture yang barusan mengunci.
+      if(chatVoice.locked && Date.now() - chatVoice.lockedAt > 400) chatVoiceFinish(true);
+    });
+    chatSyncBtns();
+  }
+  function chatRecUI(on, locked){
+    const bar = document.getElementById("chatInputBar");
     bar.classList.toggle("recording", on);
-    btn.title = btn.ariaLabel = on ? "Berhenti merekam" : "Rekam suara";
-    input.placeholder = on ? "Mendengarkan... silakan bicara" : "Tulis pertanyaan lalu Enter...";
+    bar.classList.toggle("locked", !!locked);
+    const hint = document.getElementById("chatRecHint");
+    hint.classList.remove("cancel");
+    hint.textContent = locked ? "Merekam… tekan kirim bila selesai" : "‹ Geser untuk batal · ↑ geser untuk kunci";
+    document.getElementById("chatMicBtn").title = locked ? "Kirim voice note" : "Tahan untuk rekam suara, lepas untuk kirim";
+    if(!on) document.getElementById("chatRecTime").textContent = "0:00";
   }
-  function chatMicToggle(){
-    if(chatRecActive){ try{ chatRec.stop(); }catch(e){} return; }
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!SR){ toast("Browser ini belum mendukung rekam suara. Coba Chrome atau Edge.", "error"); return; }
-    const input = document.getElementById("chatInput");
-    const sendBtn = document.getElementById("chatSendBtn");
-    chatRecBase = input.value.trim();
-    const rec = new SR();
-    chatRec = rec;
-    rec.lang = "id-ID";
-    rec.interimResults = true;
-    rec.continuous = false;
-    rec.onstart = () => chatMicUI(true);
-    rec.onresult = (e) => {
-      let fin = "", interim = "";
-      for(let i = 0; i < e.results.length; i++){
-        const t = e.results[i][0].transcript;
-        if(e.results[i].isFinal) fin += t; else interim += t;
+  async function chatVoiceDown(e){
+    if(chatVoice.locked || chatVoice.starting || chatVoice.rec) return;
+    e.preventDefault();
+    try{ e.currentTarget.setPointerCapture(e.pointerId); }catch(_){}
+    Object.assign(chatVoice, { holding:true, cancelled:false, startX:e.clientX, startY:e.clientY, starting:true });
+    let stream;
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    }catch(err){
+      chatVoice.holding = chatVoice.starting = false;
+      toast(err && err.name === "NotFoundError" ? "Mikrofon tidak terdeteksi." : "Izin mikrofon ditolak. Aktifkan izin mikrofon di pengaturan browser lalu coba lagi.", "error");
+      return;
+    }
+    chatVoice.starting = false;
+    // Jari sudah dilepas selagi menunggu izin mikrofon (biasanya pertama kali) -> jangan mulai rekam.
+    if(!chatVoice.holding){
+      stream.getTracks().forEach(t => t.stop());
+      toast("Mikrofon siap. Tahan tombol mic untuk merekam.", "info");
+      return;
+    }
+    const types = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg;codecs=opus"];
+    const mime = types.find(t => window.MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+    let rec;
+    try{ rec = mime ? new MediaRecorder(stream, { mimeType:mime }) : new MediaRecorder(stream); }
+    catch(err){ stream.getTracks().forEach(t => t.stop()); chatVoice.holding = false; toast("Browser ini tidak bisa merekam suara.", "error"); return; }
+    chatVoice.stream = stream; chatVoice.rec = rec; chatVoice.chunks = []; chatVoice.mime = rec.mimeType || mime || "audio/webm";
+    rec.ondataavailable = ev => { if(ev.data && ev.data.size) chatVoice.chunks.push(ev.data); };
+    rec.onstop = chatVoiceOnStop;
+    rec.start();
+    chatVoice.t0 = Date.now();
+    chatRecUI(true, false);
+    chatVoice.timer = setInterval(() => {
+      const sec = (Date.now() - chatVoice.t0) / 1000;
+      document.getElementById("chatRecTime").textContent = chatFmtTime(sec);
+      if(sec >= CHAT_VOICE_MAX_SEC){ toast("Batas rekaman 2 menit tercapai, voice note dikirim.", "info"); chatVoiceFinish(true); }
+    }, 250);
+  }
+  function chatVoiceMove(e){
+    if(!chatVoice.rec || !chatVoice.holding || chatVoice.locked) return;
+    const dx = e.clientX - chatVoice.startX, dy = chatVoice.startY - e.clientY;
+    const hint = document.getElementById("chatRecHint");
+    if(dy > 70 && dy > Math.abs(dx)){
+      chatVoice.locked = true; chatVoice.lockedAt = Date.now();
+      chatRecUI(true, true);
+    }else if(dx < -90){
+      hint.classList.add("cancel"); hint.textContent = "Lepas untuk membatalkan";
+      chatVoice.cancelled = true;
+    }else{
+      hint.classList.remove("cancel"); hint.textContent = "‹ Geser untuk batal · ↑ geser untuk kunci";
+      chatVoice.cancelled = false;
+    }
+  }
+  function chatVoiceUp(e){
+    chatVoice.holding = false;
+    try{ e.currentTarget.releasePointerCapture(e.pointerId); }catch(_){}
+    if(!chatVoice.rec || chatVoice.locked) return;      // terkunci -> lanjut rekam sampai tombol kirim
+    chatVoiceFinish(!chatVoice.cancelled);
+  }
+  function chatVoiceCancel(){ chatVoiceFinish(false); }
+  let chatVoiceSend = true;
+  function chatVoiceFinish(send){
+    if(!chatVoice.rec) return;
+    chatVoiceSend = !!send;
+    clearInterval(chatVoice.timer);
+    try{ chatVoice.rec.stop(); }catch(_){ chatVoiceReset(); }
+  }
+  function chatVoiceReset(){
+    clearInterval(chatVoice.timer);
+    if(chatVoice.stream) chatVoice.stream.getTracks().forEach(t => t.stop());
+    Object.assign(chatVoice, { rec:null, stream:null, chunks:[], holding:false, locked:false, cancelled:false });
+    chatRecUI(false, false);
+  }
+  function chatVoiceOnStop(){
+    const dur = (Date.now() - chatVoice.t0) / 1000;
+    const blob = new Blob(chatVoice.chunks, { type: chatVoice.mime });
+    const send = chatVoiceSend;
+    chatVoiceReset();
+    if(!send) return;
+    if(dur < CHAT_VOICE_MIN_SEC){ toast("Terlalu singkat. Tahan tombol mic selagi bicara.", "info"); return; }
+    chatSendVoice(blob, dur);
+  }
+
+  // ---- Tombol cepat konfirmasi: AI menutup pertanyaan konfirmasinya dengan [[KONFIRMASI]]
+  // atau [[PILIHAN: a | b]]; penanda dibuang dari teks dan diganti tombol. ----
+  function chatParseChips(ans){
+    const m = String(ans).match(/\[\[\s*(KONFIRMASI|PILIHAN\s*:([^\]]*))\s*\]\]/i);
+    if(!m) return { text: ans, chips: null };
+    const text = String(ans).replace(/\[\[[^\]]*\]\]/g, "").trim();
+    let chips;
+    if(/^KONFIRMASI/i.test(m[1])){
+      chips = [
+        { label:"✔ Ya, benar", send:"Ya, benar.", kind:"ok" },
+        { label:"✖ Bukan", send:"Bukan, itu salah dengar.", kind:"no" },
+      ];
+    }else{
+      const opts = (m[2] || "").split("|").map(x => x.trim()).filter(Boolean).slice(0, 4);
+      chips = opts.map(o => ({ label:o, send:"Maksud saya: " + o, kind:"opt" }));
+      chips.push({ label:"✖ Bukan itu", send:"Bukan salah satu itu.", kind:"no" });
+    }
+    return { text, chips };
+  }
+  function chatClearChips(){
+    document.querySelectorAll("#chatLog .chat-chips").forEach(el => el.remove());
+  }
+  function chatAddChips(chips){
+    chatClearChips();
+    const log = document.getElementById("chatLog");
+    const wrap = document.createElement("div");
+    wrap.className = "chat-chips";
+    chips.forEach(c => {
+      const b = document.createElement("button");
+      b.className = "chat-chip " + (c.kind === "opt" ? "" : c.kind);
+      b.textContent = c.label;
+      b.onclick = () => { chatClearChips(); chatAppend("user", c.send); chatAsk(c.send, false); };
+      wrap.appendChild(b);
+    });
+    log.appendChild(wrap);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // Bubble voice note: tombol play/pause, bar progres (bisa diklik untuk geser), durasi, dan teks hasil transkripsi.
+  function chatAppendVoice(blob, dur){
+    const log = document.getElementById("chatLog");
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    audio.preload = "metadata";
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble-anim";
+    bubble.style.cssText = "align-self:flex-end; background:linear-gradient(135deg,var(--blue-light),var(--blue-dark)); color:#fff; padding:10px 14px; border-radius:14px 14px 2px 14px; max-width:80%; font-size:13px;";
+    const ICON_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>';
+    const ICON_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></svg>';
+    bubble.innerHTML = `<div class="chat-voice"><button class="chat-voice-play" aria-label="Putar voice note">${ICON_PLAY}</button>` +
+      `<div class="chat-voice-track"><div class="chat-voice-fill"></div></div><span class="chat-voice-time">${chatFmtTime(dur)}</span></div>` +
+      `<div class="chat-voice-text pending">Menerjemahkan suara…</div>`;
+    const btn = bubble.querySelector(".chat-voice-play");
+    const track = bubble.querySelector(".chat-voice-track");
+    const fill = bubble.querySelector(".chat-voice-fill");
+    const time = bubble.querySelector(".chat-voice-time");
+    const total = () => (isFinite(audio.duration) && audio.duration > 0) ? audio.duration : dur;
+    // Trik: webm hasil MediaRecorder belum punya durasi -> paksa browser menghitungnya supaya bisa di-seek.
+    audio.addEventListener("loadedmetadata", () => {
+      if(audio.duration === Infinity){
+        audio.currentTime = 1e101;
+        audio.addEventListener("timeupdate", function fix(){ audio.removeEventListener("timeupdate", fix); audio.currentTime = 0; });
       }
-      input.value = (chatRecBase + " " + fin + interim).trim();
-      sendBtn.disabled = !input.value.trim();
+    });
+    audio.addEventListener("timeupdate", () => {
+      if(audio.currentTime > total() + 1) return;
+      fill.style.width = Math.min(100, audio.currentTime / total() * 100) + "%";
+      time.textContent = chatFmtTime(audio.paused && audio.currentTime === 0 ? total() : audio.currentTime);
+    });
+    audio.addEventListener("ended", () => { btn.innerHTML = ICON_PLAY; fill.style.width = "0%"; time.textContent = chatFmtTime(total()); });
+    audio.addEventListener("pause", () => { btn.innerHTML = ICON_PLAY; });
+    audio.addEventListener("play", () => { btn.innerHTML = ICON_PAUSE; });
+    btn.onclick = () => {
+      if(audio.paused){
+        if(chatVoice.audioEl && chatVoice.audioEl !== audio) chatVoice.audioEl.pause();   // satu suara saja pada satu waktu
+        chatVoice.audioEl = audio;
+        audio.play().catch(() => toast("Voice note tidak bisa diputar di browser ini.", "error"));
+      }else audio.pause();
     };
-    rec.onerror = (e) => {
-      const msg = {
-        "not-allowed": "Izin mikrofon ditolak. Aktifkan izin mikrofon di pengaturan browser lalu coba lagi.",
-        "service-not-allowed": "Izin mikrofon ditolak. Aktifkan izin mikrofon di pengaturan browser lalu coba lagi.",
-        "audio-capture": "Mikrofon tidak terdeteksi.",
-        "no-speech": "Suara tidak terdengar, coba lagi.",
-        "network": "Gagal memproses suara (koneksi bermasalah)."
-      }[e.error];
-      if(msg) toast(msg, "error");
+    track.onclick = (ev) => {
+      const r = track.getBoundingClientRect();
+      audio.currentTime = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)) * total();
     };
-    rec.onend = () => { chatMicUI(false); input.focus(); };
-    try{ rec.start(); }catch(e){ chatMicUI(false); }
+    log.appendChild(bubble);
+    log.scrollTop = log.scrollHeight;
+    const textEl = bubble.querySelector(".chat-voice-text");
+    return {
+      setText(t){ textEl.classList.remove("pending"); textEl.innerHTML = "<b>Terdengar:</b> “" + String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;") + "”"; log.scrollTop = log.scrollHeight; },
+      setFail(msg){ textEl.classList.remove("pending"); textEl.textContent = msg; },
+    };
   }
-  function chatMicInit(){
-    if(chatMicSupported()) document.getElementById("chatMicBtn").style.display = "flex";
+  async function chatSendVoice(blob, dur){
+    chatClearChips();
+    const vb = chatAppendVoice(blob, dur);
+    const ext = /mp4/.test(blob.type) ? "m4a" : (/ogg/.test(blob.type) ? "ogg" : "webm");
+    const fd = new FormData();
+    fd.append("audio", blob, "voice." + ext);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000);
+    let text = "";
+    try{
+      const res = await fetch(`${API_BASE}/api/chatbot/transcribe`, { method:"POST", body:fd, signal:controller.signal });
+      const ctype = res.headers.get("content-type") || "";
+      if(!ctype.includes("application/json")) throw new Error("Server lagi bermasalah/lambat merespons (status " + res.status + ").");
+      const data = await res.json();
+      if(!res.ok || !data.text) throw new Error(data.error || "Suara tidak terdengar jelas, coba rekam ulang.");
+      text = data.text;
+    }catch(err){
+      clearTimeout(timer);
+      const msg = err.name === "AbortError" ? "Pemrosesan suara terlalu lama. Coba rekam ulang." : err.message;
+      vb.setFail("Suara belum bisa dibaca");
+      chatAppend("bot", msg);
+      return;
+    }
+    clearTimeout(timer);
+    vb.setText(text);
+    return chatAsk(text, true);
   }
 
   async function chatSend(){
     const input = document.getElementById("chatInput");
     const message = input.value.trim();
     if(!message) return;
-    if(chatRecActive){ try{ chatRec.stop(); }catch(e){} }
+    chatClearChips();
     chatAppend("user", message);
     input.value = "";
-    document.getElementById("chatSendBtn").disabled = true;
+    chatSyncBtns();
+    return chatAsk(message, false);
+  }
+  // voice=true: teks berasal dari transkripsi voice note -> backend menyuruh AI minta konfirmasi kalau ragu.
+  async function chatAsk(message, voice){
     const typing = chatAppendTyping();
     let answer;
     // Batasin nunggu maksimal 90 detik -- lebih baik gagal dengan pesan
@@ -2174,7 +2428,7 @@
       const res = await fetch(`${API_BASE}/api/chatbot/ask`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, session_id: chatSessionId }),
+        body: JSON.stringify({ message, session_id: chatSessionId, voice: !!voice }),
         signal: controller.signal,
       });
       // Cek content-type dulu SEBELUM di-parse sebagai JSON -- kalau
@@ -2199,6 +2453,8 @@
       clearTimeout(timer);
     }
     typing.stop();
+    const parsed = chatParseChips(answer);
+    answer = parsed.text;
     // Ganti isi bubble "sedang mengetik" jadi jawaban asli dengan crossfade
     // halus (bukan langsung diganti mentah-mentah) -- ini yang bikin
     // kerasa lebih hidup/natural, mirip transisi bubble WA.
@@ -2209,6 +2465,7 @@
     setTimeout(() => {
       bubble.style.whiteSpace = "pre-wrap"; // biar enter/baris baru dari jawaban tampil (bubble typing dulu tanpa ini)
       bubble.innerHTML = chatFormat(answer);
+      if(parsed.chips) chatAddChips(parsed.chips);
       bubble.style.opacity = "1";
       bubble.style.transform = "translateY(0)";
       document.getElementById("chatLog").scrollTop = document.getElementById("chatLog").scrollHeight;

@@ -5678,7 +5678,7 @@ def chatbot_ask():
         history = _chat_sessions.get(session_id, [])
 
     try:
-        result = chatbot_engine.run_agent(get_sheet, message, history=history)
+        result = chatbot_engine.run_agent(get_sheet, message, history=history, voice=bool(body.get("voice")))
     except Exception as exc:
         return jsonify({"answer": f"Gagal memproses pertanyaan lewat AI: {exc}"}), 500
 
@@ -5688,6 +5688,30 @@ def chatbot_ask():
         )
 
     return jsonify({"answer": result["answer"], "tool_calls": result["tool_calls"]})
+
+
+@app.route("/api/chatbot/transcribe", methods=["POST"])
+def chatbot_transcribe():
+    """Voice note Tanya JO: terima rekaman suara (multipart, field 'audio'),
+    balikin transkrip teksnya. Teks ini lalu dikirim frontend ke /api/chatbot/ask
+    dengan voice=true supaya AI minta konfirmasi kalau ada yang tidak jelas."""
+    f = request.files.get("audio")
+    if not f:
+        return jsonify({"error": "Rekaman suara tidak ditemukan."}), 400
+    data = f.read()
+    if not data or len(data) < 800:
+        return jsonify({"error": "Rekaman terlalu pendek / kosong."}), 400
+    if len(data) > 20 * 1024 * 1024:
+        return jsonify({"error": "Rekaman terlalu besar (maks 20 MB)."}), 413
+    mimetype = (f.mimetype or "audio/webm").split(";")[0] or "audio/webm"
+    ext = "m4a" if "mp4" in mimetype else ("ogg" if "ogg" in mimetype else "webm")
+    try:
+        text = chatbot_engine.transcribe_audio(data, filename=f"voice.{ext}", mimetype=mimetype)
+    except Exception as exc:
+        return jsonify({"error": f"Gagal memproses suara: {exc}"}), 500
+    if not text:
+        return jsonify({"error": "Suara tidak terdengar jelas, coba rekam ulang."}), 422
+    return jsonify({"text": text})
 
 
 @app.route("/api/chatbot/reset", methods=["POST"])
