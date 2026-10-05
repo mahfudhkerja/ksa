@@ -1136,6 +1136,67 @@ def query_group(get_sheet_fn, group, jo=None, produk=None):
     if errors:
         out["errors"] = errors
 
+    # --- Daftar baris & total METER slitting: dihitung PYTHON, bukan AI -----
+    # Aturan bisnis: user tanya "JO 2779" = fokus angka SETELAH '/', jadi
+    # 123/2779, 12/2779, 2570/2779 SEMUA dijumlahkan jadi satu total JO.
+    # AI dilarang menyusun/menjumlah puluhan baris sendiri (terbukti salah:
+    # baris dobel/salah shift & total tidak sama dengan jumlah barisnya).
+    if group == "slitting" and target_jo and matched_raw_rows:
+        def _num(v):
+            x = to_number(v)
+            return x if isinstance(x, (int, float)) else None
+
+        def _fmt(x):
+            if x is None:
+                return None
+            if float(x).is_integer():
+                return f"{int(x):,}".replace(",", ".")
+            return f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        baris = []
+        tot_meter = 0.0
+        tot_hasil = 0.0
+        per_spk = {}
+        for i, rr in enumerate(matched_raw_rows, 1):
+            m = _num(rr.get("METER"))
+            t = _num(rr.get("TOTAL_METER"))
+            tot_meter += m or 0.0
+            tot_hasil += t or 0.0
+            spk = str(rr.get(jo_col) or "").strip() or "(kosong)"
+            d = per_spk.setdefault(spk, {"jumlah_baris": 0, "total_METER": 0.0, "total_TOTAL_METER": 0.0})
+            d["jumlah_baris"] += 1
+            d["total_METER"] += m or 0.0
+            d["total_TOTAL_METER"] += t or 0.0
+            no_roll = str(rr.get("NO_ROLL") or "").strip() or "tanpa nomor"
+            teks_m = f"{_fmt(m)} m" if m is not None else "METER kosong di sheet"
+            teks_t = f", TOTAL_METER {_fmt(t)} m" if t is not None else ""
+            baris.append(
+                f"{i}. {rr.get('TANGGAL') or '-'}, Mesin {rr.get('MESIN') or '-'}, "
+                f"Shift {rr.get('SHIFT') or '-'}, Roll {no_roll} — {teks_m}{teks_t} "
+                f"[SPK/JO {spk}]"
+            )
+        out["slitting_baris_siap_tampil"] = baris
+        out["slitting_total_meter"] = {
+            "jumlah_baris": len(baris),
+            "total_METER": _fmt(tot_meter),
+            "total_TOTAL_METER": _fmt(tot_hasil),
+        }
+        out["slitting_rincian_per_spk_jo"] = {
+            k: {
+                "jumlah_baris": v["jumlah_baris"],
+                "total_METER": _fmt(v["total_METER"]),
+                "total_TOTAL_METER": _fmt(v["total_TOTAL_METER"]),
+            }
+            for k, v in per_spk.items()
+        }
+        out["catatan_total_meter"] = (
+            "Semua baris di atas SUDAH digabung (angka setelah '/' sama = satu JO). Untuk daftar baris, "
+            "SALIN 'slitting_baris_siap_tampil' apa adanya (jangan tambah, kurangi, urutkan ulang, atau "
+            "ubah angka/shift/mesin). Untuk total, PAKAI 'slitting_total_meter' -- JANGAN dijumlah sendiri. "
+            "Sebutkan kedua total dengan label jelas: total_METER (jumlah kolom METER) dan "
+            "total_TOTAL_METER (jumlah kolom TOTAL_METER)."
+        )
+
     if group == "slitting" and matched_raw_rows:
         summary = _compute_slitting_summary(matched_raw_rows)
         if summary:
@@ -1417,6 +1478,10 @@ SYSTEM_PROMPT = (
     "ditulis polos, sisanya ditulis '{jumlah}@{meter}'). JANGAN pernah "
     "menjumlahkan sendiri kolom HASIL_ROLL dari baris-baris mentah di "
     "'data' untuk pertanyaan ini.\n"
+    "6b. Aturan JO: kalau user menyebut nomor JO (mis. '2779'), yang dipakai adalah angka SETELAH '/' di "
+    "kolom SPK/JO, jadi 123/2779, 12/2779, 2570/2779 semuanya DIJUMLAHKAN sebagai satu JO. Untuk slitting, "
+    "pakai field 'slitting_baris_siap_tampil' (salin apa adanya) dan 'slitting_total_meter' dari hasil tool; "
+    "dilarang menyusun atau menjumlah sendiri baris-barisnya.\n"
     "7. Jawab singkat, jelas, dalam Bahasa Indonesia. Kalau ada beberapa "
     "baris/mesin/rol/proses, WAJIB tampilkan sebagai list bernomor DENGAN "
     "SATU POIN PER BARIS -- setiap nomor (1., 2., 3., dst) HARUS diawali "
