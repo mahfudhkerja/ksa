@@ -193,6 +193,15 @@ def _produk_tokens_match(query_compact, row_compact):
     return q in r or r in q
 
 
+def _prefer_exact(query_compact, rows, nama_key):
+    """Kalau ada baris yang namanya PERSIS sama dengan yang dicari (setelah
+    dinormalisasi), pakai baris-baris itu saja. Tanpa ini, 'POUCH CPICO7 REV2'
+    ikut menarik produk 'POUCH CPICO7' (nama pendek = substring nama panjang)
+    sehingga selalu dianggap ambigu dan chatbot tanya terus."""
+    exact = [r for r in rows if _produk_tokens(_col(r, nama_key)) == query_compact]
+    return exact if exact else rows
+
+
 def _compute_slitting_summary(raw_rows):
     """raw_rows: list baris mentah SL_1 (hasil ws.get_all_records) yang
     JO-nya sudah cocok. Hitung ringkasan "HASIL SLITTING" pakai rumus
@@ -408,6 +417,7 @@ def _cari_produk_di_val1(get_sheet_fn, query_tokens):
     ws = _get_gudang_sheet(VAL_SHEET_NAME)
     header, rows = _sheet_to_dicts(ws)
     matched = [r for r in rows if _produk_tokens_match(query_tokens, _produk_tokens(_col(r, "NAMA_PRODUK")))]
+    matched = _prefer_exact(query_tokens, matched, "NAMA_PRODUK")
     return header, matched
 
 
@@ -436,6 +446,7 @@ def _cari_produk_di_form_st(get_sheet_fn, query_tokens):
     ws = _get_gudang_sheet(FORM_ST_SHEET_NAME)
     header, rows = _sheet_to_dicts(ws)
     matched = [r for r in rows if _produk_tokens_match(query_tokens, _produk_tokens(_col(r, "NAMA_PRODUK")))]
+    matched = _prefer_exact(query_tokens, matched, "NAMA_PRODUK")
     return header, matched
 
 
@@ -573,6 +584,7 @@ def _cari_produk_di_kategori(sheet_name, query_tokens):
     ws = _get_gudang_spreadsheet().worksheet(sheet_name)
     header, rows = _sheet_to_dicts(ws)
     matched = [r for r in rows if _produk_tokens_match(query_tokens, _produk_tokens(_col(r, "PRODUK")))]
+    matched = _prefer_exact(query_tokens, matched, "PRODUK")
     return header, matched
 
 
@@ -637,8 +649,14 @@ def search_produk_gudang(get_sheet_fn, keyword):
             errors.append(f"{sheet_name}: {exc}")
 
     hasil = sorted(found)
+    exact_names = [n for n in hasil if _produk_tokens(n) == query_tokens]
+    if exact_names:
+        # User sudah menyebut nama persis -> tidak ambigu, abaikan nama yang
+        # cuma lebih pendek/lebih panjang (mis. CPICO7 vs CPICO7 REV2).
+        hasil = exact_names
     out = {
         "keyword": keyword,
+        "nama_persis_cocok": bool(exact_names),
         "jumlah_nama_produk_unik_ditemukan": len(hasil),
         "hasil": hasil,
         "catatan": (
@@ -1432,6 +1450,10 @@ SYSTEM_PROMPT = (
     "itu artinya: panggil `query_stok_gudang` dengan nama produk yang BARU SAJA dibahas (pesan user terakhir "
     "sebelumnya). WAJIB panggil tool lagi. DILARANG menyalin/memakai ulang angka atau nama produk dari jawaban "
     "lama di percakapan ini -- tiap pertanyaan stok harus dari hasil tool terbaru.\n"
+    "8e. Kalau kamu SUDAH menampilkan daftar nama produk dan user membalas dengan memilih (angka '2', "
+    "atau mengetik ulang salah satu nama persis), itu KONFIRMASI FINAL. JANGAN tanya 'mana yang dimaksud' "
+    "lagi -- langsung panggil `query_stok_gudang` dengan nama persis yang dipilih (angka = urutan di daftar "
+    "terakhirmu). Menanyakan hal yang sama dua kali berturut-turut dilarang.\n"
     "9. JANGAN PERNAH memakai tag HTML apa pun (mis. <small>, <b>, <br>, "
     "<div>) di jawaban mana pun -- tampilan chat cuma mendukung "
     "**bold**, tabel gaya markdown (| kolom | kolom |), dan baris baru "
