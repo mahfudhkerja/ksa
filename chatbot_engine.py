@@ -1428,6 +1428,10 @@ SYSTEM_PROMPT = (
     "Serah Terima -> Barang Jadi Baru (BJB) -> Barang Jadi Lama (BJL). "
     "JANGAN diubah urutannya walau bagian mana yang 'ditemukan' berbeda "
     "tiap kali.\n"
+    "8d. Kalau user membalas singkat seperti 'STOK' / 'sisa stok' SETELAH kamu menanyakan/menyebut nama produk, "
+    "itu artinya: panggil `query_stok_gudang` dengan nama produk yang BARU SAJA dibahas (pesan user terakhir "
+    "sebelumnya). WAJIB panggil tool lagi. DILARANG menyalin/memakai ulang angka atau nama produk dari jawaban "
+    "lama di percakapan ini -- tiap pertanyaan stok harus dari hasil tool terbaru.\n"
     "9. JANGAN PERNAH memakai tag HTML apa pun (mis. <small>, <b>, <br>, "
     "<div>) di jawaban mana pun -- tampilan chat cuma mendukung "
     "**bold**, tabel gaya markdown (| kolom | kolom |), dan baris baru "
@@ -1616,10 +1620,33 @@ def trim_history(messages, max_user_turns=6):
             if m.get("role") != "tool" and not (m.get("role") == "assistant" and m.get("tool_calls"))
         ]
 
+    # Jawaban data lama (stok / hasil cari produk) dibuang isinya. Kalau tidak,
+    # model kecil suka MENYALIN tabel lama untuk pertanyaan baru ("STOK" setelah
+    # konfirmasi produk) tanpa memanggil tool -> yang muncul produk lain.
+    rest = [_redact_old_data_answer(m) for m in rest]
+
     return system_msgs + rest
 
 
-def _chat_create(client, messages, timeout):
+_DATA_MARKERS = ("Form Serah Terima", "Total Stok", "Barang Jadi Baru", "Barang Jadi Lama",
+                 "Nama produk yang ditemukan", "Validasi:")
+
+
+def _looks_like_data_answer(text):
+    return isinstance(text, str) and any(k in text for k in _DATA_MARKERS)
+
+
+def _redact_old_data_answer(m):
+    if m.get("role") == "assistant" and not m.get("tool_calls") and _looks_like_data_answer(m.get("content")):
+        first = (m["content"].strip().splitlines() or [""])[0][:120]
+        return {"role": "assistant", "content": (
+            f"[Jawaban data sebelumnya sudah ditampilkan ke user: \"{first}\". "
+            "Isi tabelnya sengaja dihapus dari histori. Untuk pertanyaan baru WAJIB panggil tool lagi, "
+            "jangan pernah memakai ulang angka/produk dari jawaban lama.]")}
+    return m
+
+
+def _chat_create(client, messages, timeout, tool_choice=None):
     """Satu panggilan ke AI lewat OpenRouter. Mencoba dengan reasoning
     dimatikan & temperature tetap; kalau provider menolak (HTTP 400), parameter
     itu dibuang satu per satu dan diingat (tidak dicoba lagi di panggilan
@@ -1630,6 +1657,8 @@ def _chat_create(client, messages, timeout):
         if REASONING_OFF:
             body["reasoning"] = {"enabled": False}
         kwargs = {"temperature": CHAT_TEMPERATURE} if TEMPERATURE_ON else {}
+        if tool_choice:
+            kwargs["tool_choice"] = tool_choice
         try:
             return client.chat.completions.create(
                 model=MODEL, messages=messages, tools=TOOLS,
@@ -1662,6 +1691,8 @@ def run_agent(get_sheet_fn, user_message, history=None, voice=False):
     messages.append({"role": "user", "content": (VOICE_MARKER + user_message) if voice else user_message})
 
     tool_call_log = []
+    force_tool = None
+    guard_used = False
     deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
     t_start = time.monotonic()
 
@@ -1675,7 +1706,9 @@ def run_agent(get_sheet_fn, user_message, history=None, voice=False):
                 "messages": messages,
             }
         t_call = time.monotonic()
-        response = _chat_create(client, messages, timeout=min(PER_CALL_TIMEOUT, remaining))
+        response = _chat_create(client, messages, timeout=min(PER_CALL_TIMEOUT, remaining),
+                                tool_choice=force_tool)
+        force_tool = None
         msg = response.choices[0].message
         print(
             f"[chatbot] step {step + 1}: AI {time.monotonic() - t_call:.1f}s, "
@@ -1687,6 +1720,17 @@ def run_agent(get_sheet_fn, user_message, history=None, voice=False):
             f"total={time.monotonic() - t_start:.1f}s",
             flush=True,
         )
+
+        if not msg.tool_calls and not tool_call_log and not guard_used and _looks_like_data_answer(msg.content):
+            # AI menjawab data tanpa memanggil tool sama sekali = salin dari histori / ngarang.
+            guard_used = True
+            force_tool = "required"
+            print("[chatbot] GUARD: jawaban data tanpa tool, dipaksa panggil tool", flush=True)
+            messages.append({"role": "user", "content": (
+                "[SISTEM] Jawabanmu tadi berisi data tapi kamu belum memanggil tool. Dilarang memakai data "
+                "dari jawaban sebelumnya. Panggil tool sekarang memakai produk/JO yang user maksud "
+                "(pesan terakhir user + konfirmasi produk di percakapan).")})
+            continue
 
         if not msg.tool_calls:
             messages.append({"role": "assistant", "content": msg.content})
