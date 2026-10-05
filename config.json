@@ -10,14 +10,14 @@
       "sheets": [
         "OKTOBER 2026",
         "SEPTEMBER 2026",
-        "AGS 2026",
-        "JULY 2026",
-        "JUNI 2026",
-        "MAY 2026",
-        "APR 2026",
-        "MAR 2026",
         "JAN 2026",
-        "FEB 2026"
+        "AGS 2026",
+        "JUNI 2026",
+        "JULY 2026",
+        "MAY 2026",
+        "FEB 2026",
+        "APR 2026",
+        "MAR 2026"
       ],
       "last_connected": "2026-09-02 15:28:05",
       "last_import": "2026-09-04 13:53:30",
@@ -32,6 +32,7 @@
       "source_id": "1pUnsnltMSb2SiEvdjikkwAjY9jIgLMl2sqCo-48ZnLc",
       "source_name": "PRINTING 3 - 2026",
       "sheets": [
+        "OCTOBER 2026",
         "SEPTEMBER 2026",
         "AGUST 26",
         "JULY 2026",
@@ -55,14 +56,15 @@
       "source_id": "1kR5aqeHg8X_V3BWzXCYeSL_3A12FrqDxvUxwXloZJTE",
       "source_name": "PRINTING 4 - 2025 & 2026",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
         "JUN 2026",
-        "MAY 2026",
-        "APR 2026",
         "MAR 2026",
+        "APR 2026",
         "JAN 2026",
+        "MAY 2026",
         "FEB 2026"
       ],
       "last_connected": "2026-09-02 15:29:23",
@@ -78,6 +80,7 @@
       "source_id": "1kf3JQGPZtQLMyj8IPjLH6318vj1ZMnaquoOYRF4wTi0",
       "source_name": "PRINTING 5 2026 TERBARU",
       "sheets": [
+        "OKTOBER 2026",
         "SEPTEMBER 2026",
         "AGUSTUS 2026",
         "JULI 2026",
@@ -101,6 +104,7 @@
       "source_id": "1MlR1Hx0zopLsn-RPSdJWk_roKzy7EBPD",
       "source_name": "Laporan Dry 1.xlsx",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -124,6 +128,7 @@
       "source_id": "19JktufS4bcUMn5WL6xAIzqcRoDXUdrUb",
       "source_name": "Laporan Dry 2.xlsx",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -147,6 +152,7 @@
       "source_id": "1YwEnFwKRkztcv_sf6g-q6J0_QsKlYxjS",
       "source_name": "Laporan Dry 3.xlsx",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -170,6 +176,7 @@
       "source_id": "1bzT9Jl9EZHNq-iPw_vQy_iRmH9eNh1UN",
       "source_name": "Laporan Dry 4.xlsx",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -193,6 +200,7 @@
       "source_id": "1CPtAI3Y6FMhG4dfkxJS9Y3FeUSYBLx-b",
       "source_name": " Laporan Dry 5.xlsx",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -216,6 +224,7 @@
       "source_id": "17It0046kdt9aC9LQzRwAbPr5P0z3SDXyikVEpLFvz5U",
       "source_name": "Laporan Rewind Besar",
       "sheets": [
+        "OKTO 2026",
         "SEPTE 2026",
         "AGUS 2026",
         "JULIE 2026",
@@ -239,6 +248,7 @@
       "source_id": "1AtSQbz-1JWAf407NsnIj702QkSH7d_Xo5uetjpwI0VQ",
       "source_name": "Laporan EXTRUSI",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -262,6 +272,7 @@
       "source_id": "1l70Ing74GecNB2lrgJNzEaCQQAsLYqjwJMVgpqbBIXM",
       "source_name": "Laporan Solvent Free 1",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUN 2026",
@@ -285,6 +296,7 @@
       "source_id": "1DJJsTdD8WbSTlCnWDEnpNFW_ywMCGcT0V3I6Gn0Kebs",
       "source_name": "Laporan Slitting New 2025 & 2026",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -308,6 +320,7 @@
       "source_id": "1CTxV1lELzte84x928rWwbuhKMK8kHTCw",
       "source_name": "LAPORAN BAG.xlsx",
       "sheets": [
+        "OKT 2026",
         "SEP 2026",
         "AGS 2026",
         "JUL 2026",
@@ -343,8 +356,8 @@
       "label": "Validasi (VAL)",
       "type": "gsheet",
       "script": "import_val.py",
-      "source_id": "1TMbPkVAi8oJba2BCTEuONMBInktn02EBUbcNrXkUeZY",
-      "source_name": "VALIDASI OKTOBER",
+      "source_id": "1VskM8j2zVMIlF492CO_t7dzfhUnK3Pg9KM8mRJqmukU",
+      "source_name": "VALIDASI SEPTEMBER",
       "sheets": [
         "04/09/2026/1"
       ],
@@ -364,12 +377,13 @@
         "JANUARI 2026",
         "Februari 2026",
         "Maret 2026",
-        "April  2026",
+        "April 2026",
         "Mei 2026",
         "Juni 2026",
         "Juli 2026",
         "Agustus 2026",
-        "September 2026"
+        "September 2026",
+        "Oktober 2026"
       ],
       "last_connected": "2026-09-02 15:27:35",
       "last_import": "2026-09-04 08:45:57",
@@ -474,11 +488,12 @@
       "source_id": "1H_yl42V7ttn6KuydXQDAi5ppqBcRVczhVUS5L_EtkC8",
       "source_name": "LAPORAN HARIAN REWINDING KECIL",
       "sheets": [
+        "OKTOBER 2026",
         "SEPTEMBER 2026",
         "AGUSTUS 2026",
         "JULI 2026",
         "JUNI 2026",
-        "MEY 2026",
+        "MEI 2026",
         "APRIL 2026",
         "MARET 2026",
         "FEBRUARI 2026",

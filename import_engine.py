@@ -790,31 +790,37 @@ def run_update_stock_import(source_key="update_stock"):
         card_label = LOCAL_EXCEL_CARD_LABELS.get(source_key, source_key)
         if not filename:
             raise ValueError(f"Source '{source_key}' belum ada file yang diupload (klik kartu \"{card_label}\" di halaman Input Data Produksi dulu).")
+        stock_problems = []
         for sheet_name in src.get("sheets", []):
             try:
                 rows = _read_stacked_block_excel_sheet(source_key, filename, sheet_name)
             except ValueError as e:
-                print(f"   ⚠️ {e}")
+                print(f"   ❌ {e}")
+                stock_problems.append((sheet_name, "sheet tidak ditemukan di file yang diupload"))
                 continue
             blocks = _extract_stacked_blocks(rows)
             print(f"   Sheet '{sheet_name}': {len(blocks)} baris (semua blok digabung).")
             combined.extend(blocks)
+        _raise_if_sheet_problems(stock_problems, len(src.get("sheets", [])))  # batal sebelum menulis
         client = get_gspread_client()  # tetap dibutuhkan buat nulis ke target di bawah
     else:
         if not src.get("source_id"):
             raise ValueError("Source 'update_stock' belum terhubung ke spreadsheet manapun (klik Load dulu di halaman Input Data Produksi).")
         client = get_gspread_client()
         source_sp = client.open_by_key(src["source_id"])
+        stock_problems = []
         for sheet_name in src.get("sheets", []):
             try:
                 ws = source_sp.worksheet(sheet_name)
             except gspread.exceptions.WorksheetNotFound:
-                print(f"   ⚠️ Sheet '{sheet_name}' tidak ditemukan di sumber, dilewati.")
+                print(f"   ❌ Sheet '{sheet_name}' tidak ditemukan di sumber.")
+                stock_problems.append((sheet_name, "sheet tidak ditemukan di sumber"))
                 continue
             rows = _with_retry(ws.get_all_values, label=f"baca {sheet_name}")
             blocks = _extract_stacked_blocks(rows)
             print(f"   Sheet '{sheet_name}': {len(blocks)} baris (semua blok digabung).")
             combined.extend(blocks)
+        _raise_if_sheet_problems(stock_problems, len(src.get("sheets", [])))  # batal sebelum menulis
 
     target_sp = client.open_by_key(target_id)
     try:
@@ -1220,6 +1226,66 @@ def _sheet_month_sort_key(sheet_name):
 
 
 # ============================================================
+# VALIDASI DAFTAR SHEET -- import WAJIB gagal (bukan diam-diam dilewati)
+# kalau ada sheet yang diminta tapi tidak bisa dibaca, atau ada bulan yang
+# terlewat di antara daftar sheet bulanan. Tujuannya: data lama di sheet
+# tujuan tidak tertimpa data yang BOLONG (mis. Oktober hilang tanpa ada yang
+# sadar). Error-nya dilempar sebelum menulis apa pun ke sheet tujuan,
+# otomatis tercatat sebagai ERROR di config.json (set_import_result), dan
+# script import keluar dengan exit code != 0 sehingga muncul sebagai GAGAL
+# di rangkuman saat Refresh selesai.
+# ============================================================
+
+_MONTH_NAMES_ID = ["", "JANUARI", "FEBRUARI", "MARET", "APRIL", "MEI", "JUNI",
+                   "JULI", "AGUSTUS", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DESEMBER"]
+
+
+class SheetImportError(RuntimeError):
+    """Import dibatalkan karena ada sheet yang bermasalah (tidak ditemukan,
+    kosong, header hilang, atau ada bulan yang terlewat)."""
+
+
+def _find_month_gaps(sheet_names):
+    """Cari bulan yang TERLEWAT di antara daftar sheet bulanan. Contoh: daftar
+    berisi JAN, FEB, APR (tanpa MAR) -> ['MARET 2026']. Hanya menilai antara
+    bulan paling awal & paling akhir yang ada di daftar (bulan sebelum/sesudah
+    itu bukan 'terlewat'). Sheet yang namanya bukan bulan (mis. 'JO BARU',
+    'PET', '04/09/2026/1') diabaikan. Kalau tidak ada info tahun sama sekali,
+    tidak dinilai (hindari alarm palsu)."""
+    found = []
+    for n in sheet_names or []:
+        m = _detect_month_number(n)
+        if m is not None:
+            found.append((m, _detect_year(n)))
+    if len(found) < 2:
+        return []
+    years = [y for _, y in found if y]
+    if not years:
+        return []
+    default_year = max(set(years), key=lambda y: (years.count(y), y))
+    idx = {(y or default_year) * 12 + (m - 1) for m, y in found}
+    gaps = []
+    for i in range(min(idx), max(idx) + 1):
+        if i not in idx:
+            gaps.append(f"{_MONTH_NAMES_ID[(i % 12) + 1]} {i // 12}")
+    return gaps
+
+
+def _raise_if_sheet_problems(problems, total):
+    """problems: list of (nama_sheet_atau_bulan, alasan). Kalau ada isinya ->
+    cetak ke log lalu raise SheetImportError (tidak ada yang ditulis ke
+    sheet tujuan)."""
+    if not problems:
+        return
+    detail = "; ".join(f"{name} ({reason})" for name, reason in problems)
+    msg = (f"IMPORT GAGAL -- {len(problems)} sheet/bulan bermasalah dari {total} sheet: {detail}. "
+           f"Data di sheet tujuan TIDAK diubah. Perbaiki nama/isi sheet di sumber, "
+           f"atau atur ulang centang sheet di halaman Input Data, lalu Refresh lagi.")
+    print("\n❌ " + msg)
+    raise SheetImportError(msg)
+
+
+# ============================================================
 # VARIAN 1: IMPORT LANGSUNG DARI GOOGLE SHEET (printing/rw/sl/sf)
 # ============================================================
 
@@ -1239,12 +1305,19 @@ def import_sheets_aligned(source_id, target_id, sheets_to_import, target_sheet_n
     target_sp = _with_retry(client.open_by_key, target_id, label=f"open target {target_id}")
 
     ws_list = []
+    problems = []
     if sheets_to_import:
         for name in sheets_to_import:
             try:
                 ws_list.append(source_sp.worksheet(name))
             except gspread.exceptions.WorksheetNotFound:
-                print(f"⚠️ Sheet '{name}' tidak ditemukan, dilewati.")
+                print(f"❌ Sheet '{name}' tidak ditemukan di sumber.")
+                problems.append((name, "sheet tidak ditemukan di sumber"))
+        for gap in _find_month_gaps(sheets_to_import):
+            print(f"❌ Bulan {gap} terlewat di daftar sheet.")
+            problems.append((gap, "bulan terlewat, tidak ada di daftar sheet"))
+        # Gagal cepat SEBELUM baca isi sheet (hemat kuota API Google).
+        _raise_if_sheet_problems(problems, len(sheets_to_import))
     else:
         ws_list = source_sp.worksheets()
         print(f"📋 Mengimpor semua sheet ({len(ws_list)} sheet).")
@@ -1263,11 +1336,13 @@ def import_sheets_aligned(source_id, target_id, sheets_to_import, target_sheet_n
         print(f"\n🔍 Memproses sheet: {ws.title}")
         rows = ws.get_all_values()
         if not rows:
-            print("   Sheet kosong, dilewati.")
+            print("   ❌ Sheet kosong.")
+            problems.append((ws.title, "sheet kosong"))
             continue
         header_idx = find_header_row(rows, header_keywords, min_matches=header_min_matches)
         if header_idx is None:
-            print("   ❌ Tidak ditemukan baris header, dilewati.")
+            print("   ❌ Tidak ditemukan baris header.")
+            problems.append((ws.title, "baris header tidak ditemukan"))
             continue
         header_row = rows[header_idx]
         print(f"   ✅ Header ditemukan di baris {header_idx+1}")
@@ -1276,6 +1351,8 @@ def import_sheets_aligned(source_id, target_id, sheets_to_import, target_sheet_n
         print(f"   📊 Jumlah baris data valid: {len(data_rows)}")
         for row in data_rows:
             all_rows.append(_map_row(row, target_headers, mapping, _sanitize_cell_gsheet))
+
+    _raise_if_sheet_problems(problems, len(ws_list))  # batal sebelum menulis apa pun
 
     print(f"\n📝 Menulis ke sheet tujuan '{target_sheet_name}'...")
     return _write_target(target_sp, target_sheet_name, all_rows, target_headers)
@@ -1364,20 +1441,29 @@ def import_excel_from_drive(source_id, target_id, sheets_to_import, target_sheet
     sheets_to_import = sorted(sheets_to_import, key=_sheet_month_sort_key)
     print("   🗓️ Urutan proses (per bulan): " + ", ".join(sheets_to_import))
 
-    all_rows = [target_headers]
+    problems = []
     for sheet_name in sheets_to_import:
         if sheet_name not in available_sheets:
-            print(f"⚠️ Sheet '{sheet_name}' tidak ditemukan di file Excel, dilewati.")
-            continue
+            print(f"❌ Sheet '{sheet_name}' tidak ditemukan di file Excel.")
+            problems.append((sheet_name, "sheet tidak ditemukan di file Excel"))
+    for gap in _find_month_gaps(sheets_to_import):
+        print(f"❌ Bulan {gap} terlewat di daftar sheet.")
+        problems.append((gap, "bulan terlewat, tidak ada di daftar sheet"))
+    _raise_if_sheet_problems(problems, len(sheets_to_import))  # gagal cepat sebelum baca isi
+
+    all_rows = [target_headers]
+    for sheet_name in sheets_to_import:
         print(f"\n🔍 Memproses sheet: {sheet_name}")
         df = pd.read_excel(excel_file, sheet_name=sheet_name, header=None)
         rows = df.values.tolist()
         if not rows:
-            print("   Sheet kosong, dilewati.")
+            print("   ❌ Sheet kosong.")
+            problems.append((sheet_name, "sheet kosong"))
             continue
         header_idx = find_header_row(rows, header_keywords)
         if header_idx is None:
-            print("   ❌ Tidak ditemukan baris header, dilewati.")
+            print("   ❌ Tidak ditemukan baris header.")
+            problems.append((sheet_name, "baris header tidak ditemukan"))
             continue
         header_row = rows[header_idx]
         print(f"   ✅ Header ditemukan di baris {header_idx+1}")
@@ -1387,6 +1473,8 @@ def import_excel_from_drive(source_id, target_id, sheets_to_import, target_sheet
         for row in data_rows:
             row = ["" if (isinstance(c, float) and pd.isna(c)) else c for c in row]
             all_rows.append(_map_row(row, target_headers, mapping, _sanitize_cell_excel))
+
+    _raise_if_sheet_problems(problems, len(sheets_to_import))  # batal sebelum menulis apa pun
 
     print(f"\n📝 Menulis ke sheet tujuan '{target_sheet_name}'...")
     return _write_target(target_sp, target_sheet_name, all_rows, target_headers)
@@ -1800,20 +1888,29 @@ def import_local_excel_upload(source_key, target_id, sheets_to_import, target_sh
     sheets_to_import = sorted(sheets_to_import, key=_sheet_month_sort_key)
     print("   🗓️ Urutan proses (per bulan): " + ", ".join(sheets_to_import))
 
-    all_rows = [target_headers]
+    problems = []
     for sheet_name in sheets_to_import:
         if sheet_name not in available_sheets:
-            print(f"⚠️ Sheet '{sheet_name}' tidak ditemukan di file yang diupload, dilewati.")
-            continue
+            print(f"❌ Sheet '{sheet_name}' tidak ditemukan di file yang diupload.")
+            problems.append((sheet_name, "sheet tidak ditemukan di file yang diupload"))
+    for gap in _find_month_gaps(sheets_to_import):
+        print(f"❌ Bulan {gap} terlewat di daftar sheet.")
+        problems.append((gap, "bulan terlewat, tidak ada di daftar sheet"))
+    _raise_if_sheet_problems(problems, len(sheets_to_import))  # gagal cepat sebelum baca isi
+
+    all_rows = [target_headers]
+    for sheet_name in sheets_to_import:
         print(f"\n🔍 Memproses sheet: {sheet_name}")
         ws = wb.get_sheet_by_name(sheet_name)
         rows = ws.to_python()
         if not rows:
-            print("   Sheet kosong, dilewati.")
+            print("   ❌ Sheet kosong.")
+            problems.append((sheet_name, "sheet kosong"))
             continue
         header_idx = find_header_row(rows, header_keywords, min_matches=header_min_matches)
         if header_idx is None:
-            print("   ❌ Tidak ditemukan baris header, dilewati.")
+            print("   ❌ Tidak ditemukan baris header.")
+            problems.append((sheet_name, "baris header tidak ditemukan"))
             continue
         header_row = rows[header_idx]
         print(f"   ✅ Header ditemukan di baris {header_idx+1}")
@@ -1822,6 +1919,8 @@ def import_local_excel_upload(source_key, target_id, sheets_to_import, target_sh
         print(f"   📊 Jumlah baris data valid: {len(data_rows)}")
         for row in data_rows:
             all_rows.append(_map_row(row, target_headers, mapping, _sanitize_cell_local_excel))
+
+    _raise_if_sheet_problems(problems, len(sheets_to_import))  # batal sebelum menulis apa pun
 
     print(f"\n📝 Menulis ke sheet tujuan '{target_sheet_name}'...")
     return _write_target(target_sp, target_sheet_name, all_rows, target_headers)
