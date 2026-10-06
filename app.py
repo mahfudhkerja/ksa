@@ -1792,232 +1792,236 @@ def get_kiriman_reguler():
         return jsonify({"success": False, "message": f"Gagal membaca {REGULER_KO_SHEET_NAME}: {e}"}), 500
 
 
-@app.route("/api/kiriman/reguler/add-jo", methods=["POST"])
-def ko_add_jo():
-    """Tambah JO baru ke sheet kartu order (REGULER_KO / FORISA_KO / DDCT_KO).
+# ---- Tambah JO (satu / bulk) ke sheet kartu order ----
+# Kolom WAJIB per JO (sama untuk mode satu JO & bulk): ORDER (-> PLANNING_ROL_PCS),
+# POTONGAN, METER (-> PLANNING_METER), plus nama produk & nomor JO. Kosong / "-"
+# dianggap belum diisi -> SELURUH permintaan ditolak, tidak ada baris yang ditulis.
+KO_ADD_REQUIRED = (
+    ("planning_rol",   "PLANNING_ROL_PCS", "Order (Rol/Pcs)"),
+    ("potongan",       "POTONGAN",         "Potongan"),
+    ("planning_meter", "PLANNING_METER",   "Meter"),
+)
 
-    Logika sisip:
-    1. Scan kolom NAMA_PRODUK dari atas ke bawah.
-    2. Catat baris terakhir yang NAMA_PRODUK-nya cocok dengan produk yang dikirim.
-    3. Sisipkan baris baru TEPAT SETELAH baris terakhir itu (insert_row),
-       sehingga JO baru ada di bagian paling bawah grup produk tsb.
-    4. Kalau nama produk belum ada di sheet → append di baris paling bawah data
-       (setelah baris non-kosong terakhir).
 
-    Body JSON:
-        sheet      : "REGULER_KO" | "FORISA_KO" | "DDCT_KO"  (wajib)
-        jo         : nomor/kode JO baru                        (wajib)
-        nama_produk: nama produk                               (wajib)
-        planning_meter : angka / string                        (opsional)
-        planning_rol   : angka / string                        (opsional)
-        extra_cols     : {HEADER: nilai, ...}                  (opsional, kolom lain)
-    """
-    body = request.get_json(silent=True) or {}
-    sheet_name = str(body.get("sheet", REGULER_KO_SHEET_NAME)).strip()
-    jo          = str(body.get("jo", "")).strip()
-    nama_produk = str(body.get("nama_produk", "")).strip()
+def _ko_clean_cell(v):
+    s = str(v if v is not None else "").strip()
+    return "" if s in ("-", "\u2013", "\u2014") else s
 
-    # Validasi sheet diizinkan
+
+def _ko_norm_number(v):
+    """Angka format Indonesia -> format baku: '16.000' -> '16000', '0,28' -> '0.28',
+    '1.234,5' -> '1234.5', '0.225' -> '0.225' (titik setelah 0 = desimal, bukan ribuan).
+    Teks lain (mis. '2(24)') dibiarkan apa adanya."""
+    s = _ko_clean_cell(v)
+    if not s:
+        return ""
+    if re.fullmatch(r"[1-9]\d{0,2}(\.\d{3})+(,\d+)?", s):
+        s = s.replace(".", "").replace(",", ".")
+    elif re.fullmatch(r"\d+,\d+", s):
+        s = s.replace(",", ".")
+    return s
+
+
+def _ko_cell_value(v):
+    """Angka murni -> int/float asli (ditulis RAW, jadi tidak tergantung locale
+    spreadsheet: 0,28 tidak berubah jadi teks/tanggal). Selain itu tetap teks."""
+    s = _ko_norm_number(v)
+    if re.fullmatch(r"\d+", s):
+        return int(s)
+    if re.fullmatch(r"\d+\.\d+", s):
+        return float(s)
+    return s
+
+
+def _ko_add_jo_items(sheet_name, items, default_produk="", check_dupes=False):
+    """Inti tambah JO. items: [{jo, nama_produk, planning_rol, potongan,
+    planning_meter, extra_cols?}, ...]. Tiap item boleh beda nama produk;
+    item tanpa nama_produk memakai default_produk.
+
+    Penempatan: JO dari produk yang SUDAH ada disisipkan tepat setelah baris
+    terakhir grup produk itu (pakai penulisan nama produk yang ada di sheet);
+    produk baru ditaruh di bawah semua data, berurutan sesuai kemunculan.
+    Return (payload, http_status)."""
+    def fail(msg, code=400, **extra):
+        return ({"success": False, "message": msg, **extra}, code)
+
     allowed_sheets = {REGULER_KO_SHEET_NAME, FORISA_KO_SHEET_NAME, DDCT_KO_SHEET_NAME}
     if sheet_name not in allowed_sheets:
-        return jsonify({"success": False, "message": f"Sheet '{sheet_name}' tidak dikenal."}), 400
-    if not jo:
-        return jsonify({"success": False, "message": "Field 'jo' wajib diisi."}), 400
-    if not nama_produk:
-        return jsonify({"success": False, "message": "Field 'nama_produk' wajib diisi."}), 400
+        return fail(f"Sheet '{sheet_name}' tidak dikenal.")
+    if not isinstance(items, list) or not items:
+        return fail("Isi minimal satu JO.")
+    if len(items) > 500:
+        return fail("Maksimal 500 JO per sekali simpan.")
 
-    try:
-        sh = _ko_spreadsheet()
-        ws = sh.worksheet(sheet_name)
-        all_values = ws.get_all_values()
+    ws = _ko_spreadsheet().worksheet(sheet_name)
+    all_values = ws.get_all_values()
+    if not all_values:
+        return fail(f"Sheet {sheet_name} kosong/belum ada header.")
 
-        if not all_values:
-            return jsonify({"success": False, "message": f"Sheet {sheet_name} kosong/belum ada header."}), 400
+    headers = [str(x).strip() for x in all_values[0]]
+    hidx = {}
+    for i, h in enumerate(headers):
+        hidx.setdefault(_ko_norm_h(h), i)
+    col_jo = hidx.get(_ko_norm_h(REGULER_KO_JO_COL), 0)
+    col_produk = hidx.get(_ko_norm_h(REGULER_KO_PRODUK_COL), 1)
+    missing = [hdr for _, hdr, _ in KO_ADD_REQUIRED if _ko_norm_h(hdr) not in hidx]
+    if missing:
+        return fail(f"Kolom {', '.join(missing)} tidak ditemukan di sheet {sheet_name}, jadi JO tidak disimpan.")
+    col_of = {key: hidx[_ko_norm_h(hdr)] for key, hdr, _ in KO_ADD_REQUIRED}
 
-        # --- Baca header (baris pertama) ---
-        headers = [str(x).strip() for x in all_values[0]]
+    norm = lambda t: re.sub(r"\s+", " ", str(t or "")).strip().upper()
 
-        # Temukan index kolom kunci
-        try:
-            col_jo_idx      = headers.index(REGULER_KO_JO_COL)    # KUMPULAN_JO_AKTIF
-        except ValueError:
-            col_jo_idx = 0
-        try:
-            col_produk_idx  = headers.index(REGULER_KO_PRODUK_COL) # NAMA_PRODUK
-        except ValueError:
-            col_produk_idx = 1
-
-        # Kolom opsional dari alias
-        extra_cols = body.get("extra_cols") or {}
-        planning_meter = str(body.get("planning_meter", "")).strip()
-        planning_rol   = str(body.get("planning_rol", "")).strip()
-        try:
-            col_pm_idx = headers.index("PLANNING_METER")
-        except ValueError:
-            col_pm_idx = None
-        try:
-            col_pr_idx = headers.index("PLANNING_ROL_PCS")
-        except ValueError:
-            col_pr_idx = None
-
-        # Bangun baris baru (panjang = jumlah kolom header)
-        new_row = [""] * len(headers)
-        new_row[col_jo_idx]     = jo
-        new_row[col_produk_idx] = nama_produk
-        if planning_meter and col_pm_idx is not None:
-            new_row[col_pm_idx] = planning_meter
-        if planning_rol and col_pr_idx is not None:
-            new_row[col_pr_idx] = planning_rol
-        for col_name, val in extra_cols.items():
-            if col_name in headers:
-                new_row[headers.index(col_name)] = str(val)
-
-        # --- Cari baris terakhir grup produk (1-based, termasuk header di baris 1) ---
-        target_key = re.sub(r"\s+", " ", nama_produk).strip().upper()
-        last_row_of_product = None   # 1-based sheet row number
-        last_data_row       = 1      # baris data non-kosong terakhir (1-based)
-
-        for row_idx, row in enumerate(all_values[1:], start=2):  # start=2: baris 1 = header
-            # Cek apakah baris ini non-kosong
-            if any(c.strip() for c in row):
-                last_data_row = row_idx
-            # Cocokkan nama produk (normalisasi spasi, uppercase)
-            cell_produk = row[col_produk_idx].strip() if col_produk_idx < len(row) else ""
-            key = re.sub(r"\s+", " ", cell_produk).strip().upper()
-            if key == target_key:
-                last_row_of_product = row_idx
-
-        if last_row_of_product is not None:
-            # Produk ditemukan → sisipkan tepat setelah baris terakhir grup
-            insert_at = last_row_of_product + 1
-            ws.insert_row(new_row, index=insert_at, value_input_option="USER_ENTERED")
-            action = f"disisipkan setelah baris {last_row_of_product} (grup produk '{nama_produk}')"
+    # --- 1. Validasi SEMUA item dulu (belum menulis apa pun) ---
+    clean, errors = [], []
+    for n, it in enumerate(items, start=1):
+        it = it or {}
+        jo = str(it.get("jo", "")).strip()
+        produk = re.sub(r"\s+", " ", str(it.get("nama_produk") or default_produk or "")).strip()
+        vals, errs = {}, []
+        if not jo:
+            errs.append("JO kosong")
+        if not produk:
+            errs.append("nama produk kosong")
+        for key, _, label in KO_ADD_REQUIRED:
+            v = _ko_cell_value(it.get(key))
+            if v == "":
+                errs.append(f"{label} wajib diisi")
+            vals[key] = v
+        if errs:
+            errors.append(f"baris {n} ({jo or '?'}): " + ", ".join(errs))
         else:
-            # Produk belum ada → append setelah baris data terakhir
-            insert_at = last_data_row + 1
-            ws.insert_row(new_row, index=insert_at, value_input_option="USER_ENTERED")
-            action = f"ditambahkan di baris {insert_at} (produk baru, di bawah semua data)"
+            clean.append((jo, produk, vals, it.get("extra_cols") or {}))
+    if errors:
+        shown = "; ".join(errors[:8]) + (f"; (+{len(errors) - 8} baris lain)" if len(errors) > 8 else "")
+        return fail(f"{len(errors)} baris belum lengkap, tidak ada yang disimpan -- {shown}", errors=errors)
 
-        # Invalidasi cache sheet ini supaya fetch berikutnya baca data terbaru
+    # --- 2. Pindai sheet: baris terakhir tiap grup produk, ejaan produk di sheet, JO yang sudah ada ---
+    last_row_of, name_of, all_jo = {}, {}, set()
+    last_data_row = 1
+    for row_idx, row in enumerate(all_values[1:], start=2):
+        if any(c.strip() for c in row):
+            last_data_row = row_idx
+        cell_produk = row[col_produk].strip() if col_produk < len(row) else ""
+        k = norm(cell_produk)
+        if k:
+            last_row_of[k] = row_idx
+            name_of.setdefault(k, cell_produk)
+        cell_jo = row[col_jo].strip() if col_jo < len(row) else ""
+        if cell_jo:
+            all_jo.add(norm(cell_jo))
+
+    # --- 3. Bentuk baris baru, dikelompokkan per produk (urutan input terjaga) ---
+    groups = {}        # key produk -> {"name": ejaan, "rows": [...], "exists": bool}
+    order = []
+    added, skipped, seen = [], [], set()
+    for jo, produk, vals, extra in clean:
+        kj = norm(jo)
+        if kj in seen or (check_dupes and kj in all_jo):
+            skipped.append(jo)
+            continue
+        seen.add(kj)
+        kp = norm(produk)
+        g = groups.get(kp)
+        if g is None:
+            g = groups[kp] = {"name": name_of.get(kp, produk), "rows": [], "exists": kp in last_row_of}
+            order.append(kp)
+        r = [""] * len(headers)
+        r[col_jo] = jo
+        r[col_produk] = g["name"]
+        for key, ci in col_of.items():
+            r[ci] = vals[key]
+        for col_name, val in extra.items():
+            ci = hidx.get(_ko_norm_h(col_name))
+            if ci is not None:
+                r[ci] = str(val)
+        g["rows"].append(r)
+        added.append(jo)
+
+    if not added:
+        return fail(f"Tidak ada JO baru yang disimpan ({len(skipped)} JO sudah ada).", skipped=skipped)
+
+    # --- 4. Rencana sisip. Dikerjakan dari baris PALING BAWAH ke atas supaya nomor baris
+    # rencana lain tidak bergeser. Blok produk baru (di bawah semua data) didahulukan kalau
+    # posisinya sama dengan sisipan grup yang sudah ada, agar grup lama tetap di atasnya. ---
+    plan = []
+    for kp in order:
+        g = groups[kp]
+        if g["exists"]:
+            plan.append((last_row_of[kp] + 1, 0, g["rows"]))
+    new_rows = [r for kp in order if not groups[kp]["exists"] for r in groups[kp]["rows"]]
+    if new_rows:
+        plan.append((last_data_row + 1, 1, new_rows))
+    plan.sort(key=lambda x: (-x[0], -x[1]))
+
+    done = []
+    try:
+        for insert_at, _, rows in plan:
+            try:
+                ws.insert_rows(rows, row=insert_at, value_input_option="RAW")
+            except AttributeError:   # gspread versi lama tanpa insert_rows
+                for off, r in enumerate(rows):
+                    ws.insert_row(r, index=insert_at + off, value_input_option="RAW")
+            done.extend(r[col_jo] for r in rows)
+    except Exception as e:
         with _ko_cache_lock:
             _ko_cache.pop(sheet_name, None)
+        return fail(f"Gagal di tengah proses: {e}. Sudah tersimpan {len(done)} dari {len(added)} JO"
+                    + (f" ({', '.join(done[:10])}{'...' if len(done) > 10 else ''})" if done else "")
+                    + ". Cek sheet sebelum mengulang.", 500, added=done)
 
-        return jsonify({
-            "success": True,
-            "message": f"JO '{jo}' berhasil {action}.",
-            "inserted_at_row": insert_at,
-            "sheet": sheet_name,
-        })
+    with _ko_cache_lock:
+        _ko_cache.pop(sheet_name, None)
 
+    n_exist = sum(1 for kp in order if groups[kp]["exists"])
+    n_new = len(order) - n_exist
+    first_insert = min(x[0] for x in plan)
+    msg = f"{len(added)} JO berhasil ditambahkan ({n_exist} grup produk lama, {n_new} produk baru)."
+    if skipped:
+        msg += f" {len(skipped)} JO dilewati karena sudah ada."
+    return ({"success": True, "message": msg, "added": added, "skipped": skipped,
+             "inserted_at_row": first_insert, "sheet": sheet_name}, 200)
+
+
+@app.route("/api/kiriman/reguler/add-jo", methods=["POST"])
+def ko_add_jo():
+    """Tambah SATU JO. Body JSON: sheet, jo, nama_produk, planning_rol (Order),
+    potongan, planning_meter -- ketiganya WAJIB; extra_cols (opsional)."""
+    body = request.get_json(silent=True) or {}
+    sheet_name = str(body.get("sheet", REGULER_KO_SHEET_NAME)).strip()
+    item = {
+        "jo": body.get("jo", ""), "nama_produk": body.get("nama_produk", ""),
+        "planning_rol": body.get("planning_rol", ""), "potongan": body.get("potongan", ""),
+        "planning_meter": body.get("planning_meter", ""), "extra_cols": body.get("extra_cols") or {},
+    }
+    try:
+        payload, code = _ko_add_jo_items(sheet_name, [item], check_dupes=False)
+        if payload.get("success"):
+            payload["message"] = f"JO '{str(item['jo']).strip()}' berhasil ditambahkan (baris {payload['inserted_at_row']})."
+        return jsonify(payload), code
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal menambah JO: {e}"}), 500
 
 
 @app.route("/api/kiriman/reguler/add-jo-bulk", methods=["POST"])
 def ko_add_jo_bulk():
-    """Tambah BANYAK JO sekaligus ke satu produk di sheet kartu order.
-
-    Semua JO disisipkan berurutan (sesuai urutan input) TEPAT SETELAH baris terakhir
-    grup produk tsb; produk baru -> di bawah semua data. Hanya 1x baca + 1x tulis ke
-    Google Sheets (jauh lebih cepat & hemat kuota daripada add-jo berulang).
-    JO yang sudah ada di grup produk itu dilewati (dilaporkan di respons).
+    """Tambah BANYAK JO sekaligus; tiap item boleh beda nama produk, order,
+    potongan & meter (mis. hasil paste dari sheet JO).
 
     Body JSON:
-        sheet       : "REGULER_KO" | "FORISA_KO" | "DDCT_KO"      (wajib)
-        nama_produk : nama produk                                   (wajib)
-        items       : [{"jo": "...", "planning_meter": "", "planning_rol": ""}, ...]  (wajib)
+        sheet       : "REGULER_KO" | "FORISA_KO" | "DDCT_KO"            (wajib)
+        nama_produk : nama produk cadangan untuk item tanpa nama         (opsional)
+        items       : [{"jo","nama_produk","planning_rol","potongan","planning_meter"}, ...]
+    Order, Potongan & Meter WAJIB di tiap item (kosong / "-" ditolak, tidak ada
+    yang ditulis). JO yang sudah ada di sheet dilewati (dilaporkan di respons).
     """
     body = request.get_json(silent=True) or {}
-    sheet_name  = str(body.get("sheet", REGULER_KO_SHEET_NAME)).strip()
-    nama_produk = str(body.get("nama_produk", "")).strip()
-    items       = body.get("items") or []
-
-    allowed_sheets = {REGULER_KO_SHEET_NAME, FORISA_KO_SHEET_NAME, DDCT_KO_SHEET_NAME}
-    if sheet_name not in allowed_sheets:
-        return jsonify({"success": False, "message": f"Sheet '{sheet_name}' tidak dikenal."}), 400
-    if not nama_produk:
-        return jsonify({"success": False, "message": "Field 'nama_produk' wajib diisi."}), 400
-    if not isinstance(items, list) or not items:
-        return jsonify({"success": False, "message": "Field 'items' wajib berisi minimal satu JO."}), 400
-    if len(items) > 500:
-        return jsonify({"success": False, "message": "Maksimal 500 JO per sekali simpan."}), 400
-
+    sheet_name = str(body.get("sheet", REGULER_KO_SHEET_NAME)).strip()
     try:
-        ws = _ko_spreadsheet().worksheet(sheet_name)
-        all_values = ws.get_all_values()
-        if not all_values:
-            return jsonify({"success": False, "message": f"Sheet {sheet_name} kosong/belum ada header."}), 400
-
-        headers = [str(x).strip() for x in all_values[0]]
-        col_jo_idx     = headers.index(REGULER_KO_JO_COL)     if REGULER_KO_JO_COL in headers else 0
-        col_produk_idx = headers.index(REGULER_KO_PRODUK_COL) if REGULER_KO_PRODUK_COL in headers else 1
-        col_pm_idx = headers.index("PLANNING_METER")   if "PLANNING_METER" in headers else None
-        col_pr_idx = headers.index("PLANNING_ROL_PCS") if "PLANNING_ROL_PCS" in headers else None
-
-        norm = lambda s: re.sub(r"\s+", " ", str(s or "")).strip().upper()
-        target_key = norm(nama_produk)
-
-        last_row_of_product = None
-        last_data_row = 1
-        existing_jo = set()
-        for row_idx, row in enumerate(all_values[1:], start=2):
-            if any(c.strip() for c in row):
-                last_data_row = row_idx
-            cell_produk = row[col_produk_idx] if col_produk_idx < len(row) else ""
-            if norm(cell_produk) == target_key:
-                last_row_of_product = row_idx
-                cell_jo = row[col_jo_idx] if col_jo_idx < len(row) else ""
-                if cell_jo.strip():
-                    existing_jo.add(norm(cell_jo))
-
-        new_rows, added, skipped = [], [], []
-        seen = set()
-        for it in items:
-            jo = str((it or {}).get("jo", "")).strip()
-            if not jo:
-                continue
-            k = norm(jo)
-            if k in seen or k in existing_jo:
-                skipped.append(jo)
-                continue
-            seen.add(k)
-            r = [""] * len(headers)
-            r[col_jo_idx] = jo
-            r[col_produk_idx] = nama_produk
-            pm = str((it or {}).get("planning_meter", "")).strip()
-            pr = str((it or {}).get("planning_rol", "")).strip()
-            if pm and col_pm_idx is not None:
-                r[col_pm_idx] = pm
-            if pr and col_pr_idx is not None:
-                r[col_pr_idx] = pr
-            new_rows.append(r)
-            added.append(jo)
-
-        if not new_rows:
-            return jsonify({
-                "success": False,
-                "message": f"Tidak ada JO baru yang disimpan ({len(skipped)} JO sudah ada di produk ini).",
-                "skipped": skipped,
-            }), 400
-
-        insert_at = (last_row_of_product + 1) if last_row_of_product is not None else (last_data_row + 1)
-        try:
-            ws.insert_rows(new_rows, row=insert_at, value_input_option="USER_ENTERED")
-        except AttributeError:   # gspread versi lama tanpa insert_rows
-            for offset, r in enumerate(new_rows):
-                ws.insert_row(r, index=insert_at + offset, value_input_option="USER_ENTERED")
-
-        with _ko_cache_lock:
-            _ko_cache.pop(sheet_name, None)
-
-        msg = f"{len(added)} JO berhasil ditambahkan ke '{nama_produk}' (mulai baris {insert_at})."
-        if skipped:
-            msg += f" {len(skipped)} JO dilewati karena sudah ada."
-        return jsonify({
-            "success": True, "message": msg, "added": added, "skipped": skipped,
-            "inserted_at_row": insert_at, "sheet": sheet_name,
-        })
-
+        payload, code = _ko_add_jo_items(
+            sheet_name, body.get("items") or [],
+            default_produk=str(body.get("nama_produk", "")).strip(), check_dupes=True,
+        )
+        return jsonify(payload), code
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal menambah JO bulk: {e}"}), 500
 

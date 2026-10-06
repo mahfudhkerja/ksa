@@ -203,6 +203,18 @@
   .badge{display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:20px; font-size:11px; font-weight:700;}
   .badge.ok{background:var(--ok-bg); color:var(--ok);}
   .badge.warn{background:var(--warn-bg); color:var(--warn);}
+  /* Pratinjau bulk Tambah JO (Kartu Order) */
+  .kor-bulk-wrap{max-height:270px; overflow:auto; border:1px solid var(--line); border-radius:10px;}
+  .kor-bulk-table{min-width:0; width:100%; table-layout:auto; font-size:12px;}
+  .kor-bulk-table thead th{position:sticky; top:0; z-index:2; padding:8px 10px; font-size:10.5px; border-radius:0;}
+  .kor-bulk-table td{padding:7px 10px; border-bottom:1px solid var(--line-soft); vertical-align:top;}
+  .kor-bulk-table tbody tr:hover{background:var(--blue-50);}
+  .kor-bulk-table tbody tr.bad{background:var(--warn-bg);}
+  .kor-bulk-table td.num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .kor-bulk-table td.nm{min-width:150px; max-width:240px; overflow-wrap:anywhere;}
+  .kor-bulk-table td.miss{color:var(--warn); font-weight:700; text-align:right;}
+  .kor-bulk-table td.no{color:var(--ink-faint); text-align:center;}
+  .kor-bulk-table td.pos{font-size:11px; color:var(--ink-soft); white-space:nowrap;}
   /* Sel "Bahan Awal" (Bahan_Awal_Printing_(Meter)) di tabel & modal Detail
      Waste Rewind, dipakai kalau nilainya 0 atau kosong -- lihat
      wrwIsBahanAwalEmpty() di script. */
@@ -955,7 +967,7 @@
 
   <!-- KIRIMAN REGULER — MODAL TAMBAH JO BARU -->
   <div id="korAddJoOverlay" style="display:none; position:fixed; inset:0; background:rgba(18,44,71,.45); z-index:1080; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target===this)koCloseAddJoModal()">
-    <div style="background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:100%; max-width:560px; max-height:92vh; overflow-y:auto; animation:popIn .22s var(--ease);">
+    <div style="background:var(--card); border-radius:var(--radius-lg); box-shadow:var(--shadow-lg); width:100%; max-width:560px; max-height:92vh; overflow-y:auto; animation:popIn .22s var(--ease); transition:max-width .2s var(--ease);" id="korAddJoBox">
       <div style="display:flex; justify-content:space-between; align-items:center; padding:18px 22px 14px; border-bottom:1px solid var(--line);">
         <div>
           <div style="font-size:11px; font-weight:700; color:var(--blue); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;">Kartu Order</div>
@@ -975,7 +987,7 @@
 
         <!-- Nama Produk -->
         <div style="margin-bottom:14px;">
-          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Nama Produk <span style="color:var(--warn);">*</span></label>
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;"><span id="korAddJoProdukLabel">Nama Produk</span> <span id="korAddJoProdukStar" style="color:var(--warn);">*</span></label>
           <div style="position:relative;">
             <input id="korAddJoProdukInput" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;"
               placeholder="Ketik atau pilih produk dari daftar..." oninput="korFilterProdukList()" onfocus="korShowProdukList()" autocomplete="off">
@@ -991,24 +1003,30 @@
           <input id="korAddJoInput" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="Contoh: JO/25/X/1/3456">
         </div>
 
-        <!-- Planning Meter & Rol/Pcs -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px;">
+        <!-- Order, Potongan & Meter: WAJIB -->
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:6px;">
           <div>
-            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Planning Meter</label>
-            <input id="korAddJoMeter" type="number" min="0" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Order (Rol/Pcs) <span style="color:var(--warn);">*</span></label>
+            <input id="korAddJoRol" type="text" inputmode="decimal" autocomplete="off" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
           </div>
           <div>
-            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Planning Rol/Pcs</label>
-            <input id="korAddJoRol" type="number" min="0" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Potongan <span style="color:var(--warn);">*</span></label>
+            <input id="korAddJoPotongan" type="text" inputmode="decimal" autocomplete="off" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Planning Meter <span style="color:var(--warn);">*</span></label>
+            <input id="korAddJoMeter" type="text" inputmode="decimal" autocomplete="off" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;" placeholder="0">
           </div>
         </div>
+        <div style="font-size:11px; color:var(--ink-faint); margin-bottom:20px;">Order, Potongan &amp; Meter wajib diisi (boleh pakai koma/titik, mis. 0,225 atau 18.250).</div>
         </div>
-        <!-- Bulk: satu JO per baris -->
+        <!-- Bulk: tempel data JO, tiap baris boleh beda nama produk / order / potongan / meter -->
         <div id="korAddJoBulk" style="display:none; margin-bottom:14px;">
-          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Daftar JO <span style="color:var(--warn);">*</span></label>
-          <textarea id="korAddJoBulkText" oninput="korBulkUpdateCount()" spellcheck="false" style="width:100%; min-height:170px; border:1.5px solid var(--line); border-radius:10px; padding:10px 14px; font-size:13px; font-family:ui-monospace,Menlo,Consolas,monospace; background:#fbfcfe; box-sizing:border-box; resize:vertical; line-height:1.6;" placeholder="JO/25/X/1/3456&#10;JO/25/X/1/3457&#9;12000&#9;8&#10;JO/25/X/1/3458&#9;5000"></textarea>
-          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px; line-height:1.55;">Satu JO per baris. Planning Meter &amp; Rol/Pcs opsional — pisahkan dengan <b>tab</b> (bisa langsung paste dari Excel), spasi, atau <b>;</b> &nbsp;→&nbsp; <code>JO &nbsp;meter &nbsp;rol</code>. Semua JO masuk ke produk yang dipilih di atas.</div>
+          <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">Tempel data JO <span style="color:var(--warn);">*</span></label>
+          <textarea id="korAddJoBulkText" oninput="korBulkUpdateCount()" spellcheck="false" style="width:100%; min-height:110px; border:1.5px solid var(--line); border-radius:10px; padding:10px 14px; font-size:12.5px; font-family:ui-monospace,Menlo,Consolas,monospace; background:#fbfcfe; box-sizing:border-box; resize:vertical; line-height:1.6; white-space:pre; overflow:auto;" placeholder="JO&#9;KEMASAN&#9;ORDER&#9;POTONGAN&#9;METER&#10;JO/26/X/5/3632&#9;OUTHER KEONG / 5 WARNA&#9;150.000&#9;0,225&#9;18.250"></textarea>
+          <div style="font-size:11px; color:var(--ink-faint); margin-top:5px; line-height:1.6;">Salin blok dari sheet JO <b>beserta baris judulnya</b> lalu tempel di sini: kolom <b>JO, KEMASAN, ORDER, POTONGAN, METER</b> dikenali otomatis (kolom lain diabaikan; judul berulang &amp; baris total dilewati). Tiap baris boleh beda nama produk, order, potongan &amp; meter. Tanpa baris judul, pisahkan dengan <b>tab</b> atau <b>;</b> berurutan: <code>JO ; Nama Produk ; Order ; Potongan ; Meter</code>. <b>Order, Potongan &amp; Meter wajib</b> (kosong atau "-" ditolak).</div>
           <div id="korBulkCount" style="font-size:12px; font-weight:700; color:var(--blue-dark); margin-top:8px;"></div>
+          <div id="korBulkPreview" style="margin-top:8px;"></div>
         </div>
 
         <!-- Info posisi sisip -->
@@ -3848,6 +3866,8 @@
     document.getElementById("korAddJoInput").value = "";
     document.getElementById("korAddJoMeter").value = "";
     document.getElementById("korAddJoRol").value = "";
+    document.getElementById("korAddJoPotongan").value = "";
+    document.getElementById("korBulkPreview").innerHTML = "";
     document.getElementById("korAddJoBulkText").value = "";
     document.getElementById("korBulkCount").innerText = "";
     korSetAddMode("single");
@@ -3868,27 +3888,114 @@
     document.getElementById("korModeSingleBtn").style.cssText = base + (bulk ? off : on);
     document.getElementById("korModeBulkBtn").style.cssText   = base + (bulk ? on : off);
     document.getElementById("korAddJoSubmitBtn").lastChild.textContent = bulk ? " Simpan Semua JO" : " Simpan JO";
-    if(bulk) korBulkUpdateCount();
+    // Mode bulk: tiap baris punya nama produk sendiri -> kolom Nama Produk di atas hanya cadangan (opsional).
+    document.getElementById("korAddJoBox").style.maxWidth = bulk ? "900px" : "560px";
+    document.getElementById("korAddJoProdukLabel").innerText = bulk ? "Nama Produk cadangan (opsional)" : "Nama Produk";
+    document.getElementById("korAddJoProdukStar").style.display = bulk ? "none" : "";
+    document.getElementById("korAddJoProdukHint").innerText = bulk
+      ? "Hanya dipakai untuk baris yang tidak punya nama produk. Baris yang punya nama (kolom KEMASAN) memakai namanya sendiri."
+      : "Pilih produk existing → JO disisipkan di bawah grup produk tersebut. Produk baru → diletakkan di bawah semua data.";
+    if(bulk){ document.getElementById("korAddJoInsertInfo").style.display = "none"; korBulkUpdateCount(); }
   }
-  // Parse textarea bulk -> [{jo, planning_meter, planning_rol}], plus daftar duplikat di dalam input.
+  // ---- Bulk: tempel dari Excel/WPS. Tiap baris = satu JO dengan nama produk, order, potongan & meter sendiri. ----
+  const KOR_HDR = {
+    jo:       ["JO"],
+    nama:     ["KEMASAN","NAMAPRODUK","PRODUK","NAMA"],
+    order:    ["ORDER","ORDERROLPCS","PLANNINGROLPCS","PLANNINGROL","ROLPCS"],
+    potongan: ["POTONGAN"],
+    meter:    ["METER","PLANNINGMETER"],
+  };
+  function korNormHdr(s){ return String(s || "").toUpperCase().replace(/[^A-Z]/g, ""); }
+  function korNormKey(s){ return String(s || "").replace(/\s+/g, " ").trim().toUpperCase(); }
+  function korCell(v){ const t = String(v == null ? "" : v).trim(); return (t === "-" || t === "\u2013" || t === "\u2014") ? "" : t; }
+  // Baris judul = ada kolom JO + minimal 2 kolom lain yang dikenali.
+  function korDetectHeader(cells){
+    const map = {};
+    cells.forEach((c, i) => {
+      const k = korNormHdr(c); if(!k) return;
+      for(const f in KOR_HDR){ if(!(f in map) && KOR_HDR[f].includes(k)) map[f] = i; }
+    });
+    return ("jo" in map && Object.keys(map).length >= 3) ? map : null;
+  }
+  // -> { rows:[{line,jo,nama,order,potongan,meter}], ignored, dupes, hasHeader, lines }
   function korParseBulk(){
     const raw = document.getElementById("korAddJoBulkText").value || "";
-    const items = [], seen = new Set(); let dupes = 0;
-    raw.split(/\r?\n/).forEach(line => {
-      const t = line.trim(); if(!t) return;
-      const parts = (t.includes("\t") ? t.split("\t") : t.split(/[;\s]+/)).map(s => s.trim());
-      const jo = parts[0]; if(!jo) return;
-      const key = jo.toUpperCase();
+    const lines = raw.split(/\r?\n/);
+    const POS = { jo:0, nama:1, order:2, potongan:3, meter:4 };   // urutan bila tanpa baris judul
+    const rows = [], seen = new Set();
+    let map = null, hasHeader = false, ignored = 0, dupes = 0;
+    lines.forEach((line, li) => {
+      if(!line.trim()) return;
+      const cells = (line.includes("\t") ? line.split("\t") : (/[;|]/.test(line) ? line.split(/[;|]/) : [line])).map(x => x.trim());
+      const h = korDetectHeader(cells);
+      if(h){ map = h; hasHeader = true; return; }          // baris judul (juga yang berulang di tengah blok)
+      const m = map || POS;
+      const get = f => String(m[f] != null ? (cells[m[f]] || "") : "").trim();
+      const jo = get("jo");
+      if(!jo){ ignored++; return; }                         // mis. baris "JUMLAH ORDER BARU"
+      const key = korNormKey(jo);
       if(seen.has(key)){ dupes++; return; }
       seen.add(key);
-      items.push({ jo, planning_meter: parts[1] || "", planning_rol: parts[2] || "" });
+      rows.push({ line: li, jo, nama: get("nama"), order: get("order"), potongan: get("potongan"), meter: get("meter") });
     });
-    return { items, dupes };
+    return { rows, ignored, dupes, hasHeader, lines };
+  }
+  function korRowMissing(r, fallbackProduk){
+    const miss = [];
+    if(!(r.nama || fallbackProduk)) miss.push("Nama produk");
+    if(!korCell(r.order))    miss.push("Order");
+    if(!korCell(r.potongan)) miss.push("Potongan");
+    if(!korCell(r.meter))    miss.push("Meter");
+    return miss;
+  }
+  function korExistingJoSet(){
+    const set = new Set();
+    koProducts.forEach(p => (p.rows || []).forEach(r => { const j = korNormKey(r[koJoCol]); if(j) set.add(j); }));
+    return set;
   }
   function korBulkUpdateCount(){
-    const { items, dupes } = korParseBulk();
-    const el = document.getElementById("korBulkCount");
-    el.innerText = items.length ? `${items.length} JO siap disimpan` + (dupes ? ` · ${dupes} baris ganda diabaikan` : "") : "";
+    const cnt = document.getElementById("korBulkCount"), box = document.getElementById("korBulkPreview");
+    const { rows, ignored, dupes } = korParseBulk();
+    if(!rows.length){ cnt.innerText = ""; box.innerHTML = ""; return; }
+    const fb = document.getElementById("korAddJoProdukInput").value.trim();
+    const existJo = korExistingJoSet();
+    const prodKeys = new Set(koProducts.map(p => korNormKey(p.produk)));
+    let bad = 0, already = 0;
+    const trs = rows.map((r, i) => {
+      const miss = korRowMissing(r, fb);
+      const isDup = existJo.has(korNormKey(r.jo));
+      if(miss.length) bad++; else if(isDup) already++;
+      const nama = r.nama || fb;
+      const cellNum = (v, f) => miss.includes(f) ? `<td class="miss">kosong</td>` : `<td class="num">${escHtml(korCell(v))}</td>`;
+      const status = miss.length ? `<span class="badge warn">Kurang: ${escHtml(miss.join(", "))}</span>`
+        : isDup ? `<span class="badge" style="background:var(--amber-bg); color:var(--amber);">Sudah ada, dilewati</span>`
+        : `<span class="badge ok">✓ Siap</span>`;
+      const pos = !nama ? "–" : (prodKeys.has(korNormKey(nama)) ? "Grup lama" : "Produk baru");
+      return `<tr class="${miss.length ? "bad" : ""}"><td class="no">${i + 1}</td><td style="white-space:nowrap;">${escHtml(r.jo)}</td>` +
+        `<td class="nm">${nama ? escHtml(nama) : '<span style="color:var(--warn); font-weight:700;">kosong</span>'}</td>` +
+        cellNum(r.order, "Order") + cellNum(r.potongan, "Potongan") + cellNum(r.meter, "Meter") +
+        `<td class="pos">${pos}</td><td>${status}</td></tr>`;
+    }).join("");
+    const parts = [`${rows.length} JO terbaca`];
+    if(rows.length - bad - already > 0) parts.push(`${rows.length - bad - already} siap disimpan`);
+    let html = escHtml(parts.join(" · "));
+    if(bad) html += ` · <span style="color:var(--warn);">${bad} belum lengkap</span>`;
+    if(already) html += ` · ${already} sudah ada`;
+    if(dupes) html += ` · ${dupes} baris ganda diabaikan`;
+    if(ignored) html += ` · ${ignored} baris tanpa JO diabaikan`;
+    if(bad) html += ` &nbsp;<button type="button" class="btn-danger-outline" style="height:28px; padding:0 12px; font-size:11.5px; border-radius:99px;" onclick="korBulkRemoveBad()">Hapus baris bermasalah</button>`;
+    cnt.innerHTML = html;
+    box.innerHTML = `<div class="kor-bulk-wrap"><table class="kor-bulk-table"><thead><tr><th style="width:34px;">#</th><th>JO</th><th>Nama Produk</th><th style="text-align:right;">Order</th><th style="text-align:right;">Potongan</th><th style="text-align:right;">Meter</th><th>Posisi</th><th>Status</th></tr></thead><tbody>${trs}</tbody></table></div>`;
+  }
+  // Buang baris yang Order/Potongan/Meter/Namanya kosong langsung dari kotak teks.
+  function korBulkRemoveBad(){
+    const { rows, lines } = korParseBulk();
+    const fb = document.getElementById("korAddJoProdukInput").value.trim();
+    const drop = new Set(rows.filter(r => korRowMissing(r, fb).length).map(r => r.line));
+    if(!drop.size) return;
+    document.getElementById("korAddJoBulkText").value = lines.filter((_, i) => !drop.has(i)).join("\n");
+    korBulkUpdateCount();
+    toast(`${drop.size} baris bermasalah dihapus dari daftar`, "info");
   }
   function koCloseAddJoModal(){
     document.getElementById("korAddJoOverlay").style.display = "none";
@@ -3898,6 +4005,7 @@
     korFilterProdukList();
   }
   function korFilterProdukList(){
+    if(document.getElementById("korAddJoMode").value === "bulk") korBulkUpdateCount();   // nama cadangan berubah -> status baris ikut berubah
     const kw = (document.getElementById("korAddJoProdukInput").value || "").trim().toLowerCase();
     const dd  = document.getElementById("korProdukDropdown");
     // Kumpulkan nama produk dari data yang sudah di-load (koProducts)
@@ -3918,10 +4026,11 @@
     inp.value = nama; inp.title = nama;
     document.getElementById("korProdukDropdown").style.display = "none";
     korUpdateInsertInfo(nama, true);
+    if(document.getElementById("korAddJoMode").value === "bulk") korBulkUpdateCount();
   }
   function korUpdateInsertInfo(nama, isExisting){
     const el = document.getElementById("korAddJoInsertInfo");
-    if(!nama){ el.style.display = "none"; return; }
+    if(!nama || document.getElementById("korAddJoMode").value === "bulk"){ el.style.display = "none"; return; }
     const produk = koProducts.find(p => p.produk.toLowerCase() === nama.toLowerCase());
     if(produk){
       el.innerHTML = `✅ Produk <b>${escHtml(produk.produk)}</b> ditemukan (<b>${produk.jo_count} JO</b>). JO baru akan disisipkan <b>setelah JO terakhir</b> grup produk ini.`;
@@ -3936,17 +4045,26 @@
   });
 
   async function koSubmitAddJoBulk(){
-    const sheet      = document.getElementById("korAddJoSheet").value;
-    const namaProduk = document.getElementById("korAddJoProdukInput").value.trim();
-    const { items }  = korParseBulk();
-    if(!namaProduk){ toast("Nama Produk wajib diisi", "error"); return; }
-    if(!items.length){ toast("Isi minimal satu JO", "error"); return; }
+    const sheet = document.getElementById("korAddJoSheet").value;
+    const fb    = document.getElementById("korAddJoProdukInput").value.trim();
+    const { rows } = korParseBulk();
+    if(!rows.length){ toast("Tempel minimal satu JO", "error"); return; }
+    const bad = rows.filter(r => korRowMissing(r, fb).length);
+    if(bad.length){
+      korBulkUpdateCount();
+      toast(`${bad.length} baris belum lengkap: Order, Potongan & Meter wajib diisi. Lengkapi atau hapus dulu barisnya.`, "error");
+      return;
+    }
+    const items = rows.map(r => ({
+      jo: r.jo, nama_produk: r.nama || fb,
+      planning_rol: korCell(r.order), potongan: korCell(r.potongan), planning_meter: korCell(r.meter),
+    }));
     const btn = document.getElementById("korAddJoSubmitBtn");
     btn.disabled = true; btn.lastChild.textContent = " Menyimpan...";
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler/add-jo-bulk`, {
         method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ sheet, nama_produk: namaProduk, items })
+        body: JSON.stringify({ sheet, nama_produk: fb, items })
       });
       const data = await res.json();
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal menyimpan JO");
@@ -3964,16 +4082,20 @@
     const sheet      = document.getElementById("korAddJoSheet").value;
     const jo         = document.getElementById("korAddJoInput").value.trim();
     const namaProduk = document.getElementById("korAddJoProdukInput").value.trim();
-    const meter      = document.getElementById("korAddJoMeter").value.trim();
-    const rol        = document.getElementById("korAddJoRol").value.trim();
+    const rol        = korCell(document.getElementById("korAddJoRol").value);
+    const potongan   = korCell(document.getElementById("korAddJoPotongan").value);
+    const meter      = korCell(document.getElementById("korAddJoMeter").value);
     if(!namaProduk){ toast("Nama Produk wajib diisi", "error"); return; }
     if(!jo){ toast("Nomor JO wajib diisi", "error"); return; }
+    if(!rol){ toast("Order wajib diisi", "error"); document.getElementById("korAddJoRol").focus(); return; }
+    if(!potongan){ toast("Potongan wajib diisi", "error"); document.getElementById("korAddJoPotongan").focus(); return; }
+    if(!meter){ toast("Meter wajib diisi", "error"); document.getElementById("korAddJoMeter").focus(); return; }
     const btn = document.getElementById("korAddJoSubmitBtn");
     btn.disabled = true; btn.lastChild.textContent = " Menyimpan...";
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler/add-jo`, {
         method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ sheet, jo, nama_produk: namaProduk, planning_meter: meter, planning_rol: rol })
+        body: JSON.stringify({ sheet, jo, nama_produk: namaProduk, planning_rol: rol, potongan, planning_meter: meter })
       });
       const data = await res.json();
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal menyimpan JO");
