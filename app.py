@@ -5673,6 +5673,10 @@ def fstl_keterangan():
     return jsonify({"results": results})
 
 
+_fstl_kitir_ws_cache = {}
+_fstl_kitir_ws_cache_lock = threading.Lock()
+
+
 def _fstl_get_or_create_user_sheet(sh, safe_username):
     """Kalau username XX -> sheet 'XX_Kitir'. Kalau sudah ada, dipakai apa
     adanya (TIDAK menghapus sheet lama). Kalau belum ada, dibuat baru KOSONG
@@ -5687,10 +5691,19 @@ def _fstl_get_or_create_user_sheet(sh, safe_username):
     sumber data, jadi bikin tab baru di spreadsheet kitir nggak bikin cache
     itu basi."""
     sheet_name = f"{safe_username}_Kitir"
+    # sh.worksheet() = 1 request ke Google (ambil metadata spreadsheet) TIAP dipanggil.
+    # Handle worksheet di-cache supaya simpan ke-2 dst langsung lewat. Kalau tab-nya
+    # ternyata sudah dihapus/diganti, fstl_save membuang cache ini lalu coba lagi.
+    with _fstl_kitir_ws_cache_lock:
+        cached = _fstl_kitir_ws_cache.get(sheet_name)
+    if cached is not None:
+        return cached, sheet_name
     try:
         ws = sh.worksheet(sheet_name)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=sheet_name, rows=200, cols=6)
+    with _fstl_kitir_ws_cache_lock:
+        _fstl_kitir_ws_cache[sheet_name] = ws
     return ws, sheet_name
 
 
@@ -5778,22 +5791,32 @@ def fstl_save():
         # biasa; kalau kartu terakhir nempel tanpa jeda -> disisipkan 1
         # baris kosong; kalau jeda sudah 1 baris atau lebih -> lanjut apa
         # adanya, tidak ditambah jeda baru.
+        _t0 = time.time()
         start_row = _fstl_next_card_start_row(ws.get_all_values())
         end_row = start_row + len(rows_to_write) - 1
+        _t1 = time.time()
         ws.update(f"A{start_row}:E{end_row}", rows_to_write, value_input_option="USER_ENTERED")
+        _t2 = time.time()
 
         # Pewarnaan: baris judul & baris label sama-sama BIRU (judul cuma
         # sampai kolom D, E dibiarkan putih; label sampai kolom E). Baris
         # data: cuma kolom nama proses (B) yang HIJAU, kolom
         # Keterangan/Action Plan/Status (C:E) tetap PUTIH.
+        # SEMUA format dikirim dalam SATU request (batch_format). Sebelumnya
+        # 3-4x ws.format() = 3-4 request terpisah ke Google.
         n = len(data_rows)
         title_row_num, label_row_num = start_row, start_row + 1
-        ws.format(f"B{title_row_num}:D{title_row_num}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)})
-        ws.format(f"B{label_row_num}:E{label_row_num}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)})
+        formats = [
+            {"range": f"B{title_row_num}:D{title_row_num}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)}},
+            {"range": f"B{label_row_num}:E{label_row_num}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)}},
+        ]
         if n:
             data_start, data_end = start_row + 2, start_row + 1 + n
-            ws.format(f"B{data_start}:B{data_end}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_PROCESS)})
-            ws.format(f"C{data_start}:E{data_end}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_WHITE)})
+            formats.append({"range": f"B{data_start}:B{data_end}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_PROCESS)}})
+            formats.append({"range": f"C{data_start}:E{data_end}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_WHITE)}})
+        ws.batch_format(formats)
+        _t3 = time.time()
+        print(f"   [fstl_save] baca sheet {_t1-_t0:.1f}s, tulis {_t2-_t1:.1f}s, warna {_t3-_t2:.1f}s")
 
         # Cache isi sheet ini (dipakai endpoint /api/fstl/list) jadi basi
         # begitu ada kartu baru ditulis -- buang dari cache biar list
@@ -5801,6 +5824,8 @@ def fstl_save():
         with _fstl_cache_lock:
             _fstl_sheet_values_cache.pop(sheet_name, None)
     except Exception as exc:
+        with _fstl_kitir_ws_cache_lock:          # tab mungkin dihapus/diganti -> handle cache dibuang
+            _fstl_kitir_ws_cache.pop(f"{safe_username}_Kitir", None)
         return jsonify({"error": str(exc)}), 500
     return jsonify({"success": True, "sheet": sheet_name})
 
