@@ -1589,7 +1589,7 @@ REGULER_KO_ALIASES = {
     "POTONGAN": "Potongan",
     "TANGGAL_KIRIMAN": "Tanggal Kiriman",
     "JUMLAH_PENGIRIMAN": "Jumlah Pengiriman",
-    "JUMLAH_PENGIRIMAN_TOTAL": "Total Pengiriman",
+    "JUMLAH_PENGIRIMAN_TOTAL": "Total Terkirim",
     "DETAIL_JO_PENGIRIMAN": "Detail JO Kirim",
     "DETAIL_QTY_JO_PENGIRIMAN": "Detail Qty JO Kirim",
     "JUMLAH_QTY_DIAMBIL": "Jumlah Qty Diambil",

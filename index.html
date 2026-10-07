@@ -626,6 +626,49 @@
     .kor-table thead th.kor-frz:not(.kor-jo){left:auto !important;}
   }
   .kor-table td.kor-empty{color:var(--ink-faint); text-align:center;}
+  /* ---- Detail kartu order: daftar JO vertikal (ringkasan + detail semua kolom) ---- */
+  .kor-table-wrap.kc-mode{border:none; background:transparent; padding:2px;}
+  .kc-bar{display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:0 2px 10px; font-size:12.5px; font-weight:600; color:var(--ink-soft);}
+  .kc-bar label{display:flex; align-items:center; gap:8px; cursor:pointer; color:var(--ink);}
+  .kc-bar .btn-outline{height:30px; font-size:11.5px; padding:0 12px;}
+  .kc-bar .kc-sp{flex:1;}
+  .kc{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); margin-bottom:10px; overflow:hidden; transition:border-color .15s var(--ease), box-shadow .15s var(--ease);}
+  .kc:hover{border-color:var(--blue-200); box-shadow:var(--shadow-sm);}
+  .kc.sel{border-color:var(--ok); background:var(--ok-bg);}
+  .kc-h{display:flex; align-items:center; gap:10px; padding:11px 14px; cursor:pointer;}
+  .kc-h:hover{background:var(--blue-50);}
+  .kc-h input{accent-color:var(--blue); width:15px; height:15px; margin:0; flex-shrink:0;}
+  .kc-jo{flex:1; min-width:0; font-size:14px; font-weight:700; color:var(--blue-dark); overflow-wrap:anywhere;}
+  .kc-chev{color:var(--ink-faint); font-size:12px; transition:transform .15s var(--ease);}
+  .kc.open .kc-chev{transform:rotate(90deg);}
+  .kc-sum{display:flex; flex-direction:column; gap:8px; padding:0 14px 12px 39px;}
+  .kc-sec-t{font-size:11px; font-weight:700; color:var(--ink-faint); margin:0 0 4px;}
+  .kc-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(128px,1fr)); gap:8px 14px;}
+  .kc-k{font-size:11px; font-weight:600; color:var(--ink-soft);}
+  .kc-v{font-size:13px; font-weight:700; color:var(--ink); overflow-wrap:anywhere;}
+  .kc-f.e .kc-v{color:var(--ink-faint); font-weight:400;}
+  .kc.open{border-color:var(--blue-200);}
+  .kc-lbl{font-size:10.5px; font-weight:700; color:var(--ink-faint); letter-spacing:.04em; text-transform:uppercase;}
+  /* Keterangan lengkap: latar biru muda + garis biru di atas + pita judul + kolom berbentuk kotak (ringkasan = teks polos di latar putih) */
+  .kc-dt{display:none; border-top:2px solid var(--blue); background:var(--blue-50); padding:0 14px 14px 39px;}
+  .kc.open .kc-dt{display:block; animation:fadeIn .2s var(--ease);}
+  .kc-dt-h{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin:0 -14px 12px -39px; padding:9px 14px 9px 39px; background:var(--blue-100); color:var(--blue-dark); font-size:12px; font-weight:800;}
+  .kc-dt-h span{font-weight:600; color:var(--ink-soft);}
+  .kc-dt .kc-f{background:var(--card); border:1px solid var(--blue-100); border-radius:var(--radius-sm); padding:7px 10px;}
+  .kc-g-t{font-size:12px; font-weight:700; color:var(--blue); margin:14px 0 6px;}
+  .kc-g-t:first-child{margin-top:0;}
+  .kc-em{font-size:12px; color:var(--ink-faint); margin-top:12px; line-height:1.6;}
+  .kc-em a{color:var(--blue); font-weight:700; cursor:pointer;}
+  .kc-none{display:none; padding:0 14px 12px 39px; font-size:12px; color:var(--ink-faint);}
+  @media (max-width:860px){
+    .kc-sum, .kc-dt, .kc-none{padding-left:14px;}
+    .kc-dt-h{margin-left:-14px; padding-left:14px;}
+    .kc-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+    .kc-sum .kc-f.e{display:none;}          /* HP: kolom ringkasan yang kosong disembunyikan */
+    .kc-sum .kc-sec.all-e{display:none;}
+    .kc.all-e .kc-sum{display:none;}
+    .kc.all-e .kc-none{display:block;}
+  }
 
   /* Kiriman Hari Ini: memakai kartu .kor-card yang sama dengan Reguler */
   .khi-sec{display:flex; align-items:center; gap:8px; margin:4px 2px 10px; font-size:13px; font-weight:800; color:var(--ink);}
@@ -943,7 +986,7 @@
       </div>
       <div class="kor-modal-body">
         <div class="kor-modal-tools">
-          <button class="btn-outline" onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
+          <button class="btn-outline" id="korColBtn" onclick="koTogglePicker(event)">⚙️ Atur Kolom</button>
           <div style="position:relative;">
             <button class="btn-outline" id="korTahunBtn" title="Pilih satu atau lebih tahun data untuk menghitung" onclick="koTahunToggle(event)">📅 Data 2026 ▾</button>
             <div class="kor-colpicker" id="korTahunPicker" style="width:190px;" onclick="event.stopPropagation()"><div class="kor-cp-list" id="korTahunList"></div></div>
@@ -953,10 +996,7 @@
           <span class="badge amber" id="korHiddenInfo" style="display:none;"></span>
           <span class="wrw-rev-legend" id="korRevLegend" style="display:none; margin-right:0;">* = hasil revisi</span>
           <div class="kor-colpicker" id="korColPicker" onclick="event.stopPropagation()">
-            <div class="kor-cp-actions">
-              <button class="btn-outline" onclick="koShowAllCols()">Tampilkan semua</button>
-              <button class="btn-outline" onclick="koHideAllCols()">Sembunyikan semua</button>
-            </div>
+            <div class="kor-cp-actions" id="korCpActions"></div>
             <div class="kor-cp-list" id="korColList"></div>
           </div>
         </div>
@@ -3645,6 +3685,8 @@
   }
   function koOpenDetailWith(p, ctx, sub){
     koSel = new Set();
+    koOpen = new Set(); koEmpty = new Set();
+    if(p.rows.length === 1) koOpen.add(0);          // cuma satu JO -> langsung terbuka
     koTahun = new Set([KO_TAHUN_DEFAULT]); koTahunRender();
     koDetail = {p, headers:ctx.headers, aliases:ctx.aliases, joCol:ctx.joCol, produkCol:ctx.produkCol, sumber:ctx.sumber || "Reguler", khi:!!ctx.khi};
     document.getElementById("korDetailTitle").innerText = p.produk;
@@ -3657,7 +3699,7 @@
   // Lebar (px) tiap kolom beku dipatok supaya offset left-nya pasti.
   const KO_JO_WIDTH = 180;
   const KO_FREEZE_COLS = { "PLANNING_METER":120, "PLANNING_ROL_PCS":130 };
-  function koRenderTable(){
+  function koRenderTableClassic(){
     const p = koDetail && koDetail.p; if(!p) return;
     const koJoCol = koDetail.joCol;  // sengaja menimpa global: kolom JO milik sumber yang sedang dibuka
     const cols = koDataCols().filter(h => !koHiddenCols.has(h));
@@ -3686,6 +3728,142 @@
     koSelUpdateBtn();
     const lg = document.getElementById("korRevLegend");
     if(lg) lg.style.display = p.rows.some(r => (r.__rev||[]).length) ? "inline" : "none";
+  }
+  // ── Tampilan kartu JO (vertikal): ringkasan kolom kunci + detail semua kolom ─────────
+  // Kolom ringkasan bisa diatur lewat "Atur Ringkasan" (tersimpan per browser). Semua kolom
+  // tetap bisa dilihat di detail tiap JO (dikelompokkan), tanpa scroll ke kanan.
+  // Kalau sheet tidak punya kolom-kolom ini (atau data Kiriman Hari Ini), otomatis pakai tabel lama.
+  const KO_SUM_KEY = "ksa_ko_summary_cols";
+  const KO_SUM_DEFAULT = ["PLANNING_METER","PLANNING_ROL_PCS","SLITTING_ROL","HASIL_BAG","TOTAL_STOK",
+                          "JUMLAH_PENGIRIMAN_TOTAL","TANGGAL_KIRIM","JUMLAH_KIRIMAN","TUNGGU_PERMINTAAN"];
+  const KO_SUM_GROUP = { PLANNING_METER:"Produksi dan stok", PLANNING_ROL_PCS:"Produksi dan stok", SLITTING_ROL:"Produksi dan stok",
+    HASIL_BAG:"Produksi dan stok", TOTAL_STOK:"Produksi dan stok", JUMLAH_PENGIRIMAN_TOTAL:"Kiriman",
+    TANGGAL_KIRIM:"Kiriman", JUMLAH_KIRIMAN:"Kiriman", TUNGGU_PERMINTAAN:"Kiriman" };
+  const KO_SUM_SECTIONS = ["Produksi dan stok","Kiriman","Tambahan"];
+  const KO_DETAIL_GROUPS = [
+    ["Planning", ["PLANNING_METER","PLANNING_ROL_PCS","POTONGAN"]],
+    ["Printing", ["PRINTING_1","PRINTING_2","PRINTING_3","PRINTING_4","PRINTING_5","TOTAL_PRINTING"]],
+    ["Slitting dan bag", ["SLITTING_METER","SLITTING_ROL","TANGGAL_FINISH","HASIL_BAG","BAG_METER"]],
+    ["Pengiriman", ["JUMLAH_PENGIRIMAN_TOTAL","TANGGAL_KIRIM","JUMLAH_KIRIMAN","TUNGGU_PERMINTAAN","TANGGAL_KIRIMAN","JUMLAH_PENGIRIMAN","DETAIL_JO_PENGIRIMAN","DETAIL_QTY_JO_PENGIRIMAN","JUMLAH_QTY_DIAMBIL"]],
+    ["Stok", ["JUMLAH_STOK_PROD","JUMLAH_REW_PROD","AREA_STOK_PROD","JUMLAH_STOK_FORM_ST","JUMLAH_REW_FORM_ST","AREA_STOK_FORM_ST","JUMLAH_STOK_GBJ","JUMLAH_REW_GBJ","AREA_STOK_GBJ","KARANTINA","TOTAL_STOK","SELISIH"]],
+    ["Rewind", ["TANGGAL_REWIND","QTY_AWAL","QTY_AKHIR","QTY_BERKURANG"]],
+  ];
+  let koSumCols = null;   // null = pakai standar
+  try{ const sv = JSON.parse(localStorage.getItem(KO_SUM_KEY) || "null"); if(Array.isArray(sv)) koSumCols = sv; }catch(e){}
+  let koOpen = new Set(), koEmpty = new Set();   // indeks JO yang terbuka / yang menampilkan kolom kosong
+  const koUp = h => String(h == null ? "" : h).trim().toUpperCase();
+  function koHdrMap(){ const m = {}; koDataCols().forEach(h => { m[koUp(h)] = h; }); return m; }
+  function koSumChosen(){ return koSumCols || KO_SUM_DEFAULT; }
+  function koCardMode(){
+    const d = koDetail; if(!d || d.khi) return false;
+    const m = koHdrMap();
+    return KO_SUM_DEFAULT.filter(h => m[h]).length >= 3;
+  }
+  // Kolom ringkasan yang benar-benar ada di sheet ini, urut: standar dulu (sesuai urutan standar), lalu tambahan.
+  function koSumList(){
+    const m = koHdrMap(), seen = new Set(), list = [];
+    koSumChosen().forEach(c => { const h = m[koUp(c)]; if(h && !seen.has(h)){ seen.add(h); list.push(h); } });
+    const rank = h => { const i = KO_SUM_DEFAULT.indexOf(koUp(h)); return i < 0 ? 1000 : i; };
+    return list.map((h, i) => ({h, i})).sort((a, b) => (rank(a.h) - rank(b.h)) || (a.i - b.i)).map(x => x.h);
+  }
+  function koDetailGroups(){
+    const m = koHdrMap(), used = new Set(), out = [];
+    KO_DETAIL_GROUPS.forEach(([t, cols]) => {
+      const c = cols.map(x => m[x]).filter(Boolean); c.forEach(h => used.add(h));
+      if(c.length) out.push({t, cols:c});
+    });
+    const rest = koDataCols().filter(h => !used.has(h));
+    if(rest.length) out.push({t:"Lainnya", cols:rest});
+    return out;
+  }
+  function koRenderTable(){
+    const wrap = document.getElementById("korTableWrap");
+    if(koDetail && koCardMode()){ wrap.classList.add("kc-mode"); koRenderCards(); }
+    else { wrap.classList.remove("kc-mode"); koRenderTableClassic(); }
+  }
+  function koRenderCards(){
+    const d = koDetail, p = d.p, jc = d.joCol, wrap = document.getElementById("korTableWrap");
+    const sum = koSumList(), groups = koDetailGroups();
+    const val = (r, h) => String(r[h] ?? "").trim();
+    const isRev = (r, h) => (r.__rev || []).includes(h);
+    const star = (r, h) => isRev(r, h) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : "";
+    const fld = (r, h) => { const v = val(r, h);
+      return `<div class="kc-f${v ? "" : " e"}"><div class="kc-k">${escHtml(koAlias(h))}</div><div class="kc-v">${v ? escHtml(v) : "-"}${star(r, h)}</div></div>`; };
+    const allOn = p.rows.length && koSel.size === p.rows.length;
+    const bar = `<div class="kc-bar"><label><input type="checkbox" title="Pilih semua JO" ${allOn ? "checked" : ""} onclick="koSelAll(this.checked)"> Pilih semua JO</label>` +
+      `<span>${p.rows.length} JO</span><span class="kc-sp"></span>` +
+      `<button type="button" class="btn-outline" onclick="koCardsOpenAll(true)">Buka semua</button>` +
+      `<button type="button" class="btn-outline" onclick="koCardsOpenAll(false)">Tutup semua</button></div>`;
+    const cards = p.rows.map((r, ri) => {
+      const allE = sum.every(h => !val(r, h));
+      const secs = KO_SUM_SECTIONS.map(sn => {
+        const cols = sum.filter(h => (KO_SUM_GROUP[koUp(h)] || "Tambahan") === sn);
+        if(!cols.length) return "";
+        const ae = cols.every(h => !val(r, h));
+        return `<div class="kc-sec${ae ? " all-e" : ""}"><div class="kc-sec-t">${sn}</div><div class="kc-grid">${cols.map(h => fld(r, h)).join("")}</div></div>`;
+      }).join("");
+      const showE = koEmpty.has(ri);
+      const det = groups.map(g => {
+        const cols = showE ? g.cols : g.cols.filter(h => val(r, h));
+        return cols.length ? `<div class="kc-g-t">${g.t}</div><div class="kc-grid">${cols.map(h => fld(r, h)).join("")}</div>` : "";
+      }).join("");
+      const emp = groups.flatMap(g => g.cols).filter(h => !val(r, h));
+      const total = groups.reduce((n, g) => n + g.cols.length, 0);
+      const empLine = !emp.length ? "" : showE
+        ? `<div class="kc-em"><a onclick="koEmptyToggle(${ri})">Sembunyikan kolom kosong</a></div>`
+        : `<div class="kc-em">Belum terisi (${emp.length} kolom): ${escHtml(emp.slice(0, 6).map(h => koAlias(h)).join(", "))}${emp.length > 6 ? `, dan ${emp.length - 6} lainnya` : ""}. <a onclick="koEmptyToggle(${ri})">Tampilkan semua</a></div>`;
+      const jo = val(r, jc) || "-";
+      return `<div class="kc${koSel.has(ri) ? " sel" : ""}${koOpen.has(ri) ? " open" : ""}${allE ? " all-e" : ""}" id="kc-${ri}">` +
+        `<div class="kc-h" role="button" tabindex="0" onclick="koCardToggle(${ri})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();koCardToggle(${ri});}">` +
+        `<input type="checkbox" ${koSel.has(ri) ? "checked" : ""} title="Pilih JO ini untuk dihitung" onclick="event.stopPropagation(); koSelToggle(${ri}, this.checked)">` +
+        `<span class="kc-jo">${escHtml(jo)}${star(r, jc)}</span><span class="kc-chev">▶</span></div>` +
+        `<div class="kc-sum"><div class="kc-lbl">Ringkasan</div>${secs}</div><div class="kc-none">Belum ada data produksi atau kiriman.</div>` +
+        `<div class="kc-dt"><div class="kc-dt-h">📋 Keterangan lengkap<span>${total - emp.length} dari ${total} kolom terisi</span></div>${det}${empLine}</div></div>`;
+    }).join("");
+    const sc = wrap.scrollTop;
+    wrap.innerHTML = bar + cards;
+    wrap.scrollTop = sc;
+    const hi = document.getElementById("korHiddenInfo"); hi.style.display = "none";
+    koSelUpdateBtn();
+    const lg = document.getElementById("korRevLegend");
+    if(lg) lg.style.display = p.rows.some(r => (r.__rev || []).length) ? "inline" : "none";
+  }
+  function koCardToggle(ri){
+    const el = document.getElementById("kc-" + ri); if(!el) return;
+    if(koOpen.has(ri)) koOpen.delete(ri); else koOpen.add(ri);
+    el.classList.toggle("open", koOpen.has(ri));
+  }
+  function koCardsOpenAll(on){
+    koOpen = new Set(on ? koDetail.p.rows.map((_, i) => i) : []);
+    koRenderTable();
+  }
+  function koEmptyToggle(ri){
+    if(koEmpty.has(ri)) koEmpty.delete(ri); else koEmpty.add(ri);
+    koRenderTable();
+  }
+  function koSumToggle(h, on){
+    const cur = koSumChosen().filter(c => koUp(c) !== koUp(h));
+    if(on) cur.push(h);
+    koSumCols = cur;
+    try{ localStorage.setItem(KO_SUM_KEY, JSON.stringify(koSumCols)); }catch(e){}
+    koRenderTable(); koRenderPicker();
+  }
+  function koSumReset(){
+    koSumCols = null;
+    try{ localStorage.removeItem(KO_SUM_KEY); }catch(e){}
+    koRenderTable(); koRenderPicker();
+  }
+  // Picker kolom: mode kartu = pilih kolom ringkasan; mode tabel lama = sembunyikan kolom.
+  function koRenderPicker(){
+    const card = koCardMode();
+    document.getElementById("korColBtn").innerText = card ? "⚙️ Atur Ringkasan" : "⚙️ Atur Kolom";
+    document.getElementById("korCpActions").innerHTML = card
+      ? `<button class="btn-outline" onclick="koSumReset()">Kembalikan standar</button>`
+      : `<button class="btn-outline" onclick="koShowAllCols()">Tampilkan semua</button><button class="btn-outline" onclick="koHideAllCols()">Sembunyikan semua</button>`;
+    if(!card){ koRenderPickerClassic(); return; }
+    const on = new Set(koSumList());
+    document.getElementById("korColList").innerHTML = koDataCols().map(h =>
+      `<label><input type="checkbox" ${on.has(h) ? "checked" : ""} onchange="koSumToggle(this.dataset.h, this.checked)" data-h="${escHtml(h)}"> ${escHtml(koAlias(h))}</label>`).join("");
   }
   // ── Pilih tahun data (boleh lebih dari satu), default 2026 ─────────────
   const KO_TAHUN_LIST = [2026, 2025, 2024, 2023, 2022, 2021], KO_TAHUN_DEFAULT = 2026;
@@ -3754,7 +3932,7 @@
       btn.innerHTML = old; koSelUpdateBtn();
     }
   }
-  function koRenderPicker(){
+  function koRenderPickerClassic(){
     document.getElementById("korColList").innerHTML = koDataCols().map(h =>
       `<label><input type="checkbox" ${koHiddenCols.has(h)?"":"checked"} onchange="koToggleCol(this.dataset.h, this.checked)" data-h="${escHtml(h)}"> ${escHtml(koAlias(h))}</label>`).join("");
   }
