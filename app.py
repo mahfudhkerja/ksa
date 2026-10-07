@@ -5443,26 +5443,77 @@ def _fstl_find_col(header_row, *keywords):
     return None
 
 
-def fstl_lookup_produk(jo_raw):
-    """Cocokkan JO input ke sheet JO_1 kolom F, kembalikan (produk, error).
-    produk None + error None artinya JO tidak ketemu (bukan error sistem)."""
-    sh = _fstl_spreadsheet()
-    try:
-        ws = sh.worksheet(FSTL_JO1_SHEET)
-    except gspread.exceptions.WorksheetNotFound:
-        return None, f"Sheet '{FSTL_JO1_SHEET}' tidak ditemukan di spreadsheet FSTL"
-    target_key = _fstl_suffix_key(jo_raw)
-    if target_key == "":
-        return None, "Format JO tidak valid"
-    rows = _fstl_get_sheet_values(sh, FSTL_JO1_SHEET)
+_fstl_jo1_index_cache = {"rows_id": None, "idx": {}}
+
+
+def _fstl_jo1_index(rows):
+    """{kunci_JO: produk} dari isi JO_1 (baris pertama untuk tiap kunci, sama seperti
+    scan berurutan sebelumnya). Dibangun SEKALI per isi cache JO_1 -- sebelumnya tiap
+    klik Periksa memindai & mem-parse suffix SEMUA baris dari awal."""
+    rid = id(rows)
+    with _fstl_cache_lock:
+        if _fstl_jo1_index_cache["rows_id"] == rid:
+            return _fstl_jo1_index_cache["idx"]
+    idx = {}
     for row in rows[1:]:
         jo_cell = row[FSTL_JO1_COL_JO] if len(row) > FSTL_JO1_COL_JO else ""
         if not str(jo_cell).strip():
             continue
-        if _fstl_suffix_key(jo_cell) == target_key:
-            produk = row[FSTL_JO1_COL_PRODUK] if len(row) > FSTL_JO1_COL_PRODUK else ""
-            return (str(produk).strip() or None), None
-    return None, None
+        key = _fstl_suffix_key(jo_cell)
+        if key not in idx:
+            idx[key] = row[FSTL_JO1_COL_PRODUK] if len(row) > FSTL_JO1_COL_PRODUK else ""
+    with _fstl_cache_lock:
+        _fstl_jo1_index_cache["rows_id"] = rid
+        _fstl_jo1_index_cache["idx"] = idx
+    return idx
+
+
+def fstl_lookup_produk(jo_raw):
+    """Cocokkan JO input ke sheet JO_1 kolom F, kembalikan (produk, error).
+    produk None + error None artinya JO tidak ketemu (bukan error sistem)."""
+    sh = _fstl_spreadsheet()
+    target_key = _fstl_suffix_key(jo_raw)
+    if target_key == "":
+        return None, "Format JO tidak valid"
+    rows = _fstl_get_sheet_values(sh, FSTL_JO1_SHEET)
+    if not rows:
+        return None, f"Sheet '{FSTL_JO1_SHEET}' tidak ditemukan di spreadsheet FSTL"
+    produk = _fstl_jo1_index(rows).get(target_key)
+    return (str(produk).strip() or None) if produk is not None else None, None
+
+
+def _fstl_warmup_loop():
+    """Isi cache JO_1 & LP_1 (+ index JO_1) di LATAR BELAKANG saat app start, lalu
+    diperbarui sebelum TTL habis. Tanpa ini, klik Periksa pertama setelah app
+    restart / tidur / TTL habis harus membaca seluruh sheet JO_1 dulu (lambat)."""
+    time.sleep(5)
+    while True:
+        try:
+            sh = _fstl_spreadsheet()
+            for name in (FSTL_JO1_SHEET, FSTL_LP1_SHEET):
+                with _fstl_cache_lock:
+                    _fstl_sheet_values_cache.pop(name, None)     # paksa baca baru
+                rows = _fstl_get_sheet_values(sh, name)
+                if name == FSTL_JO1_SHEET and rows:
+                    _fstl_jo1_index(rows)
+            print("   [fstl] cache JO_1/LP_1 dipanaskan")
+        except Exception as exc:
+            print(f"   [fstl] warm-up gagal (dilewati): {exc}")
+        time.sleep(max(60, _FSTL_JO1_CACHE_TTL_SECONDS - 300))
+
+
+_fstl_warmup_started = False
+
+
+def _fstl_start_warmup():
+    global _fstl_warmup_started
+    if _fstl_warmup_started or os.environ.get("FSTL_WARMUP", "1") == "0":
+        return
+    _fstl_warmup_started = True
+    threading.Thread(target=_fstl_warmup_loop, daemon=True).start()
+
+
+_fstl_start_warmup()
 
 
 def _fstl_matching_sheet_names(sh, prefixes, exact):
@@ -5673,10 +5724,6 @@ def fstl_keterangan():
     return jsonify({"results": results})
 
 
-_fstl_kitir_ws_cache = {}
-_fstl_kitir_ws_cache_lock = threading.Lock()
-
-
 def _fstl_get_or_create_user_sheet(sh, safe_username):
     """Kalau username XX -> sheet 'XX_Kitir'. Kalau sudah ada, dipakai apa
     adanya (TIDAK menghapus sheet lama). Kalau belum ada, dibuat baru KOSONG
@@ -5691,19 +5738,10 @@ def _fstl_get_or_create_user_sheet(sh, safe_username):
     sumber data, jadi bikin tab baru di spreadsheet kitir nggak bikin cache
     itu basi."""
     sheet_name = f"{safe_username}_Kitir"
-    # sh.worksheet() = 1 request ke Google (ambil metadata spreadsheet) TIAP dipanggil.
-    # Handle worksheet di-cache supaya simpan ke-2 dst langsung lewat. Kalau tab-nya
-    # ternyata sudah dihapus/diganti, fstl_save membuang cache ini lalu coba lagi.
-    with _fstl_kitir_ws_cache_lock:
-        cached = _fstl_kitir_ws_cache.get(sheet_name)
-    if cached is not None:
-        return cached, sheet_name
     try:
         ws = sh.worksheet(sheet_name)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=sheet_name, rows=200, cols=6)
-    with _fstl_kitir_ws_cache_lock:
-        _fstl_kitir_ws_cache[sheet_name] = ws
     return ws, sheet_name
 
 
@@ -5791,32 +5829,22 @@ def fstl_save():
         # biasa; kalau kartu terakhir nempel tanpa jeda -> disisipkan 1
         # baris kosong; kalau jeda sudah 1 baris atau lebih -> lanjut apa
         # adanya, tidak ditambah jeda baru.
-        _t0 = time.time()
         start_row = _fstl_next_card_start_row(ws.get_all_values())
         end_row = start_row + len(rows_to_write) - 1
-        _t1 = time.time()
         ws.update(f"A{start_row}:E{end_row}", rows_to_write, value_input_option="USER_ENTERED")
-        _t2 = time.time()
 
         # Pewarnaan: baris judul & baris label sama-sama BIRU (judul cuma
         # sampai kolom D, E dibiarkan putih; label sampai kolom E). Baris
         # data: cuma kolom nama proses (B) yang HIJAU, kolom
         # Keterangan/Action Plan/Status (C:E) tetap PUTIH.
-        # SEMUA format dikirim dalam SATU request (batch_format). Sebelumnya
-        # 3-4x ws.format() = 3-4 request terpisah ke Google.
         n = len(data_rows)
         title_row_num, label_row_num = start_row, start_row + 1
-        formats = [
-            {"range": f"B{title_row_num}:D{title_row_num}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)}},
-            {"range": f"B{label_row_num}:E{label_row_num}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)}},
-        ]
+        ws.format(f"B{title_row_num}:D{title_row_num}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)})
+        ws.format(f"B{label_row_num}:E{label_row_num}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)})
         if n:
             data_start, data_end = start_row + 2, start_row + 1 + n
-            formats.append({"range": f"B{data_start}:B{data_end}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_PROCESS)}})
-            formats.append({"range": f"C{data_start}:E{data_end}", "format": {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_WHITE)}})
-        ws.batch_format(formats)
-        _t3 = time.time()
-        print(f"   [fstl_save] baca sheet {_t1-_t0:.1f}s, tulis {_t2-_t1:.1f}s, warna {_t3-_t2:.1f}s")
+            ws.format(f"B{data_start}:B{data_end}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_PROCESS)})
+            ws.format(f"C{data_start}:E{data_end}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_WHITE)})
 
         # Cache isi sheet ini (dipakai endpoint /api/fstl/list) jadi basi
         # begitu ada kartu baru ditulis -- buang dari cache biar list
@@ -5824,8 +5852,6 @@ def fstl_save():
         with _fstl_cache_lock:
             _fstl_sheet_values_cache.pop(sheet_name, None)
     except Exception as exc:
-        with _fstl_kitir_ws_cache_lock:          # tab mungkin dihapus/diganti -> handle cache dibuang
-            _fstl_kitir_ws_cache.pop(f"{safe_username}_Kitir", None)
         return jsonify({"error": str(exc)}), 500
     return jsonify({"success": True, "sheet": sheet_name})
 
