@@ -5401,6 +5401,19 @@ def _fstl_suffix_key(jo_text):
     return import_engine._numeric_key_prefix(import_engine._last_segment(jo_text))
 
 
+def _fstl_spk_key(jo_text):
+    """Kunci SPK dari input/sel berformat SPK/JO: segmen PERTAMA kalau ada minimal
+    2 segmen (dipisah '/') DAN segmen pertama diawali angka. Contoh:
+      '1829/1663'            -> 1829   (input SPK/JO tanpa tanggal)
+      '1829/26/IV/28/1663'   -> 1829   (sel LP_1 format lengkap)
+      '1663' atau 'JO/26/..' -> None   (JO saja / tidak ada SPK angka)
+    Nol di depan & huruf di belakang diabaikan (sama seperti kunci JO)."""
+    segs = [x.strip() for x in str(jo_text or "").strip().split("/")]
+    if len(segs) < 2 or not re.match(r"\d", segs[0]):
+        return None
+    return import_engine._numeric_key_prefix(segs[0])
+
+
 def _fstl_find_col(header_row, *keywords):
     """Cari index kolom (0-based) di header_row yang cocok sama salah satu
     keyword. Prioritas: EXACT MATCH keyword pertama di SEMUA kolom dulu,
@@ -5493,18 +5506,26 @@ def _fstl_keterangan_rows(sh, sheet_name, target_key):
     return terms
 
 
-def _fstl_lp1_rows(sh, target_key, process_name):
+def _fstl_lp1_rows(sh, target_key, process_name, spk_key=None):
     """LP_1 ambil pakai cara yang sama (suffix JO), tapi ditambah filter
     kolom KLASIFIKASI harus cocok sama proses yang lagi dicek.
     Kolom keterangan di sheet LP_1 headernya "Faktor_Penyebab_Waste"
     (BUKAN "KETERANGAN" seperti di sheet-sheet sumber proses) -- makanya
     dicari duluan, dengan "KETERANGAN" jadi fallback kalau ada versi LP_1
-    lama yang headernya beda."""
+    lama yang headernya beda.
+
+    Mode pencarian:
+      - spk_key None  (user input JO saja)    -> cocokkan SUFFIX JO saja.
+      - spk_key ada   (user input SPK/JO)     -> SPK (segmen pertama sel) DAN
+                                                 JO (segmen terakhir sel) harus
+                                                 sama-sama cocok. Kolom LP_1
+                                                 'SPK/JO1' berisi mis.
+                                                 1829/26/IV/28/1663."""
     rows = _fstl_get_sheet_values(sh, FSTL_LP1_SHEET)
     if not rows:
         return []
     header = rows[0]
-    col_jo = _fstl_find_col(header, "JO", "SPK")
+    col_jo = _fstl_find_col(header, "SPK/JO1", "SPK/JO", "JO", "SPK")
     col_klas = _fstl_find_col(header, "KLASIFIKASI")
     col_ket = _fstl_find_col(header, "FAKTOR_PENYEBAB_WASTE", "KETERANGAN")
     if col_jo is None or col_ket is None:
@@ -5516,6 +5537,8 @@ def _fstl_lp1_rows(sh, target_key, process_name):
         if not str(jo_cell).strip():
             continue
         if _fstl_suffix_key(jo_cell) != target_key:
+            continue
+        if spk_key is not None and _fstl_spk_key(jo_cell) != spk_key:
             continue
         if col_klas is not None:
             klas_cell = str(row[col_klas] if len(row) > col_klas else "").strip().upper()
@@ -5537,7 +5560,7 @@ def fstl_keterangan_for_process(sh, jo_raw, process_name):
         for name in _fstl_matching_sheet_names(sh, cfg["prefixes"], cfg["exact"]):
             all_terms.extend(_fstl_keterangan_rows(sh, name, target_key))
         proc_text = _fstl_join_terms(all_terms)
-    lp1_text = _fstl_join_terms(_fstl_lp1_rows(sh, target_key, proc_key))
+    lp1_text = _fstl_join_terms(_fstl_lp1_rows(sh, target_key, proc_key, _fstl_spk_key(jo_raw)))
     if proc_text and lp1_text:
         return f"{proc_text} LAPORAN PROD: {lp1_text}"
     if lp1_text:
