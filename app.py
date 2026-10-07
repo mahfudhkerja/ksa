@@ -79,6 +79,7 @@ env var / default di bawah), bukan SPREADSHEET_ID utama:
                             baris kosong pemisah.
 """
 
+import copy
 import math
 import os
 import re
@@ -5732,16 +5733,21 @@ def _fstl_get_or_create_user_sheet(sh, safe_username):
     di sheet contoh (kartu-kartu waste mulai dari baris 2).
 
     `sh` di sini SELALU handle spreadsheet KITIR (_fstl_kitir_spreadsheet()),
-    BUKAN spreadsheet sumber data -- tab '{USER}_Kitir' hidup di spreadsheet
-    kitir. Nggak perlu _fstl_invalidate_cache() lagi di sini: cache
-    worksheet-titles (_fstl_worksheet_titles_cache) itu punya spreadsheet
-    sumber data, jadi bikin tab baru di spreadsheet kitir nggak bikin cache
-    itu basi."""
+    BUKAN spreadsheet sumber data.
+
+    Objek Worksheet di-cache (_fstl_kitir_ws_cache, diisi juga oleh
+    _fstl_kitir_reload()). sh.worksheet(nama) diam-diam fetch metadata
+    SELURUH spreadsheet tiap dipanggil -- 1 request ke Google yang nggak perlu
+    di setiap Simpan."""
     sheet_name = f"{safe_username}_Kitir"
+    ws = _fstl_kitir_ws_cache.get(sheet_name)
+    if ws is not None:
+        return ws, sheet_name
     try:
         ws = sh.worksheet(sheet_name)
     except gspread.exceptions.WorksheetNotFound:
         ws = sh.add_worksheet(title=sheet_name, rows=200, cols=6)
+    _fstl_kitir_ws_cache[sheet_name] = ws
     return ws, sheet_name
 
 
@@ -5810,7 +5816,6 @@ def fstl_save():
     safe_username = "".join(ch for ch in username if ch.isalnum() or ch in ("-", "_")).upper() or "USER"
     try:
         sh = _fstl_kitir_spreadsheet()
-        ws, sheet_name = _fstl_get_or_create_user_sheet(sh, safe_username)
 
         process_names = [str(p.get("name", "")).strip() for p in processes if str(p.get("name", "")).strip()]
         card_title_row = [
@@ -5823,37 +5828,74 @@ def fstl_save():
             for p in processes
         ]
         rows_to_write = [card_title_row, label_row] + data_rows
-
-        # APPEND ke bawah dengan jeda 1 baris kosong antar kartu (lihat
-        # _fstl_next_card_start_row): sheet kosong -> mulai baris 2 seperti
-        # biasa; kalau kartu terakhir nempel tanpa jeda -> disisipkan 1
-        # baris kosong; kalau jeda sudah 1 baris atau lebih -> lanjut apa
-        # adanya, tidak ditambah jeda baru.
-        start_row = _fstl_next_card_start_row(ws.get_all_values())
-        end_row = start_row + len(rows_to_write) - 1
-        ws.update(f"A{start_row}:E{end_row}", rows_to_write, value_input_option="USER_ENTERED")
-
-        # Pewarnaan: baris judul & baris label sama-sama BIRU (judul cuma
-        # sampai kolom D, E dibiarkan putih; label sampai kolom E). Baris
-        # data: cuma kolom nama proses (B) yang HIJAU, kolom
-        # Keterangan/Action Plan/Status (C:E) tetap PUTIH.
         n = len(data_rows)
-        title_row_num, label_row_num = start_row, start_row + 1
-        ws.format(f"B{title_row_num}:D{title_row_num}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)})
-        ws.format(f"B{label_row_num}:E{label_row_num}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_TITLE_LABEL)})
-        if n:
-            data_start, data_end = start_row + 2, start_row + 1 + n
-            ws.format(f"B{data_start}:B{data_end}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_PROCESS)})
-            ws.format(f"C{data_start}:E{data_end}", {"backgroundColor": _fstl_hex_to_rgb01(FSTL_COLOR_WHITE)})
 
-        # Cache isi sheet ini (dipakai endpoint /api/fstl/list) jadi basi
-        # begitu ada kartu baru ditulis -- buang dari cache biar list
-        # berikutnya baca versi terbaru, bukan versi sebelum kartu ini ada.
-        with _fstl_cache_lock:
-            _fstl_sheet_values_cache.pop(sheet_name, None)
+        # Lock: dua Simpan bersamaan ke sheet yang sama nggak boleh baca
+        # "baris kosong berikutnya" yang sama (kartunya bisa saling timpa).
+        with _fstl_kitir_save_lock:
+            ws, sheet_name = _fstl_get_or_create_user_sheet(sh, safe_username)
+            try:
+                # APPEND ke bawah dengan jeda 1 baris kosong antar kartu
+                # (lihat _fstl_next_card_start_row).
+                start_row = _fstl_next_card_start_row(ws.get_all_values())
+                end_row = start_row + len(rows_to_write) - 1
+                if end_row > ws.row_count:
+                    # values.update ke luar batas grid = error; tambah baris dulu.
+                    ws.add_rows(end_row - ws.row_count + 100)
+                ws.update(f"A{start_row}:E{end_row}", rows_to_write, value_input_option="USER_ENTERED")
+
+                # Pewarnaan: DULU 4x ws.format() = 4 request terpisah. Sekarang
+                # semuanya digabung jadi SATU spreadsheet.batch_update.
+                #   baris judul  : B:D biru   | baris label : B:E biru
+                #   baris data   : B hijau    | C:E putih
+                def _bg(r_first, r_last, c_first, c_last, hex_color):
+                    # r_* = nomor baris 1-based (inklusif), c_* = index kolom 0-based (c_last eksklusif)
+                    return {"repeatCell": {
+                        "range": {"sheetId": ws.id, "startRowIndex": r_first - 1, "endRowIndex": r_last,
+                                  "startColumnIndex": c_first, "endColumnIndex": c_last},
+                        "cell": {"userEnteredFormat": {"backgroundColor": _fstl_hex_to_rgb01(hex_color)}},
+                        "fields": "userEnteredFormat.backgroundColor",
+                    }}
+                title_row_num, label_row_num = start_row, start_row + 1
+                fmt_requests = [
+                    _bg(title_row_num, title_row_num, 1, 4, FSTL_COLOR_TITLE_LABEL),
+                    _bg(label_row_num, label_row_num, 1, 5, FSTL_COLOR_TITLE_LABEL),
+                ]
+                if n:
+                    data_start, data_end = start_row + 2, start_row + 1 + n
+                    fmt_requests.append(_bg(data_start, data_end, 1, 2, FSTL_COLOR_PROCESS))
+                    fmt_requests.append(_bg(data_start, data_end, 2, 5, FSTL_COLOR_WHITE))
+                sh.batch_update({"requests": fmt_requests})
+            except Exception:
+                _fstl_kitir_ws_cache.pop(sheet_name, None)  # jaga-jaga objek Worksheet-nya basi
+                raise
+
+        # Kartu baru langsung dimasukkan ke cache list (nggak perlu baca ulang
+        # sheet), dan dikirim balik ke frontend biar langsung tampil.
+        card_processes = []
+        for i, p in enumerate(processes):
+            pname = str(p.get("name", "")).strip()
+            if not pname:
+                continue  # sama seperti _fstl_parse_cards: baris tanpa nama proses dilewati
+            card_processes.append({
+                "row": start_row + 2 + i, "name": pname,
+                "keterangan": str(p.get("keterangan", "")).strip(),
+                "actionPlan": str(p.get("actionPlan", "")).strip(),
+                "status": str(p.get("status") or "Open").strip() or "Open",
+            })
+        card = {"username": safe_username, "sheet": sheet_name, "jo": jo.strip(),
+                "produk": produk.strip(), "processes": card_processes}
+        card["status"] = _fstl_card_status(card)
+        with _fstl_kitir_cache_lock:
+            entry = _fstl_kitir_cache["by_sheet"].get(sheet_name)
+            if entry is None:
+                entry = {"username": safe_username, "cards": []}
+                _fstl_kitir_cache["by_sheet"][sheet_name] = entry
+                _fstl_kitir_cache["order"].append(sheet_name)
+            entry["cards"].append(copy.deepcopy(card))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
-    return jsonify({"success": True, "sheet": sheet_name})
+    return jsonify({"success": True, "sheet": sheet_name, "card": card})
 
 
 FSTL_KITIR_SUFFIX_RE = re.compile(r"^(.+)_kitir$", re.IGNORECASE)
@@ -5907,40 +5949,140 @@ def _fstl_parse_cards(rows, username, sheet_name):
     return cards
 
 
+# --------------------------------------------------------------------------
+# CACHE KITIR -- bikin /api/fstl/list (buka halaman Lampiran Waste) instan.
+#
+# Masalah lama: tiap buka halaman, backend baca SEMUA tab '*_Kitir' satu-satu
+# (1 request get_all_values per user, berurutan) -- makin banyak user makin
+# lama, sampai ~30 detik. Sekarang:
+#   1. Semua tab dibaca lewat SATU values.batchGet (total 2 request ke Google,
+#      berapa pun jumlah user), bukan 1 request per tab.
+#   2. Hasilnya disimpan di memori. Request berikutnya langsung dijawab dari
+#      memori (milidetik). Kalau umur cache > FSTL_KITIR_CACHE_TTL_SECONDS
+#      (default 20 dtk), data lama tetap langsung dikirim dan refresh jalan
+#      di background (stale-while-revalidate); frontend dikasih tanda
+#      "stale": true buat ambil ulang beberapa detik kemudian.
+#   3. Simpan / Revisi mengubah cache langsung, jadi kartu baru langsung
+#      muncul tanpa baca ulang sheet.
+#   4. Cache dipanaskan saat server start.
+# Catatan: cache ada per proses/worker. Perubahan dari worker lain / edit
+# manual di Google Sheets baru kelihatan setelah TTL lewat (maks ~20 dtk).
+# --------------------------------------------------------------------------
+_FSTL_KITIR_TTL_SECONDS = int(os.environ.get("FSTL_KITIR_CACHE_TTL_SECONDS", "20"))
+_fstl_kitir_cache = {"ts": 0.0, "order": [], "by_sheet": {}}  # by_sheet: {nama_tab: {"username":..., "cards":[...]}}
+_fstl_kitir_cache_lock = threading.Lock()
+_fstl_kitir_load_lock = threading.Lock()
+_fstl_kitir_bg_running = threading.Event()
+_fstl_kitir_ws_cache = {}  # nama_tab -> objek Worksheet (lihat _fstl_get_or_create_user_sheet)
+_fstl_kitir_save_lock = threading.Lock()
+
+
+def _fstl_card_status(card):
+    statuses = [p["status"] for p in card["processes"]]
+    return "done" if statuses and all(_fstl_is_done_status(s) for s in statuses) else "open"
+
+
+def _fstl_kitir_reload():
+    """Baca ulang SEMUA tab '*_Kitir' dari Google Sheets (2 request total)."""
+    sh = _fstl_kitir_spreadsheet()
+    targets, ws_map = [], {}
+    for w in sh.worksheets():  # request 1: daftar tab
+        m = FSTL_KITIR_SUFFIX_RE.match(w.title)
+        if m:
+            targets.append((w.title, m.group(1)))
+            ws_map[w.title] = w
+    by_sheet, order = {}, []
+    if targets:
+        ranges = ["'" + title.replace("'", "''") + "'!A:E" for title, _ in targets]
+        resp = sh.values_batch_get(ranges)  # request 2: isi semua tab sekaligus
+        value_ranges = (resp or {}).get("valueRanges", [])
+        for (title, username), vr in zip(targets, value_ranges):
+            cards = _fstl_parse_cards(vr.get("values", []), username, title)
+            for c in cards:
+                c["status"] = _fstl_card_status(c)
+            by_sheet[title] = {"username": username, "cards": cards}
+            order.append(title)
+    _fstl_kitir_ws_cache.update(ws_map)
+    with _fstl_kitir_cache_lock:
+        _fstl_kitir_cache["by_sheet"] = by_sheet
+        _fstl_kitir_cache["order"] = order
+        _fstl_kitir_cache["ts"] = time.time()
+
+
+def _fstl_kitir_refresh():
+    """Reload (blocking). Kalau thread lain baru selesai reload selagi kita
+    nunggu lock, nggak perlu reload lagi."""
+    with _fstl_kitir_cache_lock:
+        seen_ts = _fstl_kitir_cache["ts"]
+    with _fstl_kitir_load_lock:
+        with _fstl_kitir_cache_lock:
+            if _fstl_kitir_cache["ts"] != seen_ts:
+                return
+        _fstl_kitir_reload()
+
+
+def _fstl_kitir_refresh_async():
+    if _fstl_kitir_bg_running.is_set():
+        return
+    _fstl_kitir_bg_running.set()
+
+    def _run():
+        try:
+            _fstl_kitir_refresh()
+        except Exception as exc:
+            print(f"[FSTL] refresh kitir di background gagal (dilewati): {exc}", flush=True)
+        finally:
+            _fstl_kitir_bg_running.clear()
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _fstl_kitir_snapshot():
+    with _fstl_kitir_cache_lock:
+        cards, usernames = [], set()
+        for name in _fstl_kitir_cache["order"]:
+            entry = _fstl_kitir_cache["by_sheet"][name]
+            usernames.add(entry["username"])
+            cards.extend(copy.deepcopy(entry["cards"]))
+        age = time.time() - _fstl_kitir_cache["ts"]
+    return {"cards": cards, "usernames": sorted(usernames)}, age
+
+
 @app.route("/api/fstl/list", methods=["GET"])
 def fstl_list():
     """Ambil semua kartu waste dari SEMUA sheet '*_Kitir' (semua user)
-    sekaligus, buat ditampilkan gabung di satu index. Filter yang tadinya
-    berdasarkan Status (Open/Selesai) diganti jadi filter berdasarkan nama
-    orang yang mengerjakan (turunan nama sheet '{USERNAME}_Kitir').
+    sekaligus, buat ditampilkan gabung di satu index. Filter di frontend
+    berdasarkan nama orang yang mengerjakan (turunan nama sheet).
 
-    Sengaja baca LANGSUNG dari Google Sheets (bukan lewat cache TTL yang
-    dipakai /api/fstl/keterangan) -- endpoint ini cuma dipanggil sesekali
-    (pas buka halaman Lampiran Waste), jadi lebih penting selalu dapat data
-    paling baru (termasuk kartu yang baru saja disimpan) daripada hemat
-    kuota API lewat cache basi.
-
-    `sh` di sini spreadsheet KITIR (_fstl_kitir_spreadsheet()), BUKAN
-    spreadsheet sumber data -- tab '*_Kitir' hidup di spreadsheet kitir."""
+    Dijawab dari cache memori (lihat blok CACHE KITIR di atas). Cuma request
+    PERTAMA setelah server start (kalau warm-up belum selesai) yang menunggu
+    Google. ?refresh=1 memaksa baca ulang dari Google Sheets."""
+    force = request.args.get("refresh") == "1"
     try:
-        sh = _fstl_kitir_spreadsheet()
-        cards = []
-        usernames = set()
-        for ws_obj in sh.worksheets():
-            sheet_name = ws_obj.title
-            m = FSTL_KITIR_SUFFIX_RE.match(sheet_name)
-            if not m:
-                continue
-            username = m.group(1)
-            usernames.add(username)
-            rows = ws_obj.get_all_values()
-            cards.extend(_fstl_parse_cards(rows, username, sheet_name))
-        for card in cards:
-            statuses = [p["status"] for p in card["processes"]]
-            card["status"] = "done" if statuses and all(_fstl_is_done_status(s) for s in statuses) else "open"
-        return jsonify({"cards": cards, "usernames": sorted(usernames)})
+        with _fstl_kitir_cache_lock:
+            cold = _fstl_kitir_cache["ts"] == 0.0
+        if force or cold:
+            _fstl_kitir_refresh()
+        payload, age = _fstl_kitir_snapshot()
+        stale = age > _FSTL_KITIR_TTL_SECONDS
+        if stale:
+            _fstl_kitir_refresh_async()
+        payload["stale"] = stale
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+def _fstl_kitir_warmup():
+    try:
+        _fstl_kitir_refresh()
+        print("   [fstl] cache kitir dipanaskan", flush=True)
+    except Exception as exc:
+        print(f"   [fstl] warm-up kitir gagal (dilewati): {exc}", flush=True)
+
+
+if os.environ.get("FSTL_WARMUP", "1") != "0":
+    threading.Thread(target=_fstl_kitir_warmup, daemon=True).start()
 
 
 @app.route("/api/fstl/revisi", methods=["POST"])
@@ -5967,26 +6109,39 @@ def fstl_revisi():
         return jsonify({"error": "Tidak ada keterangan yang direvisi"}), 400
 
     updates = []
+    new_ket = {}  # {nomor_baris: keterangan baru}, buat update cache list
     for p in processes:
         row_num = p.get("row")
         if not isinstance(row_num, int) or row_num < 2:
             continue  # baris 1 nggak pernah dipakai buat data kartu, abaikan kalau ada yang aneh
         keterangan = str(p.get("keterangan", ""))
         updates.append({"range": f"C{row_num}", "values": [[keterangan]]})
+        new_ket[row_num] = keterangan.strip()
     if not updates:
         return jsonify({"error": "Tidak ada baris valid untuk direvisi"}), 400
 
     try:
         sh = _fstl_kitir_spreadsheet()
+        ws = _fstl_kitir_ws_cache.get(sheet_name)
+        if ws is None:
+            try:
+                ws = sh.worksheet(sheet_name)
+            except gspread.exceptions.WorksheetNotFound:
+                return jsonify({"error": f"Sheet '{sheet_name}' tidak ditemukan di spreadsheet kitir"}), 404
+            _fstl_kitir_ws_cache[sheet_name] = ws
         try:
-            ws = sh.worksheet(sheet_name)
-        except gspread.exceptions.WorksheetNotFound:
-            return jsonify({"error": f"Sheet '{sheet_name}' tidak ditemukan di spreadsheet kitir"}), 404
-        ws.batch_update(updates, value_input_option="USER_ENTERED")
-        # Cache isi sheet ini jadi basi begitu keterangan direvisi, biar
-        # /api/fstl/list berikutnya nunjukin versi terbaru.
-        with _fstl_cache_lock:
-            _fstl_sheet_values_cache.pop(sheet_name, None)
+            ws.batch_update(updates, value_input_option="USER_ENTERED")
+        except Exception:
+            _fstl_kitir_ws_cache.pop(sheet_name, None)
+            raise
+        # Cache list ikut diperbarui langsung (nggak perlu baca ulang sheet).
+        with _fstl_kitir_cache_lock:
+            entry = _fstl_kitir_cache["by_sheet"].get(sheet_name)
+            if entry:
+                for card in entry["cards"]:
+                    for pr in card["processes"]:
+                        if pr["row"] in new_ket:
+                            pr["keterangan"] = new_ket[pr["row"]]
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify({"success": True})

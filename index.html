@@ -4714,6 +4714,18 @@
   let fstlRenderedRows = []; // kartu yang lagi ditampilkan di grid (sudah difilter search/user), buat lookup tombol ✏️ Revisi lewat index
   let fstlEditingCard = null; // null = modal lagi mode "Catat Waste Baru", diisi kartu = modal lagi mode "Revisi Keterangan"
 
+  // Simpan bersifat OPTIMISTIK: modal langsung tertutup & kartu langsung tampil
+  // (status "Menyimpan..."), request ke backend jalan di belakang. Kartu yang
+  // belum terkonfirmasi disimpan di fstlPending (tampil paling atas). Kalau
+  // gagal, kartu tetap ada dengan tombol "Coba lagi" -- isian user tidak hilang.
+  let fstlPending = [];
+  let fstlTmpSeq = 0;
+  let fstlSaveQueue = Promise.resolve(); // simpan diproses berurutan, biar tidak balapan menulis baris sheet
+  let fstlStaleTimer = null;
+  window.addEventListener("beforeunload", function(e){
+    if(fstlPending.length){ e.preventDefault(); e.returnValue = ""; }
+  });
+
   // Request yang lagi jalan (cek-JO dan/atau ambil-keterangan) disimpan di
   // sini biar bisa di-abort begitu modal ditutup (ESC / tombol Batal / buka
   // ulang buat JO lain) -- soalnya kalau nggak di-abort, fetch lama tetap
@@ -4926,17 +4938,25 @@
     toast("Filter bulan — tampilannya menyusul, fokus form dulu 🙂", "info");
   }
 
-  async function fstlLoadList(){
+  async function fstlLoadList(silent){
     const grid = document.getElementById("fstlGrid");
-    if(grid) grid.innerHTML = `<div class="fstl-empty"><div class="fstl-spinner-lg"></div><h4 class="fstl-display">Memuat data...</h4></div>`;
+    if(!silent){
+      // Ada data di memori -> langsung tampil (tanpa spinner), lalu disegarkan diam-diam.
+      if(fstlCards.length || fstlPending.length){ fstlRenderUserChips(); renderFstlWasteGrid(); }
+      else if(grid) grid.innerHTML = `<div class="fstl-empty"><div class="fstl-spinner-lg"></div><h4 class="fstl-display">Memuat data...</h4></div>`;
+    }
     try{
       const res = await fetch(`${API_BASE}/api/fstl/list`);
       const data = await res.json();
-      if(!res.ok){ toast(data.error || "Gagal ambil data waste", "error"); fstlCards = []; fstlUsernames = []; }
-      else { fstlCards = data.cards || []; fstlUsernames = data.usernames || []; }
+      if(!res.ok){ if(!silent) toast(data.error || "Gagal ambil data waste", "error"); }
+      else {
+        fstlCards = data.cards || []; fstlUsernames = data.usernames || [];
+        clearTimeout(fstlStaleTimer);
+        // Backend menjawab dari cache lama & sedang refresh di belakang -> ambil ulang sebentar lagi.
+        if(data.stale && !silent) fstlStaleTimer = setTimeout(()=>fstlLoadList(true), 2500);
+      }
     }catch(err){
-      toast("Gagal ambil data waste — cek koneksi ke backend", "error");
-      fstlCards = []; fstlUsernames = [];
+      if(!silent) toast("Gagal ambil data waste — cek koneksi ke backend", "error");
     }
     if(!fstlUsernames.includes(fstlUserFilter) && fstlUserFilter !== "semua") fstlUserFilter = "semua";
     fstlRenderUserChips();
@@ -4964,7 +4984,7 @@
     const grid = document.getElementById("fstlGrid");
     if(!grid) return;
     const kw = (document.getElementById("fstlSearch").value || "").toLowerCase();
-    const rows = fstlCards.filter(w=>{
+    const rows = [...fstlPending, ...fstlCards].filter(w=>{
       const matchKw = (w.jo||"").toLowerCase().includes(kw) || (w.produk||"").toLowerCase().includes(kw);
       const matchUser = fstlUserFilter === "semua" || w.username === fstlUserFilter;
       return matchKw && matchUser;
@@ -4980,13 +5000,28 @@
         const meta = fstlProcessMeta[p.name] || { bg:"#eee", text:"#333", emoji:"" };
         return `<span class="fstl-tag" style="background:${meta.bg}; color:${meta.text};">${meta.emoji} ${p.name}</span>`;
       }).join("");
-      return `<div class="fstl-card">
-        <button type="button" class="fstl-card-edit" title="Revisi keterangan" onclick="fstlOpenRevisi(${idx})">✏️</button>
+      let statusHtml = `<span class="fstl-status ${w.status}">${statusLabel[w.status] || w.status}</span>`;
+      let editBtn = `<button type="button" class="fstl-card-edit" title="Revisi keterangan" onclick="fstlOpenRevisi(${idx})">✏️</button>`;
+      let actions = "";
+      if(w.pending === "saving"){
+        statusHtml = `<span class="fstl-status open">⏳ Menyimpan...</span>`;
+        editBtn = "";
+      } else if(w.pending === "failed"){
+        statusHtml = `<span class="fstl-status open" style="background:#ffe3e3; color:#b42318;">⚠️ Gagal simpan</span>`;
+        editBtn = "";
+        actions = `<div style="display:flex; gap:8px; margin-top:12px;">
+          <button type="button" class="fstl-btn-check" style="height:34px;" onclick="fstlRetrySave(${idx})">🔁 Coba lagi</button>
+          <button type="button" class="fstl-btn-check" style="height:34px; background:#b42318;" onclick="fstlDiscardPending(${idx})">🗑️ Buang</button>
+        </div>`;
+      }
+      return `<div class="fstl-card"${w.pending ? ' style="opacity:.85;"' : ""}>
+        ${editBtn}
         <span class="jo">${w.jo}</span>
         <h4>${w.produk}</h4>
         <div class="fstl-tag-row">${tags}</div>
+        ${actions}
         <div class="fstl-card-foot">
-          <span class="fstl-status ${w.status}">${statusLabel[w.status] || w.status}</span>
+          ${statusHtml}
           <span class="fstl-meta">👤 ${w.username}</span>
         </div>
       </div>`;
@@ -5007,25 +5042,69 @@
       status: r.querySelector(".fstl-stat").value.trim()
     }));
     const username = currentUser ? (currentUser.username || currentUser.USERNAME || currentUser.nama) : "UNKNOWN";
-    const saveBtn = document.getElementById("fstlSaveBtn");
-    const originalLabel = saveBtn.innerText;
-    saveBtn.disabled = true; saveBtn.innerText = "⏳ Menyimpan...";
+    // Kartu sementara (optimistik): modal langsung ditutup, kartu langsung tampil.
+    const tmp = {
+      tmpId: ++fstlTmpSeq,
+      username: (String(username).replace(/[^A-Za-z0-9_-]/g, "").toUpperCase() || "USER"),
+      jo, produk, status: "open", pending: "saving",
+      processes: processes.map(p=>({ name:p.name, keterangan:p.keterangan, actionPlan:p.actionPlan, status:p.status || "Open" })),
+      payload: { username, jo, produk, processes }
+    };
+    fstlPending.push(tmp);
+    fstlCloseModal();
+    fstlEnqueueSave(tmp);
+  }
+
+  function fstlEnqueueSave(tmp){
+    tmp.pending = "saving";
+    renderFstlWasteGrid();
+    fstlSaveQueue = fstlSaveQueue.then(()=>fstlPostSave(tmp));
+  }
+
+  async function fstlPostSave(tmp){
     try{
       const res = await fetch(`${API_BASE}/api/fstl/save`, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ username, jo, produk, processes })
+        body: JSON.stringify(tmp.payload)
       });
       const data = await res.json();
-      if(!res.ok){ toast(data.error || "Gagal menyimpan ke sheet", "error"); return; }
-      toast(`Data waste tersimpan di sheet ${data.sheet || (username + "_Kitir")}`, "success");
+      if(!res.ok) throw new Error(data.error || "Gagal menyimpan ke sheet");
+      fstlPending = fstlPending.filter(x => x !== tmp);
+      if(data.card) fstlInsertCard(data.card); else fstlLoadList(true);
+      toast(`Data waste tersimpan di sheet ${data.sheet || (tmp.username + "_Kitir")}`, "success");
     }catch(err){
-      toast("Gagal menyimpan — cek koneksi ke backend", "error");
-      return;
-    }finally{
-      saveBtn.disabled = false; saveBtn.innerText = originalLabel;
+      tmp.pending = "failed";
+      const msg = (err && err.name === "TypeError") ? "cek koneksi ke backend" : (err && err.message) || "error";
+      toast(`Gagal menyimpan JO ${tmp.jo} — ${msg}. Klik "Coba lagi" di kartunya.`, "error");
     }
-    fstlCloseModal();
-    fstlLoadList(); // refresh gabungan semua sheet *_Kitir biar kartu baru langsung muncul
+    renderFstlWasteGrid();
+  }
+
+  // Masukkan kartu hasil konfirmasi backend ke daftar (di akhir kartu milik user yang sama, sesuai urutan sheet).
+  function fstlInsertCard(card){
+    const firstRow = card.processes[0] && card.processes[0].row;
+    const dup = fstlCards.some(c => c.sheet === card.sheet && c.processes[0] && c.processes[0].row === firstRow);
+    if(!dup){
+      let at = -1;
+      fstlCards.forEach((c,i)=>{ if(c.sheet === card.sheet) at = i; });
+      if(at >= 0) fstlCards.splice(at + 1, 0, card); else fstlCards.push(card);
+    }
+    if(!fstlUsernames.includes(card.username)){
+      fstlUsernames.push(card.username); fstlUsernames.sort();
+      fstlRenderUserChips();
+    }
+  }
+
+  function fstlRetrySave(idx){
+    const tmp = fstlRenderedRows[idx];
+    if(tmp && tmp.pending === "failed") fstlEnqueueSave(tmp);
+  }
+  function fstlDiscardPending(idx){
+    const tmp = fstlRenderedRows[idx];
+    if(!tmp || tmp.pending !== "failed") return;
+    if(!confirm(`Buang catatan waste JO ${tmp.jo} yang gagal tersimpan?`)) return;
+    fstlPending = fstlPending.filter(x => x !== tmp);
+    renderFstlWasteGrid();
   }
 
   async function fstlSaveRevisi(){
@@ -5038,25 +5117,27 @@
       keterangan: r.querySelector(".fstl-ket").value.trim()
     })).filter(p => Number.isInteger(p.row) && p.row > 1);
     if(processes.length === 0){ toast("Tidak ada keterangan yang bisa direvisi", "error"); return; }
-    const saveBtn = document.getElementById("fstlSaveBtn");
-    const originalLabel = saveBtn.innerText;
-    saveBtn.disabled = true; saveBtn.innerText = "⏳ Menyimpan...";
+    // Optimistik: tampilkan hasil revisi & tutup modal dulu, kirim di belakang.
+    const card = fstlEditingCard;
+    const newKet = new Map(processes.map(p => [p.row, p.keterangan]));
+    const backup = card.processes.map(p => p.keterangan);
+    card.processes.forEach(p => { if(newKet.has(p.row)) p.keterangan = newKet.get(p.row); });
+    fstlCloseModal();
+    renderFstlWasteGrid();
     try{
       const res = await fetch(`${API_BASE}/api/fstl/revisi`, {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ sheet: fstlEditingCard.sheet, processes })
+        body: JSON.stringify({ sheet: card.sheet, processes })
       });
       const data = await res.json();
-      if(!res.ok){ toast(data.error || "Gagal menyimpan revisi", "error"); return; }
+      if(!res.ok) throw new Error(data.error || "Gagal menyimpan revisi");
       toast("Keterangan berhasil direvisi", "success");
     }catch(err){
-      toast("Gagal menyimpan revisi — cek koneksi ke backend", "error");
-      return;
-    }finally{
-      saveBtn.disabled = false; saveBtn.innerText = originalLabel;
+      card.processes.forEach((p,i) => { p.keterangan = backup[i]; }); // gagal -> kembalikan tampilan lama
+      renderFstlWasteGrid();
+      const msg = (err && err.name === "TypeError") ? "cek koneksi ke backend" : (err && err.message) || "error";
+      toast(`Gagal menyimpan revisi — ${msg}`, "error");
     }
-    fstlCloseModal();
-    fstlLoadList(); // refresh biar kartu nunjukin keterangan versi terbaru
   }
 
   // ---------------- KIRIMAN HARI INI ----------------
