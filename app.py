@@ -2375,7 +2375,113 @@ def _ko_rumus_slitting(sheet_name, row, tahun_list):
     }
 
 
-KO_HITUNG_FORMULAS = [_ko_rumus_printing, _ko_rumus_slitting]
+# --- Rumus BAG (HASIL_BAG & BAG_METER) ----------------------------------------
+# Kunci pencocokan JO untuk SEMUA tahun (2021-2026) SAMA: ambil segmen paling
+# belakang setelah '/', lalu hanya angka di depannya; nol di depan dan huruf di
+# belakang diabaikan. Contoh: 0069/26/I/3/0018 -> 18 ; 5288A -> 5288 ; 0026 -> 26.
+# 2026      : sheet BAG_1 di spreadsheet 2026 (PRINTING_SPREADSHEET_ID[2026]):
+#             kolom SPK/JO, AKHIR_BAIK (-> HASIL_BAG), AKHIR_METER (-> BAG_METER).
+# 2021-2025 : tab "BagMaking" di spreadsheet tiap tahun: kolom JO (bukan JO2),
+#             LEMBAR HASIL (-> HASIL_BAG), METER HASIL (-> BAG_METER).
+# Semua baris yang cocok DIJUMLAHKAN, antar tahun yang dipilih juga dijumlah.
+# Tidak ketemu -> 0.
+HASIL_BAG_COL = "HASIL_BAG"
+BAG_METER_COL = "BAG_METER"
+BAG_2026_SHEET = "BAG_1"
+_BAG_CACHE_TTL = 120
+_bag_cache = {}                      # tahun -> {"ts": float, "idx": {kunci: [hasil_bag, bag_meter]}}
+_bag_cache_lock = threading.Lock()
+
+
+def _bag_key(jo_text):
+    """Kunci JO untuk BAG (semua tahun): angka di depan segmen belakang, nol depan & huruf belakang diabaikan."""
+    return _fstl_suffix_key(jo_text) or ""
+
+
+def _bag_build_index(tahun):
+    """{kunci_JO: [jumlah_hasil_bag, jumlah_bag_meter]}"""
+    idx = {}
+    cell = lambda r, i: r[i] if i is not None and i < len(r) else ""
+    num = lambda s: import_engine._parse_flexible_number(str(s).strip()) if str(s).strip() else None
+
+    def add(key, hb, bm):
+        if key in ("", None):
+            return
+        e = idx.setdefault(key, [0.0, 0.0])
+        if hb is not None:
+            e[0] += hb
+        if bm is not None:
+            e[1] += bm
+
+    sh = get_client().open_by_key(PRINTING_SPREADSHEET_ID[tahun])
+    if tahun == 2026:
+        ws = next((w for w in sh.worksheets() if w.title.strip().upper() == BAG_2026_SHEET), None)
+        if ws is None:
+            raise RuntimeError(f"Spreadsheet {tahun}: tab {BAG_2026_SHEET} tidak ditemukan.")
+        vals = ws.get_all_values()
+        if vals:
+            h = vals[0]
+            c_jo = _hdr_find(h, "SPK/JO", "JO")
+            c_hb = _hdr_find(h, "AKHIR BAIK")
+            c_bm = _hdr_find(h, "AKHIR METER")
+            if None in (c_jo, c_hb, c_bm):
+                raise RuntimeError(f"Tab {BAG_2026_SHEET} ({tahun}): kolom SPK/JO / AKHIR_BAIK / AKHIR_METER tidak ditemukan di baris 1 (header: {h[:16]}).")
+            for r in vals[1:]:
+                jo_cell = str(cell(r, c_jo)).strip()
+                if not jo_cell or jo_cell == "-":
+                    continue
+                add(_bag_key(jo_cell), num(cell(r, c_hb)), num(cell(r, c_bm)))
+    else:
+        norm_title = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+        ws = next((w for w in sh.worksheets() if norm_title(w.title) == "bagmaking"), None)
+        if ws is None:
+            raise RuntimeError(f"Spreadsheet {tahun}: tab 'BagMaking' tidak ditemukan.")
+        vals = ws.get_all_values()
+        if vals:
+            h = vals[0]
+            c_jo = _hdr_find(h, "JO")                        # bukan JO2
+            c_hb = _hdr_find(h, "LEMBAR HASIL")
+            c_bm = _hdr_find(h, "METER HASIL")
+            if None in (c_jo, c_hb, c_bm):
+                raise RuntimeError(f"Tab BagMaking ({tahun}): kolom JO / LEMBAR HASIL / METER HASIL tidak ditemukan di baris 1 (header: {h[:22]}).")
+            for r in vals[1:]:
+                jo_cell = str(cell(r, c_jo)).strip()
+                if not jo_cell or jo_cell == "-":
+                    continue
+                add(_bag_key(jo_cell), num(cell(r, c_hb)), num(cell(r, c_bm)))
+    return idx
+
+
+def _bag_index(tahun, force=False):
+    now = time.time()
+    with _bag_cache_lock:
+        e = _bag_cache.get(tahun)
+        if e and not force and (now - e["ts"]) < _BAG_CACHE_TTL:
+            return e["idx"]
+    idx = _bag_build_index(tahun)
+    with _bag_cache_lock:
+        _bag_cache[tahun] = {"ts": now, "idx": idx}
+    return idx
+
+
+def _ko_rumus_bag(sheet_name, row, tahun_list):
+    """HASIL_BAG & BAG_METER = jumlah dari semua baris cocok di tahun terpilih
+    (antar tahun dijumlah). Tidak ketemu -> 0."""
+    cell = row.get(REGULER_KO_JO_COL, "")
+    tokens = [t.strip() for t in _KHI_CELL_SPLIT_RE.split(cell) if t.strip()]
+    keys = {k for k in (_bag_key(t) for t in tokens) if k not in ("", None)}
+    hb = bm = 0.0
+    for tahun in tahun_list:
+        idx = _bag_index(tahun)
+        for key in keys:
+            e = idx.get(key)
+            if e:
+                hb += e[0]
+                bm += e[1]
+    return {HASIL_BAG_COL: _num_out(hb), BAG_METER_COL: _num_out(bm)}
+
+
+KO_HITUNG_FORMULAS = [_ko_rumus_printing, _ko_rumus_slitting, _ko_rumus_bag]
 
 
 def _ko_hitung_row(sheet_name, row, tahun_list):
@@ -2441,6 +2547,8 @@ def ko_hitung():
             _printing_index(t, force=True)
         for t in tahun_list:                    # data slitting juga dibaca ulang tiap klik Hitung
             _slitting_index(t, force=True)
+        for t in tahun_list:                    # data bag juga dibaca ulang tiap klik Hitung
+            _bag_index(t, force=True)
         pairs, hilang = [], []
         for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
