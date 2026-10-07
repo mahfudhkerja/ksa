@@ -3905,7 +3905,7 @@
     const rows = [...koSel].sort((a,b)=>a-b).map(i => d.p.rows[i]).filter(Boolean);
     const jos = rows.map(r => String(r[d.joCol] ?? "").trim() || "-");
     const tahun = koTahunSorted();
-    if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\nHasil (Printing 1-5, Total Printing, Slitting Meter, Slitting Rol, Hasil Bag & Bag Meter) akan ditulis ke sheet kartu order.\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
+    if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\nHasil (Printing 1-5, Total Printing, Slitting Meter, Slitting Rol, Hasil Bag, Bag Meter, Tanggal Kiriman & Jumlah Pengiriman) akan ditulis ke sheet kartu order.\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
     const old = btn.innerHTML; btn.disabled = true; btn.innerText = "Menghitung...";
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler/hitung`, {

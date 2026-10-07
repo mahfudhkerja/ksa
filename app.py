@@ -2481,7 +2481,160 @@ def _ko_rumus_bag(sheet_name, row, tahun_list):
     return {HASIL_BAG_COL: _num_out(hb), BAG_METER_COL: _num_out(bm)}
 
 
-KO_HITUNG_FORMULAS = [_ko_rumus_printing, _ko_rumus_slitting, _ko_rumus_bag]
+# --- Rumus PENGIRIMAN (TANGGAL_KIRIMAN, JUMLAH_PENGIRIMAN, JUMLAH_PENGIRIMAN_TOTAL) ---
+# TIDAK tergantung pilihan tahun: sumbernya satu spreadsheet (SURAT_JALAN_SPREADSHEET_ID),
+# tab "SURAT JALAN" (kolom No_JO, Tanggal, Unit, ...).
+# Pencocokan: kode JO PENUH dari kolom KUMPULAN_JO_AKTIF (tidak dipotong suffix) dengan
+# kolom No_JO; huruf besar/kecil & spasi diabaikan, huruf di BELAKANG kode diabaikan
+# (JO/26/X/5/3632A == JO/26/X/5/3632). Satu sel kartu order = satu JO.
+#   TANGGAL_KIRIMAN         = textjoin " ; " kolom Tanggal (baris cocok, urutan sheet)
+#   JUMLAH_PENGIRIMAN       = textjoin " ; " kolom Unit apa adanya
+#   JUMLAH_PENGIRIMAN_TOTAL = ringkasan hitung dari Unit:
+#       Roll   : rol UTUH (@meter == POTONGAN kartu order) dijumlah; rol tidak utuh
+#                tidak dijumlah ke yang utuh, ditulis "jumlah@meter" (meter sama digabung),
+#                semua digabung dengan " + "  ->  "99 + 3@450", "1@1700", "250".
+#       Pieces : dijumlah  ->  196800
+#       KG     : tidak dijumlah, tiap entri diambil satu nilai, digabung " + "
+#                ->  "489,72 KG + 200 KG"
+# Tidak ada baris cocok -> ketiga kolom dikosongkan.
+SURAT_JALAN_SPREADSHEET_ID = os.environ.get(
+    "SURAT_JALAN_SPREADSHEET_ID", "1makN-5A76ZQTPFLswjH-cUdW2J_TbWlNqnNp_FSIrCE"
+)
+SURAT_JALAN_SHEET = "SURAT JALAN"
+TANGGAL_KIRIMAN_COL = "TANGGAL_KIRIMAN"
+JUMLAH_PENGIRIMAN_COL = "JUMLAH_PENGIRIMAN"
+JUMLAH_PENGIRIMAN_TOTAL_COL = "JUMLAH_PENGIRIMAN_TOTAL"
+_SJ_CACHE_TTL = 120
+_sj_cache = {"ts": 0.0, "idx": None}
+_sj_cache_lock = threading.Lock()
+_SJ_ENTRY_SPLIT_RE = re.compile(r"</?\s*br\s*/?>|[;\n\r]+", re.I)
+_SJ_ROLL_RE = re.compile(r"([\d.,]+)\s*roll\w*\s*@\s*([\d.,]+)\s*m?", re.I)
+_SJ_PCS_RE = re.compile(r"([\d.,]+)\s*(?:pieces|piece|pcs|pc)\b", re.I)
+_SJ_KG_RE = re.compile(r"([\d.,]+)\s*kg\b", re.I)
+
+
+def _sj_key(jo_text):
+    """Kode JO penuh, spasi dibuang, huruf besar, huruf di belakang diabaikan."""
+    t = re.sub(r"\s+", "", str(jo_text or "")).upper()
+    return re.sub(r"[A-Z]+$", "", t)
+
+
+def _sj_num(text):
+    """Angka dari teks Surat Jalan (titik/koma = desimal, mis. '1182.75', '37,5')."""
+    try:
+        return float(str(text).strip().replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _sj_fmt(v):
+    return import_engine._format_number_precise(v)
+
+
+def _sj_build_index():
+    """{kunci_JO: [(tanggal, unit), ...]} sesuai urutan baris di sheet."""
+    sh = get_client().open_by_key(SURAT_JALAN_SPREADSHEET_ID)
+    norm_title = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    ws = next((w for w in sh.worksheets() if norm_title(w.title) == norm_title(SURAT_JALAN_SHEET)), None)
+    if ws is None:
+        raise RuntimeError(f"Spreadsheet Surat Jalan: tab '{SURAT_JALAN_SHEET}' tidak ditemukan.")
+    vals = ws.get_all_values()
+    idx = {}
+    if not vals:
+        return idx
+    h = vals[0]
+    c_jo, c_tgl, c_unit = _hdr_find(h, "NO JO"), _hdr_find(h, "TANGGAL"), _hdr_find(h, "UNIT")
+    if None in (c_jo, c_tgl, c_unit):
+        raise RuntimeError(f"Tab {SURAT_JALAN_SHEET}: kolom No_JO / Tanggal / Unit tidak ditemukan di baris 1 (header: {h[:14]}).")
+    cell = lambda r, i: str(r[i]).strip() if i < len(r) else ""
+    for r in vals[1:]:
+        key = _sj_key(cell(r, c_jo))
+        if not key or key == "-":
+            continue
+        idx.setdefault(key, []).append((cell(r, c_tgl), cell(r, c_unit)))
+    return idx
+
+
+def _sj_index(force=False):
+    now = time.time()
+    with _sj_cache_lock:
+        if _sj_cache["idx"] is not None and not force and (now - _sj_cache["ts"]) < _SJ_CACHE_TTL:
+            return _sj_cache["idx"]
+    idx = _sj_build_index()
+    with _sj_cache_lock:
+        _sj_cache["idx"], _sj_cache["ts"] = idx, now
+    return idx
+
+
+def _sj_total(units, potongan):
+    """Ringkasan JUMLAH_PENGIRIMAN_TOTAL dari daftar teks Unit. Return angka murni
+    (int/float) kalau hasilnya hanya satu angka, selain itu string."""
+    whole = 0.0
+    have_whole = False
+    partial = {}      # meter (teks) -> jumlah rol
+    pcs, have_pcs = 0.0, False
+    kgs = []
+    for unit in units:
+        for entry in _SJ_ENTRY_SPLIT_RE.split(unit):
+            entry = entry.strip()
+            if not entry:
+                continue
+            m = _SJ_ROLL_RE.search(entry)
+            if m:
+                cnt, mtr = _sj_num(m.group(1)), _sj_num(m.group(2))
+                if cnt is None or mtr is None:
+                    continue
+                if potongan is not None and abs(mtr - potongan) < 1e-6:
+                    whole += cnt
+                    have_whole = True
+                else:
+                    k = _sj_fmt(mtr)
+                    partial[k] = partial.get(k, 0.0) + cnt
+                continue
+            m = _SJ_PCS_RE.search(entry)
+            if m:
+                v = _sj_num(m.group(1))
+                if v is not None:
+                    pcs += v
+                    have_pcs = True
+                continue
+            m = _SJ_KG_RE.search(entry)
+            if m:
+                v = _sj_num(m.group(1))
+                if v is not None:
+                    kgs.append(f"{_sj_fmt(v)} KG")
+    parts = []
+    if have_whole:
+        parts.append(_sj_fmt(whole))
+    for mtr, cnt in partial.items():
+        parts.append(f"{_sj_fmt(cnt)}@{mtr}")
+    if have_pcs:
+        parts.append(_sj_fmt(pcs))
+    parts.extend(kgs)
+    if not parts:
+        return ""
+    if len(parts) == 1 and not partial and not kgs:
+        return _num_out(whole if have_whole else pcs)
+    return " + ".join(parts)
+
+
+def _ko_rumus_pengiriman(sheet_name, row, tahun_list):
+    """Lihat blok komentar di atas. tahun_list tidak dipakai."""
+    key = _sj_key(row.get(REGULER_KO_JO_COL, ""))
+    matches = _sj_index().get(key) or [] if key else []
+    if not matches:
+        return {TANGGAL_KIRIMAN_COL: "", JUMLAH_PENGIRIMAN_COL: "", JUMLAH_PENGIRIMAN_TOTAL_COL: ""}
+    tanggal = [t for t, _ in matches if t]
+    units = [u for _, u in matches if u]
+    potongan = _sj_num(row.get("POTONGAN", "")) if str(row.get("POTONGAN", "")).strip() not in ("", "-") else None
+    return {
+        TANGGAL_KIRIMAN_COL: " ; ".join(tanggal),
+        JUMLAH_PENGIRIMAN_COL: " ; ".join(units),
+        JUMLAH_PENGIRIMAN_TOTAL_COL: _sj_total(units, potongan),
+    }
+
+
+KO_HITUNG_FORMULAS = [_ko_rumus_printing, _ko_rumus_slitting, _ko_rumus_bag, _ko_rumus_pengiriman]
 
 
 def _ko_hitung_row(sheet_name, row, tahun_list):
@@ -2549,6 +2702,7 @@ def ko_hitung():
             _slitting_index(t, force=True)
         for t in tahun_list:                    # data bag juga dibaca ulang tiap klik Hitung
             _bag_index(t, force=True)
+        _sj_index(force=True)                   # Surat Jalan (tidak tergantung tahun) dibaca ulang
         pairs, hilang = [], []
         for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
