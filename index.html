@@ -1169,7 +1169,7 @@
         <div><h3>🏭 Stok Gudang (BJB + BJL)</h3><div id="korGdgSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
         <button class="wrw-modal-close" onclick="koCloseGudang()">✕</button>
       </div>
-      <div id="korGdgInfo" style="padding:12px 18px 0; font-size:12px; color:var(--ink-soft); flex-shrink:0;">Drag sel seperti di Excel (klik judul kolom / nomor baris untuk memilih satu kolom / baris, Shift+klik untuk memperluas). Jumlahnya muncul di bawah tabel.</div>
+      <div id="korGdgInfo" style="padding:12px 18px 0; font-size:12px; color:var(--ink-soft); flex-shrink:0;">Drag sel seperti di Excel (klik judul kolom / nomor baris untuk memilih satu kolom / baris, Shift+klik untuk memperluas, <b>Ctrl+klik / Ctrl+drag</b> untuk menambah pilihan lain). Untuk Jumlah Rewind, pilih kolom <b>Ukuran Produk</b> + <b>Sisa Stock Akhir</b> lalu klik tombol <b>→ Jumlah Rewind</b>.</div>
       <div class="gdg-tbl-wrap" id="korGdgTable"></div>
       <div class="gdg-sum" id="korGdgSum"></div>
       <div class="gdg-form">
@@ -4085,7 +4085,7 @@
     const d = koDetail; if(!d) return;
     const row = d.p.rows[ri]; if(!row) return;
     const m = koHdrMap(), cur = c => String(row[m[c]] ?? "").trim();
-    koGdg = {ri, row, cols:[], rows:[], sel:null, drag:false, sum:0, hasNum:false};
+    koGdg = {ri, row, cols:[], rows:[], sel:null, prev:[], drag:false, sum:0, hasNum:false, rewText:""};
     document.getElementById("korGdgSub").innerText = `${String(row[d.joCol] ?? "").trim() || "-"} · ${d.p.produk}`;
     document.getElementById("korGdgStok").value = cur("JUMLAH_STOK_GBJ");
     document.getElementById("korGdgRew").value = cur("JUMLAH_REW_GBJ");
@@ -4102,7 +4102,7 @@
       koGdg.cols = data.columns || []; koGdg.rows = data.rows || [];
       const info = document.getElementById("korGdgInfo");
       const warn = (data.warnings || []).concat(data.has_cols ? [] : ["Kolom JUMLAH_STOK_GBJ / JUMLAH_REW_GBJ / AREA_STOK_GBJ belum ada di sheet kartu order, Simpan akan gagal."]);
-      info.innerHTML = "Drag sel seperti di Excel (klik judul kolom / nomor baris untuk memilih satu kolom / baris, Shift+klik untuk memperluas). Jumlahnya muncul di bawah tabel." +
+      info.innerHTML = "Drag sel seperti di Excel (klik judul kolom / nomor baris untuk memilih satu kolom / baris, Shift+klik untuk memperluas, <b>Ctrl+klik / Ctrl+drag</b> untuk menambah pilihan lain). Untuk Jumlah Rewind, pilih kolom <b>Ukuran Produk</b> + <b>Sisa Stock Akhir</b> lalu klik tombol <b>→ Jumlah Rewind</b>." +
         (warn.length ? `<div style="color:var(--warn); font-weight:600; margin-top:4px;">⚠️ ${warn.map(escHtml).join("<br>")}</div>` : "");
       koGdgRender();
     }catch(e){
@@ -4128,12 +4128,14 @@
     const g = koGdg; if(!g) return;
     const th = e.target.closest("th[data-c]"), rn = e.target.closest("td[data-rn]"), td = e.target.closest("td[data-r]");
     const last = g.rows.length - 1, lastC = g.cols.length - 1;
-    if(th){ const c = +th.dataset.c; g.sel = {r1:0, c1:c, r2:last, c2:c}; g.drag = false; }
-    else if(rn){ const r = +rn.dataset.rn; g.sel = {r1:r, c1:0, r2:r, c2:lastC}; g.drag = false; }
+    const multi = e.ctrlKey || e.metaKey;            // Ctrl/Cmd = tambah pilihan tanpa menghapus yang lama
+    const startNew = () => { if(multi){ if(g.sel) g.prev.push(g.sel); } else g.prev = []; };
+    if(th){ const c = +th.dataset.c; startNew(); g.sel = {r1:0, c1:c, r2:last, c2:c}; g.drag = false; }
+    else if(rn){ const r = +rn.dataset.rn; startNew(); g.sel = {r1:r, c1:0, r2:r, c2:lastC}; g.drag = false; }
     else if(td){
       const r = +td.dataset.r, c = +td.dataset.c;
       if(e.shiftKey && g.sel){ g.sel.r2 = r; g.sel.c2 = c; g.drag = false; }
-      else{ g.sel = {r1:r, c1:c, r2:r, c2:c}; g.drag = true; }
+      else{ startNew(); g.sel = {r1:r, c1:c, r2:r, c2:c}; g.drag = true; }
     }else return;
     e.preventDefault(); koGdgPaint();
   }
@@ -4148,25 +4150,56 @@
     if(!koGdg || !koGdg.sel || !ov || ov.style.display !== "flex") return;
     if(!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c")) return;
     if(["INPUT","TEXTAREA"].includes((document.activeElement || {}).tagName)) return;
-    const {r1,c1,r2,c2} = koGdg.sel, rr = [Math.min(r1,r2), Math.max(r1,r2)], cc = [Math.min(c1,c2), Math.max(c1,c2)], out = [];
-    for(let r = rr[0]; r <= rr[1]; r++){ const line = []; for(let c = cc[0]; c <= cc[1]; c++) line.push(koGdg.rows[r][koGdg.cols[c]] ?? ""); out.push(line.join("\t")); }
+    const rects = koGdgRects(), out = [];
+    const rr = [Math.min(...rects.map(q => Math.min(q.r1,q.r2))), Math.max(...rects.map(q => Math.max(q.r1,q.r2)))];
+    const cc = [Math.min(...rects.map(q => Math.min(q.c1,q.c2))), Math.max(...rects.map(q => Math.max(q.c1,q.c2)))];
+    for(let r = rr[0]; r <= rr[1]; r++){ const line = []; for(let c = cc[0]; c <= cc[1]; c++) line.push(koGdgIn(r, c) ? (koGdg.rows[r][koGdg.cols[c]] ?? "") : ""); out.push(line.join("\t")); }
     try{ navigator.clipboard.writeText(out.join("\n")); toast("Sel disalin", "success"); }catch(_){}
     e.preventDefault();
   });
+  // Semua kotak pilihan (Ctrl+klik menambah kotak baru) dan cek apakah sel (r,c) terpilih
+  function koGdgRects(){ const g = koGdg; return g && g.sel ? g.prev.concat([g.sel]) : []; }
+  function koGdgIn(r, c){
+    return koGdgRects().some(q => r >= Math.min(q.r1,q.r2) && r <= Math.max(q.r1,q.r2) && c >= Math.min(q.c1,q.c2) && c <= Math.max(q.c1,q.c2));
+  }
   function koGdgAreas(){
     const g = koGdg; if(!g || !g.sel) return [];
-    const r1 = Math.min(g.sel.r1, g.sel.r2), r2 = Math.max(g.sel.r1, g.sel.r2), out = [];
-    for(let r = r1; r <= r2; r++){ const a = String(g.rows[r].AREA ?? "").trim(); if(a && !out.includes(a)) out.push(a); }
+    const out = [];
+    for(let r = 0; r < g.rows.length; r++){
+      if(!g.cols.some((_, c) => koGdgIn(r, c))) continue;
+      const a = String(g.rows[r].AREA ?? "").trim(); if(a && !out.includes(a)) out.push(a);
+    }
     return out;
+  }
+  // Ambil angka meter paling belakang dari UKURAN_PRODUK:
+  // "220.0 MM x 170.0 MM x Panjang Roll : 710.0 M" -> 710 ; "320.0 mm x 295.0 mm x 1180.0 M" -> 1180
+  function koGdgMeter(txt){
+    const m = String(txt ?? "").match(/(\d+(?:[.,]\d+)?)\s*(?:m|meter)?\s*$/i);
+    if(!m) return null;
+    const v = koGdgNum(m[1].replace(/^(\d+),(\d+)$/, "$1.$2"));
+    return v !== null && v > 0 ? v : null;
+  }
+  // Susun "qty@meter + qty@meter" dari baris yang kolom Ukuran Produk DAN Sisa Stock Akhir-nya sama-sama terpilih
+  function koGdgRewind(){
+    const g = koGdg; if(!g || !g.sel) return null;
+    const cu = g.cols.indexOf("UKURAN_PRODUK"), cs = g.cols.indexOf("SISA_STOCK_AKHIR");
+    if(cu < 0 || cs < 0) return null;
+    const parts = []; let skip = 0, both = 0;
+    for(let r = 0; r < g.rows.length; r++){
+      if(!koGdgIn(r, cu) || !koGdgIn(r, cs)) continue;
+      both++;
+      const qty = koGdgNum(g.rows[r].SISA_STOCK_AKHIR), mtr = koGdgMeter(g.rows[r].UKURAN_PRODUK);
+      if(qty === null || qty <= 0 || mtr === null){ if(String(g.rows[r].SISA_STOCK_AKHIR ?? "").trim() !== "" && qty !== 0) skip++; continue; }
+      parts.push(`${koGdgFmt(qty)}@${koGdgFmt(mtr)}`);
+    }
+    return both ? {text: parts.join(" + "), n: parts.length, skip} : null;
   }
   function koGdgPaint(){
     const g = koGdg; if(!g) return;
     const sel = g.sel;
-    const r1 = sel ? Math.min(sel.r1, sel.r2) : -1, r2 = sel ? Math.max(sel.r1, sel.r2) : -1;
-    const c1 = sel ? Math.min(sel.c1, sel.c2) : -1, c2 = sel ? Math.max(sel.c1, sel.c2) : -1;
     let n = 0, nums = 0, sum = 0, text = 0;
     document.querySelectorAll("#korGdgTable td[data-r]").forEach(td => {
-      const r = +td.dataset.r, c = +td.dataset.c, on = !!sel && r >= r1 && r <= r2 && c >= c1 && c <= c2;
+      const r = +td.dataset.r, c = +td.dataset.c, on = !!sel && koGdgIn(r, c);
       td.classList.toggle("sel", on);
       if(on){
         n++;
@@ -4180,13 +4213,27 @@
     const bar = document.getElementById("korGdgSum");
     if(!sel){ bar.innerHTML = `<span style="color:var(--ink-soft);">Belum ada sel terpilih. Drag sel angka (mis. kolom Sisa Stock Akhir) untuk menjumlah.</span>`; return; }
     const hasAreas = koGdgAreas().length > 0;
+    const rw = koGdgRewind();
+    g.rewText = rw && rw.n ? rw.text : "";
     bar.innerHTML = `<span>${n} sel</span><span>·</span><span>Jumlah: <b>${nums ? koGdgFmt(sum) : "-"}</b></span>` +
       (nums > 1 ? `<span>·</span><span>Rata-rata: <b>${koGdgFmt(sum / nums)}</b></span>` : "") +
       (text ? `<span style="color:var(--warn);">· ${text} sel bukan angka (tidak dijumlah)</span>` : "") +
+      (g.rewText ? `<span>·</span><span>Rewind: <b>${escHtml(g.rewText)}</b></span>` : "") +
       `<span style="flex:1"></span>` +
       `<button class="wrw-act" ${nums ? "" : "disabled"} onclick="koGdgFill('korGdgStok')">→ Jumlah Stok</button>` +
-      `<button class="wrw-act" ${nums ? "" : "disabled"} onclick="koGdgFill('korGdgRew')">→ Jumlah Rewind</button>` +
+      `<button class="wrw-act" ${(g.rewText || nums) ? "" : "disabled"} onclick="koGdgFillRew()" title="Pilih kolom Ukuran Produk + Sisa Stock Akhir untuk format qty@meter">→ Jumlah Rewind</button>` +
       `<button class="wrw-act" ${hasAreas ? "" : "disabled"} onclick="koGdgFillArea()" title="Isi Area dari baris yang terpilih">→ Area</button>`;
+  }
+  function koGdgFillRew(){
+    const g = koGdg; if(!g) return;
+    const rw = koGdgRewind();
+    if(rw){                                   // Ukuran Produk + Sisa Stock Akhir terpilih -> qty@meter
+      if(!rw.n){ toast("Tidak ada baris dengan Sisa Stock Akhir > 0 dan ukuran yang terbaca", "error"); return; }
+      document.getElementById("korGdgRew").value = rw.text;
+      toast(`Jumlah Rewind terisi dari ${rw.n} baris` + (rw.skip ? ` (${rw.skip} baris dilewati: ukuran tidak terbaca)` : ""), "success");
+      return;
+    }
+    koGdgFill("korGdgRew");                   // selain itu: jumlah biasa seperti sebelumnya
   }
   function koGdgFill(id){ if(!koGdg || !koGdg.hasNum) return; document.getElementById(id).value = koGdgFmt(koGdg.sum); }
   function koGdgFillArea(){ const a = koGdgAreas(); if(a.length) document.getElementById("korGdgArea").value = a.join(" ; "); }
