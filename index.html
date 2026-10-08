@@ -993,6 +993,7 @@
           </div>
           <button class="btn-outline" id="korHitungBtn" style="border-color:var(--ok); color:var(--ok);" disabled onclick="koHitung(this)">🧮 Hitung</button>
           <button class="btn-outline" id="korRevisiBtn" style="border-color:var(--warn); color:var(--warn);" onclick="koOpenRevisi()">✏️ Revisi</button>
+          <button class="btn-outline" id="korTukarBtn" style="border-color:#244f80; color:#244f80;" title="Atur kiriman berasal dari barang JO mana (tukar guling dalam 1 produk)" onclick="koOpenTukar()">🔁 Tukar Guling</button>
           <span class="badge amber" id="korHiddenInfo" style="display:none;"></span>
           <span class="wrw-rev-legend" id="korRevLegend" style="display:none; margin-right:0;">* = hasil revisi</span>
           <div class="kor-colpicker" id="korColPicker" onclick="event.stopPropagation()">
@@ -1083,6 +1084,22 @@
     </div>
   </div>
 
+
+  <!-- KIRIMAN — MODAL TUKAR GULING (sumber barang tiap kiriman, 1 produk) -->
+  <div id="korTukarOverlay" style="display:none; position:fixed; inset:0; z-index:1300; align-items:center; justify-content:center; padding:22px; background:rgba(15,25,45,.48); backdrop-filter:blur(3px);" onclick="if(event.target===this)koCloseTukar()">
+    <div class="wrw-modal">
+      <div class="wrw-modal-head">
+        <div><h3>🔁 Tukar Guling Kiriman</h3><div id="korTukarSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+        <button class="wrw-modal-close" onclick="koCloseTukar()">✕</button>
+      </div>
+      <div style="padding:14px 18px 0; flex-shrink:0;">
+        <label style="display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:6px;">JO yang melakukan kiriman</label>
+        <select id="korTukarJo" onchange="koTukarRender()" style="height:41px; width:100%; border:1.5px solid var(--line); border-radius:10px; padding:0 14px; font-size:13px; background:#fbfcfe; box-sizing:border-box;"></select>
+      </div>
+      <div id="korTukarBody" style="padding:12px 18px 18px; overflow:auto; flex:1; min-height:120px;"></div>
+      <div class="wrw-modal-foot"><button class="wrw-act" onclick="koCloseTukar()">Tutup</button></div>
+    </div>
+  </div>
 
   <!-- KIRIMAN — MODAL REVISI per kolom (dikirim ke sheet <SUMBER>_KO_REVISI) -->
   <div id="korRevisiOverlay" style="display:none; position:fixed; inset:0; z-index:1300; align-items:center; justify-content:center; padding:22px; background:rgba(15,25,45,.48); backdrop-filter:blur(3px);" onclick="if(event.target===this)koCloseRevisi()">
@@ -3905,7 +3922,7 @@
     const rows = [...koSel].sort((a,b)=>a-b).map(i => d.p.rows[i]).filter(Boolean);
     const jos = rows.map(r => String(r[d.joCol] ?? "").trim() || "-");
     const tahun = koTahunSorted();
-    if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\nHasil (Printing 1-5, Total Printing, Slitting Meter, Slitting Rol, Hasil Bag, Bag Meter, Tanggal Kiriman & Jumlah Pengiriman) akan ditulis ke sheet kartu order.\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
+    if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\nHasil (Printing 1-5, Total Printing, Slitting Meter, Slitting Rol, Hasil Bag, Bag Meter, Tanggal Kiriman, Jumlah Pengiriman, Detail JO Kirim, Jumlah Qty Diambil & Selisih) akan ditulis ke sheet kartu order.\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
     const old = btn.innerHTML; btn.disabled = true; btn.innerText = "Menghitung...";
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler/hitung`, {
@@ -3919,6 +3936,7 @@
       const data = await res.json();
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal menghitung");
       toast(data.message, "success");
+      if((data.warnings || []).length) alert("Peringatan hitung:\n\n" + data.warnings.map(w => "• " + w).join("\n"));
       // tampilkan hasil langsung di tabel detail, lalu muat ulang daftar kartu di belakang
       (data.results || []).forEach(res => {
         const r = rows.find(x => x.__src && x.__src.jo === res.src_jo && x.__src.produk === res.src_produk);
@@ -3945,7 +3963,7 @@
   function koTogglePicker(ev){ ev.stopPropagation(); const tp=document.getElementById("korTahunPicker"); if(tp) tp.classList.remove("open"); document.getElementById("korColPicker").classList.toggle("open"); }
   document.addEventListener("click", ()=>{ const el=document.getElementById("korColPicker"); if(el) el.classList.remove("open"); });
   function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
-  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ const rv=document.getElementById("korRevisiOverlay"); if(rv && rv.style.display==="flex"){ koCloseRevisi(); return; } closeKoDetail(); koCloseAddJoModal(); }});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ const tk=document.getElementById("korTukarOverlay"); if(tk && tk.style.display==="flex"){ koCloseTukar(); return; } const rv=document.getElementById("korRevisiOverlay"); if(rv && rv.style.display==="flex"){ koCloseRevisi(); return; } closeKoDetail(); koCloseAddJoModal(); }});
 
   // ── Revisi kartu order → dikirim ke sheet <SUMBER>_KO_REVISI ─────────────
   // Mode per kolom (seperti Revisi Waste Rewind): semua kolom baris JO jadi input,
@@ -4032,6 +4050,107 @@
     if(!confirm(`Hapus semua revisi JO ${row[d.joCol] || "-"} dan kembali ke data sumber?\n\nKolom hasil revisi:\n${list}`)) return;
     const ok = await koKirimRevisi("hapus-revisi", btn, {sumber: d.sumber, src_jo: row.__src.jo, src_produk: row.__src.produk});
     if(ok) koReloadAfterRevisi(d.khi);
+  }
+
+  // ── Tukar guling kiriman ─────────────────────────────────────────────────
+  // Kiriman atas nama JO A pada tanggal T bisa fisiknya dari JO lain (1 produk yang sama).
+  // Di sini user isi: kiriman (JO + tanggal) diambil dari JO mana saja & berapa qty.
+  // Total qty HARUS sama dengan qty kiriman. Tersimpan di tab KO_TUKAR_GULING; dipakai
+  // saat klik Hitung (Detail JO Kirim, Detail Qty JO Kirim, Jumlah Qty Diambil, Selisih).
+  let koTukar = null;   // {data, edits:{idx:[{jo_key,qty}]}}
+  async function koTukarLoad(force){
+    const d = koDetail; if(!d) return;
+    const body = document.getElementById("korTukarBody");
+    body.innerHTML = `<div style="font-size:12px;color:var(--ink-soft);">Memuat data kiriman...</div>`;
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/tukar?sumber=${encodeURIComponent(d.sumber)}&produk=${encodeURIComponent(d.p.produk)}${force?"&refresh=1":""}`, {cache:"no-store"});
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat");
+      koTukar = {data, edits:{}};
+      data.kiriman.forEach((k,i) => { koTukar.edits[i] = k.alokasi.map(a => ({jo_key:a.jo_key, qty:a.qty})); });
+      const sel = document.getElementById("korTukarJo"), keep = sel.value;
+      const keys = [...new Set(data.kiriman.map(k => k.jo_key))];
+      sel.innerHTML = keys.map(k => {
+        const raw = (data.jo_list.find(j => j.jo_key === k) || {}).jo || k;
+        const cust = data.kiriman.some(x => x.jo_key === k && x.custom);
+        return `<option value="${escHtml(k)}">${escHtml(raw)}${cust ? "  🔁" : ""}</option>`;
+      }).join("");
+      if(keep && keys.includes(keep)) sel.value = keep;
+      koTukarRender();
+    }catch(e){ body.innerHTML = `<div style="color:#b3261e;font-size:12px;">Gagal: ${escHtml(e.message)}</div>`; }
+  }
+  function koOpenTukar(){
+    const d = koDetail; if(!d) return;
+    document.getElementById("korTukarSub").innerText = d.p.produk + " — tukar guling hanya dalam 1 produk";
+    document.getElementById("korTukarJo").innerHTML = "";
+    document.getElementById("korTukarOverlay").style.display = "flex";
+    koTukarLoad(true);
+  }
+  function koCloseTukar(){ document.getElementById("korTukarOverlay").style.display = "none"; }
+  function koTukarJoName(k){ const j = koTukar && koTukar.data.jo_list.find(x => x.jo_key === k); return j ? j.jo : k; }
+  function koTukarSum(i){ return (koTukar.edits[i] || []).reduce((n, a) => n + (parseFloat(a.qty) || 0), 0); }
+  function koTukarRender(){
+    const T = koTukar; if(!T) return;
+    const body = document.getElementById("korTukarBody"), cur = document.getElementById("korTukarJo").value;
+    const opts = T.data.jo_list.map(j => `<option value="${escHtml(j.jo_key)}">${escHtml(j.jo)}</option>`).join("");
+    const list = T.data.kiriman.map((k,i) => ({k,i})).filter(x => x.k.jo_key === cur);
+    const warn = (T.data.warnings || []).length ? `<div class="wrw-revisi-hint" style="margin-bottom:10px;">⚠️ ${T.data.warnings.map(escHtml).join("<br>")}</div>` : "";
+    const cards = list.length ? list.map(({k,i}) => {
+      const rows = (T.edits[i] || []).map((a,ai) =>
+        `<div style="display:flex;gap:8px;margin-bottom:6px;align-items:center;">` +
+        `<select onchange="koTukarEdit(${i},${ai},'jo_key',this.value)" style="flex:1;height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 8px;font-size:12px;background:#fff;">${opts.replace(`value="${escHtml(a.jo_key)}"`, `value="${escHtml(a.jo_key)}" selected`)}</select>` +
+        `<input type="number" min="1" step="1" value="${escHtml(String(a.qty ?? ""))}" oninput="koTukarEdit(${i},${ai},'qty',this.value)" style="width:90px;height:36px;border:1.5px solid var(--line);border-radius:8px;padding:0 8px;font-size:12px;" placeholder="Qty">` +
+        `<button class="wrw-act" onclick="koTukarDel(${i},${ai})" title="Hapus baris">🗑️</button></div>`).join("");
+      return `<div style="border:1.5px solid ${k.custom ? "#244f80" : "var(--line)"};border-radius:12px;padding:12px;margin-bottom:12px;background:${k.custom ? "#f3f8ff" : "#fff"};">` +
+        `<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;font-weight:700;"><span>📅 ${escHtml(k.tanggal || "(tanpa tanggal)")}</span><span>Qty kiriman: ${k.qty}</span></div>` +
+        `<div style="font-size:11px;color:var(--ink-soft);margin:2px 0 8px;">${k.custom ? "🔁 Sudah diatur tukar guling" : "Default: barang JO sendiri"} — isi dari JO mana saja kiriman ini berasal</div>` +
+        rows + `<div id="korTukarStat-${i}"></div>` +
+        `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">` +
+        `<button class="wrw-act" onclick="koTukarAdd(${i})">➕ Tambah JO sumber</button>` +
+        `<button class="wrw-act" onclick="koTukarSelf(${i})">↩︎ Semua dari JO sendiri</button>` +
+        `<button class="wrw-act calc" id="korTukarSave-${i}" onclick="koTukarSave(${i}, this)">💾 Simpan</button></div></div>`;
+    }).join("") : `<div style="font-size:12px;color:var(--ink-soft);">JO ini belum punya kiriman di Surat Jalan.</div>`;
+    const used = (T.data.dipakai[cur] || []);
+    const usedHtml = used.length
+      ? `<table style="width:100%;font-size:12px;border-collapse:collapse;"><tr style="text-align:left;color:var(--ink-soft);"><th style="padding:4px 6px;">Dipakai untuk kiriman JO</th><th style="padding:4px 6px;">Tanggal</th><th style="padding:4px 6px;text-align:right;">Qty</th></tr>` +
+        used.map(u => `<tr style="border-top:1px solid var(--line);"><td style="padding:4px 6px;">${escHtml(u.oleh)}${koTukarJoKey(u.oleh) === cur ? " <i>(sendiri)</i>" : ""}</td><td style="padding:4px 6px;">${escHtml(u.tanggal || "-")}</td><td style="padding:4px 6px;text-align:right;">${u.qty}</td></tr>`).join("") +
+        `</table>`
+      : `<div style="font-size:12px;color:var(--ink-soft);">Belum ada kiriman yang memakai barang JO ini.</div>`;
+    body.innerHTML = warn + cards +
+      `<div style="font-size:12px;font-weight:700;margin:14px 0 6px;">📦 Barang JO ini keluar lewat kiriman mana saja (= Jumlah Qty Diambil)</div>` + usedHtml;
+    list.forEach(({i}) => koTukarStat(i));
+  }
+  function koTukarJoKey(raw){ return String(raw || "").replace(/\s+/g, "").toUpperCase(); }
+  function koTukarStat(i){
+    const k = koTukar.data.kiriman[i], el = document.getElementById("korTukarStat-" + i); if(!el) return;
+    const sum = koTukarSum(i), ok = Math.abs(sum - k.qty) < 1e-9, diff = k.qty - sum;
+    el.innerHTML = `<div style="font-size:11px;font-weight:700;color:${ok ? "#1b7f3b" : "#b3261e"};">Dialokasikan ${sum} dari ${k.qty}${ok ? " ✔" : diff > 0 ? ` — kurang ${diff}` : ` — lebih ${-diff}`}</div>`;
+    const b = document.getElementById("korTukarSave-" + i); if(b) b.disabled = !ok;
+  }
+  function koTukarEdit(i, ai, f, v){ koTukar.edits[i][ai][f] = v; koTukarStat(i); }
+  function koTukarAdd(i){
+    const k = koTukar.data.kiriman[i], rest = Math.max(0, k.qty - koTukarSum(i));
+    const used = new Set(koTukar.edits[i].map(a => a.jo_key));
+    const pick = (koTukar.data.jo_list.find(j => !used.has(j.jo_key)) || koTukar.data.jo_list[0]).jo_key;
+    koTukar.edits[i].push({jo_key: pick, qty: rest || ""}); koTukarRender();
+  }
+  function koTukarDel(i, ai){ koTukar.edits[i].splice(ai, 1); koTukarRender(); }
+  function koTukarSelf(i){ const k = koTukar.data.kiriman[i]; koTukar.edits[i] = [{jo_key:k.jo_key, qty:k.qty}]; koTukarRender(); }
+  async function koTukarSave(i, btn){
+    const d = koDetail, k = koTukar.data.kiriman[i];
+    const alokasi = koTukar.edits[i].filter(a => parseFloat(a.qty) > 0).map(a => ({jo: koTukarJoName(a.jo_key), qty: parseFloat(a.qty)}));
+    const old = btn.innerHTML; btn.disabled = true; btn.innerText = "Menyimpan...";
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/tukar`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({sumber:d.sumber, produk:d.p.produk, jo:k.jo, tanggal:k.tanggal, alokasi,
+                              user: currentUser ? currentUser.nama : "Tidak diketahui"})
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal menyimpan");
+      toast(data.message, "success");
+      await koTukarLoad(true);
+    }catch(e){ toast("Gagal: " + e.message, "error"); btn.disabled = false; btn.innerHTML = old; }
   }
 
   // ── Tambah JO Baru ──────────────────────────────────────────

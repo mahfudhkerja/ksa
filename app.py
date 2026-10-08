@@ -2637,10 +2637,292 @@ def _ko_rumus_pengiriman(sheet_name, row, tahun_list):
 KO_HITUNG_FORMULAS = [_ko_rumus_printing, _ko_rumus_slitting, _ko_rumus_bag, _ko_rumus_pengiriman]
 
 
-def _ko_hitung_row(sheet_name, row, tahun_list):
+# --- TUKAR GULING KIRIMAN + SELISIH ---------------------------------------------
+# Kasus: kiriman atas nama JO A (mis. 1 Jan, 144 rol) bisa saja fisiknya diambil dari
+# barang JO lain di PRODUK YANG SAMA (tukar guling). Tanpa info tambahan, sistem
+# menganggap tiap kiriman berasal dari JO-nya sendiri (perilaku lama).
+# User bisa mengatur per kiriman (JO + TANGGAL): "dari JO mana saja & berapa qty",
+# disimpan di tab KO_TUKAR_GULING (spreadsheet kartu order, dibuat otomatis).
+#
+# Saat Hitung, 3 kolom diisi per JO:
+#   DETAIL_JO_PENGIRIMAN     "2025-02-22: JO/..427 + JO/..300 ; 2025-03-03: sendiri"
+#   DETAIL_QTY_JO_PENGIRIMAN "2025-02-22: 100 + 44 ; 2025-03-03: 144"  (urutan sama)
+#   JUMLAH_QTY_DIAMBIL       total qty BARANG JO INI yang sudah keluar lewat kiriman
+#                            JO mana pun (termasuk kiriman JO ini sendiri).
+# lalu SELISIH:
+#   SELISIH = TOTAL_STOK - (PRODUKSI - JUMLAH_QTY_DIAMBIL) + QTY_BERKURANG
+#   PRODUKSI = HASIL_BAG kalau > 0, selain itu SLITTING_ROL ("105 + 5@610" ->
+#              105 + rounddown(5*610/POTONGAN); potongan tak utuh dijumlah dulu
+#              meternya, baru dibagi POTONGAN & dibulatkan ke bawah SEKALI).
+#   TOTAL_STOK & QTY_BERKURANG dipakai apa adanya dari sheet (kosong = 0).
+# Qty 1 kiriman (per tanggal) = rol utuh + rounddown(meter rol tak utuh / POTONGAN)
+# + pieces. Kiriman yang hanya KG tidak bisa dikonversi -> dilewati + peringatan.
+KO_TUKAR_SHEET = os.environ.get("KO_TUKAR_SHEET_NAME", "KO_TUKAR_GULING")
+KO_TUKAR_HEADER = ["SUMBER", "PRODUK", "JO_KIRIM", "TANGGAL", "JO_SUMBER", "QTY", "TANGGAL_INPUT", "USER_INPUT"]
+KO_DETAIL_JO_COL = "DETAIL_JO_PENGIRIMAN"
+KO_DETAIL_QTY_COL = "DETAIL_QTY_JO_PENGIRIMAN"
+KO_QTY_DIAMBIL_COL = "JUMLAH_QTY_DIAMBIL"
+KO_SELISIH_COL = "SELISIH"
+_KO_TUKAR_TTL = 60
+_ko_tukar_lock = threading.Lock()
+_ko_tukar_lock_write = threading.Lock()
+_ko_tukar_cache = {"ts": 0.0, "data": None}
+
+
+def _tk_jo(jo):
+    return re.sub(r"\s+", "", str(jo or "")).upper()
+
+
+def _tk_produk(p):
+    return re.sub(r"\s+", " ", str(p or "") or "(Tanpa nama produk)").strip().upper()
+
+
+def _tk_floor(x):
+    return int(math.floor(float(x) + 1e-9))
+
+
+def _tk_num(v):
+    """Angka dari sel (kosong / '-' / bukan angka -> None)."""
+    s = str(v if v is not None else "").strip()
+    if not s or s == "-":
+        return None
+    try:
+        r = import_engine._parse_flexible_number(s)
+        if r is not None:
+            return float(r)
+    except Exception:
+        pass
+    return _sj_num(s)
+
+
+def _tk_parse_rol(text, potongan):
+    """'105 + 5@610' -> 105 + rounddown(5*610/potongan). Beberapa potongan tak utuh:
+    meter dijumlah dulu, dibagi potongan, dibulatkan ke bawah sekali.
+    Kosong -> 0.0. Tidak bisa dihitung (format aneh / potongan tak ada) -> None."""
+    s = str(text or "").strip()
+    if not s or s == "-":
+        return 0.0
+    whole, meters = 0.0, 0.0
+    num = lambda t: _sj_num(re.sub(r"[^\d.,]", "", t))
+    for part in s.split("+"):
+        part = part.strip()
+        if not part:
+            continue
+        if "@" in part:
+            a, b = part.split("@", 1)
+            n, m = num(a), num(b)
+            if n is None or m is None:
+                return None
+            meters += n * m
+        else:
+            n = num(part)
+            if n is None:
+                return None
+            whole += n
+    if meters:
+        if not potongan:
+            return None
+        whole += _tk_floor(meters / potongan)
+    return whole
+
+
+def _ko_tukar_worksheet(create=False):
+    sh = _ko_spreadsheet()
+    try:
+        return sh.worksheet(KO_TUKAR_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        if not create:
+            return None
+        try:
+            ws = sh.add_worksheet(title=KO_TUKAR_SHEET, rows=1000, cols=len(KO_TUKAR_HEADER))
+            ws.append_row(KO_TUKAR_HEADER)
+            return ws
+        except gspread.exceptions.APIError as e:
+            raise RuntimeError(f"Tidak bisa membuat tab {KO_TUKAR_SHEET} (pastikan service account punya akses Editor): {e}")
+
+
+def _ko_tukar_read(force=False):
+    """{(sheet, produk_norm, jo_kirim_norm, tanggal): [(jo_sumber_raw, qty), ...]}"""
+    now = time.time()
+    with _ko_tukar_lock:
+        if not force and _ko_tukar_cache["data"] is not None and (now - _ko_tukar_cache["ts"]) < _KO_TUKAR_TTL:
+            return _ko_tukar_cache["data"]
+    out = {}
+    ws = _ko_tukar_worksheet(create=False)
+    vals = ws.get_all_values() if ws is not None else []
+    if len(vals) >= 2:
+        hdr = [_ko_norm_h(h) for h in vals[0]]
+        ix = {h: i for i, h in enumerate(hdr)}
+        if all(c in ix for c in ("SUMBER", "PRODUK", "JO_KIRIM", "TANGGAL", "JO_SUMBER", "QTY")):
+            g = lambda r, c: r[ix[c]].strip() if ix[c] < len(r) else ""
+            for r in vals[1:]:
+                q = _sj_num(g(r, "QTY"))
+                if q is None or q <= 0 or not g(r, "JO_SUMBER"):
+                    continue
+                k = (g(r, "SUMBER"), _tk_produk(g(r, "PRODUK")), _tk_jo(g(r, "JO_KIRIM")), g(r, "TANGGAL"))
+                out.setdefault(k, []).append((g(r, "JO_SUMBER"), q))
+    with _ko_tukar_lock:
+        _ko_tukar_cache["data"], _ko_tukar_cache["ts"] = out, now
+    return out
+
+
+def _tk_qty_kiriman(units, potongan):
+    """(qty, [peringatan]) dari daftar teks Unit pada satu tanggal."""
+    whole = pcs = partial_m = 0.0
+    warns, kg_only, partial_no_pot = [], False, False
+    for unit in units:
+        for entry in _SJ_ENTRY_SPLIT_RE.split(unit):
+            entry = entry.strip()
+            if not entry:
+                continue
+            m = _SJ_ROLL_RE.search(entry)
+            if m:
+                cnt, mtr = _sj_num(m.group(1)), _sj_num(m.group(2))
+                if cnt is None or mtr is None:
+                    continue
+                if potongan and abs(mtr - potongan) < 1e-6:
+                    whole += cnt
+                else:
+                    partial_m += cnt * mtr
+                continue
+            m = _SJ_PCS_RE.search(entry)
+            if m:
+                v = _sj_num(m.group(1))
+                if v is not None:
+                    pcs += v
+                continue
+            if _SJ_KG_RE.search(entry):
+                kg_only = True
+    qty = whole + pcs
+    if partial_m:
+        if potongan:
+            qty += _tk_floor(partial_m / potongan)
+        else:
+            partial_no_pot = True
+    if partial_no_pot:
+        warns.append("POTONGAN kosong, kiriman rol tak utuh tidak bisa dikonversi")
+    if kg_only and qty == 0:
+        warns.append("kiriman hanya dalam KG, tidak bisa dikonversi ke rol")
+    return _tk_floor(qty), warns
+
+
+def _tk_row_deliveries(row):
+    """[(tanggal, qty, [peringatan])] satu entri per TANGGAL kiriman JO (urut sheet)."""
+    key = _sj_key(row.get(REGULER_KO_JO_COL, ""))
+    matches = (_sj_index().get(key) or []) if key else []
+    pot_raw = str(row.get("POTONGAN", "")).strip()
+    potongan = _sj_num(pot_raw) if pot_raw not in ("", "-") else None
+    by, order = {}, []
+    for tgl, unit in matches:
+        t = (tgl or "").strip()
+        if t not in by:
+            by[t] = []
+            order.append(t)
+        if unit:
+            by[t].append(unit)
+    out = []
+    for t in order:
+        q, w = _tk_qty_kiriman(by[t], potongan)
+        out.append((t, q, w))
+    return out
+
+
+def _tk_new_ctx(sheet, payload, tukar):
+    return {"sheet": sheet, "payload": payload, "tukar": tukar, "prod": {}, "warn": []}
+
+
+def _tk_product(ctx, produk_name):
+    """Hitung sekali per produk: siapa mengambil barang siapa."""
+    pk = _tk_produk(produk_name)
+    if pk in ctx["prod"]:
+        return ctx["prod"][pk]
+    rows = []
+    for prod in ctx["payload"]["products"]:
+        if _tk_produk(prod["produk"]) == pk:
+            rows = prod["rows"]
+            break
+    raw = {_tk_jo(r.get(REGULER_KO_JO_COL, "")): str(r.get(REGULER_KO_JO_COL, "")).strip() for r in rows}
+    res = {"rows": rows, "raw": raw, "diambil": {}, "detail": {}, "kiriman": [], "dipakai": {}}
+    for r in rows:
+        jo_raw = str(r.get(REGULER_KO_JO_COL, "")).strip()
+        jo_n = _tk_jo(jo_raw)
+        res["detail"].setdefault(jo_n, [])
+        for tgl, qty, warns in _tk_row_deliveries(r):
+            for w in warns:
+                ctx["warn"].append(f"{jo_raw} ({tgl or 'tanpa tanggal'}): {w}")
+            if qty <= 0:
+                continue
+            allocs = ctx["tukar"].get((ctx["sheet"], pk, jo_n, tgl))
+            custom = False
+            if allocs:
+                if abs(sum(q for _, q in allocs) - qty) < 1e-6:
+                    custom = True
+                else:
+                    ctx["warn"].append(
+                        f"{jo_raw} ({tgl or 'tanpa tanggal'}): tukar guling tersimpan total "
+                        f"{_sj_fmt(sum(q for _, q in allocs))} tidak sama dengan kiriman {qty}; "
+                        f"dianggap dari JO sendiri sampai diatur ulang")
+            if not custom:
+                allocs = [(jo_raw, qty)]
+            lst = []
+            for src_raw, q in allocs:
+                src_n = _tk_jo(src_raw)
+                if src_n not in raw:
+                    ctx["warn"].append(f"{jo_raw} ({tgl or 'tanpa tanggal'}): JO sumber {src_raw} tidak ada di produk ini")
+                res["diambil"][src_n] = res["diambil"].get(src_n, 0) + q
+                lst.append((src_n, src_raw, q))
+                res["dipakai"].setdefault(src_n, []).append({"oleh": jo_raw, "tanggal": tgl, "qty": _num_out(q)})
+            res["detail"][jo_n].append((tgl, lst))
+            res["kiriman"].append({
+                "jo": jo_raw, "jo_key": jo_n, "tanggal": tgl, "qty": qty, "custom": custom,
+                "alokasi": [{"jo": s, "jo_key": sn, "qty": _num_out(q)} for sn, s, q in lst]})
+    ctx["prod"][pk] = res
+    return res
+
+
+def _ko_rumus_tukar(row, ctx):
+    p = _tk_product(ctx, row.get(REGULER_KO_PRODUK_COL, ""))
+    jo_n = _tk_jo(row.get(REGULER_KO_JO_COL, ""))
+    det = p["detail"].get(jo_n, [])
+    lbl = lambda tgl: (tgl or "-")
+    return {
+        KO_DETAIL_JO_COL: " ; ".join(
+            f"{lbl(t)}: " + " + ".join("sendiri" if sn == jo_n else s for sn, s, _ in lst) for t, lst in det),
+        KO_DETAIL_QTY_COL: " ; ".join(
+            f"{lbl(t)}: " + " + ".join(str(_num_out(q)) for _, _, q in lst) for t, lst in det),
+        KO_QTY_DIAMBIL_COL: _num_out(p["diambil"].get(jo_n, 0)),
+    }
+
+
+def _ko_rumus_selisih(row, out, ctx):
+    """SELISIH = TOTAL_STOK - (PRODUKSI - JUMLAH_QTY_DIAMBIL) + QTY_BERKURANG.
+    Sel yang direvisi user memakai nilai revisi, selain itu hasil hitung terbaru."""
+    rev = set(row.get("__rev") or [])
+    eff = lambda c: row.get(c, "") if c in rev else out.get(c, row.get(c, ""))
+    jo = str(row.get(REGULER_KO_JO_COL, "")).strip() or "-"
+    pot_raw = str(row.get("POTONGAN", "")).strip()
+    potongan = _sj_num(pot_raw) if pot_raw not in ("", "-") else None
+    hb = _tk_num(eff("HASIL_BAG"))
+    if hb is not None and hb > 0:
+        produksi = hb
+    else:
+        produksi = _tk_parse_rol(eff("SLITTING_ROL"), potongan)
+        if produksi is None:
+            ctx["warn"].append(f"{jo}: SLITTING_ROL '{eff('SLITTING_ROL')}' tidak bisa dihitung (cek format / POTONGAN), SELISIH dikosongkan")
+            return {KO_SELISIH_COL: ""}
+    diambil = _tk_num(eff(KO_QTY_DIAMBIL_COL)) or 0.0
+    stok = _tk_num(row.get("TOTAL_STOK")) or 0.0
+    berkurang = _tk_num(row.get("QTY_BERKURANG")) or 0.0
+    return {KO_SELISIH_COL: _num_out(stok - (produksi - diambil) + berkurang)}
+
+
+def _ko_hitung_row(sheet_name, row, tahun_list, ctx=None):
     out = {}
     for fn in KO_HITUNG_FORMULAS:
         out.update(fn(sheet_name, row, tahun_list))
+    if ctx is not None:                       # tukar guling + SELISIH (butuh hasil di atas)
+        out.update(_ko_rumus_tukar(row, ctx))
+        out.update(_ko_rumus_selisih(row, out, ctx))
     return out
 
 
@@ -2703,13 +2985,14 @@ def ko_hitung():
         for t in tahun_list:                    # data bag juga dibaca ulang tiap klik Hitung
             _bag_index(t, force=True)
         _sj_index(force=True)                   # Surat Jalan (tidak tergantung tahun) dibaca ulang
+        ctx = _tk_new_ctx(sheet, payload, _ko_tukar_read(force=True))   # tukar guling dibaca ulang
         pairs, hilang = [], []
         for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
             if row is None:
                 hilang.append(str((it or {}).get("src_jo") or "-"))
                 continue
-            pairs.append((row, _ko_hitung_row(sheet, row, tahun_list)))
+            pairs.append((row, _ko_hitung_row(sheet, row, tahun_list, ctx)))
         if not pairs:
             return jsonify({"success": False, "message": "JO terpilih tidak ditemukan di sheet sumber. Refresh dulu."}), 404
         _ko_write_hasil(sheet, pairs)
@@ -2727,9 +3010,121 @@ def ko_hitung():
             msg += f" {tertimpa} sel tetap menampilkan nilai revisi (Hapus Revisi untuk memakai hasil hitung)."
         if hilang:
             msg += f" Tidak ditemukan: {', '.join(hilang)}."
-        return jsonify({"success": True, "tahun": tahun_list, "message": msg, "results": results})
+        warnings = list(dict.fromkeys(ctx["warn"]))
+        if warnings:
+            msg += f" {len(warnings)} peringatan (lihat detail)."
+        return jsonify({"success": True, "tahun": tahun_list, "message": msg, "results": results, "warnings": warnings})
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal menghitung: {e}"}), 500
+
+
+@app.route("/api/kiriman/reguler/tukar", methods=["GET"])
+def ko_tukar_get():
+    """Data layar Tukar Guling untuk satu produk: kiriman per JO+tanggal, alokasi
+    sumber-nya, dan 'barang JO ini dipakai kiriman siapa'. Query: sumber, produk, refresh."""
+    sheet = _ko_sheet_for_sumber(request.args.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    produk = str(request.args.get("produk", "")).strip()
+    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
+    try:
+        payload = _read_ko_sheet(sheet, force=force)
+        if force:
+            _sj_index(force=True)
+        ctx = _tk_new_ctx(sheet, payload, _ko_tukar_read(force=force))
+        p = _tk_product(ctx, produk)
+        if not p["rows"]:
+            return jsonify({"success": False, "message": "Produk tidak ditemukan. Refresh dulu."}), 404
+        return jsonify({
+            "success": True, "produk": produk,
+            "jo_list": [{"jo": raw, "jo_key": k} for k, raw in p["raw"].items()],
+            "kiriman": p["kiriman"], "dipakai": p["dipakai"],
+            "warnings": list(dict.fromkeys(ctx["warn"])),
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal membaca tukar guling: {e}"}), 500
+
+
+@app.route("/api/kiriman/reguler/tukar", methods=["POST"])
+def ko_tukar_save():
+    """Simpan sumber 1 kiriman (JO kirim + tanggal). Body: sumber, produk, jo, tanggal,
+    alokasi: [{jo, qty}], user. Alokasi kosong / hanya JO sendiri penuh = kembali ke default.
+    Total alokasi WAJIB sama dengan qty kiriman."""
+    body = request.get_json(silent=True) or {}
+    sheet = _ko_sheet_for_sumber(body.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    g = lambda k: str(body.get(k, "") or "").strip()
+    produk, jo_kirim, tanggal = g("produk"), g("jo"), g("tanggal")
+    alokasi_in = body.get("alokasi") or []
+    if not isinstance(alokasi_in, list):
+        return jsonify({"success": False, "message": "Format alokasi salah."}), 400
+    try:
+        payload = _read_ko_sheet(sheet, force=True)
+        _sj_index(force=True)
+        ctx = _tk_new_ctx(sheet, payload, {})            # abaikan tukar lama: cuma butuh qty kiriman
+        p = _tk_product(ctx, produk)
+        jo_n = _tk_jo(jo_kirim)
+        deliv = next((k for k in p["kiriman"] if k["jo_key"] == jo_n and k["tanggal"] == tanggal), None)
+        if deliv is None:
+            return jsonify({"success": False, "message": "Kiriman JO/tanggal tersebut tidak ditemukan di Surat Jalan (atau qty-nya 0)."}), 404
+        qty = deliv["qty"]
+        merged, order = {}, []
+        for a in alokasi_in:
+            sn = _tk_jo((a or {}).get("jo"))
+            q = _sj_num((a or {}).get("qty"))
+            if not sn and q in (None, 0):
+                continue
+            if sn not in p["raw"]:
+                return jsonify({"success": False, "message": f"JO sumber '{(a or {}).get('jo')}' bukan JO produk ini (tukar guling hanya dalam 1 produk)."}), 400
+            if q is None or q <= 0 or abs(q - round(q)) > 1e-9:
+                return jsonify({"success": False, "message": f"Qty dari {p['raw'][sn]} harus bilangan bulat > 0."}), 400
+            if sn not in merged:
+                order.append(sn)
+            merged[sn] = merged.get(sn, 0) + int(round(q))
+        reset = (not merged) or (list(merged) == [jo_n] and merged[jo_n] == qty)
+        if not reset and sum(merged.values()) != qty:
+            return jsonify({"success": False,
+                            "message": f"Total alokasi {sum(merged.values())} harus sama dengan qty kiriman {qty}."}), 400
+        wib = timezone(timedelta(hours=7))
+        stamp = datetime.now(wib).strftime("%d-%m-%Y %H:%M")
+        user = g("user") or "Tidak diketahui"
+        pk = _tk_produk(produk)
+        with _ko_tukar_lock_write:
+            ws = _ko_tukar_worksheet(create=True)
+            vals = ws.get_all_values()
+            if not vals or not any(str(x).strip() for x in vals[0]):
+                ws.append_row(KO_TUKAR_HEADER)
+                vals = [KO_TUKAR_HEADER]
+            hdr = [_ko_norm_h(h) for h in vals[0]]
+            ix = {h: i for i, h in enumerate(hdr)}
+            miss = [c for c in KO_TUKAR_HEADER if c not in ix]
+            if miss:
+                raise RuntimeError(f"Tab {KO_TUKAR_SHEET} kehilangan kolom: {', '.join(miss)}")
+            cell = lambda r, c: r[ix[c]].strip() if ix[c] < len(r) else ""
+            dele = [n for n, r in enumerate(vals[1:], start=2)
+                    if cell(r, "SUMBER") == sheet and _tk_produk(cell(r, "PRODUK")) == pk
+                    and _tk_jo(cell(r, "JO_KIRIM")) == jo_n and cell(r, "TANGGAL") == tanggal]
+            if dele:
+                reqs = [{"deleteDimension": {"range": {"sheetId": ws.id, "dimension": "ROWS",
+                                                       "startIndex": n - 1, "endIndex": n}}} for n in sorted(dele, reverse=True)]
+                _ko_spreadsheet().batch_update({"requests": reqs})
+            if not reset:
+                new_rows = []
+                for sn in order:
+                    d = {"SUMBER": sheet, "PRODUK": produk, "JO_KIRIM": deliv["jo"], "TANGGAL": tanggal,
+                         "JO_SUMBER": p["raw"][sn], "QTY": merged[sn], "TANGGAL_INPUT": stamp, "USER_INPUT": user}
+                    row_out = [""] * len(vals[0])
+                    for c, v in d.items():
+                        row_out[ix[c]] = v
+                    new_rows.append(row_out)
+                ws.append_rows(new_rows, value_input_option="RAW")
+        with _ko_tukar_lock:
+            _ko_tukar_cache["data"] = None
+        msg = "Kiriman dikembalikan ke JO sendiri." if reset else f"Tukar guling tersimpan ({len(order)} JO sumber). Klik Hitung untuk memperbarui Selisih."
+        return jsonify({"success": True, "reset": reset, "message": msg})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menyimpan tukar guling: {e}"}), 500
 
 
 @app.route("/api/kiriman/reguler/hapus-revisi", methods=["POST"])
