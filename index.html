@@ -4071,8 +4071,8 @@
 
   // ── Modal Stok Gudang (BJB + BJL): tabel drag & jumlah ala Excel, simpan LANGSUNG ke kolom GBJ ──
   let koGdg = null;   // {ri, row, cols, rows, sel:{r1,c1,r2,c2}|null, drag, sum, hasNum}
-  const KO_GDG_LABEL = {AREA:"Area", PRODUK:"Produk", SISA_STOCK_AKHIR:"Sisa Stock Akhir", BERAT_ROLL:"Berat Roll", JO_DAN_STATUS:"JO dan Status", KETERANGAN:"Keterangan"};
-  const KO_GDG_NUM = new Set(["SISA_STOCK_AKHIR","BERAT_ROLL"]);
+  const KO_GDG_LABEL = {AREA:"Area", UKURAN_PRODUK:"Ukuran Produk", PRODUK:"Produk", SISA_STOCK_AKHIR:"Sisa Stock Akhir", JO_DAN_STATUS:"JO dan Status", KETERANGAN:"Keterangan"};
+  const KO_GDG_NUM = new Set(["SISA_STOCK_AKHIR"]);
   function koGdgNum(t){
     let s = String(t ?? "").trim().replace(/\s+/g, "");
     if(!s) return null;

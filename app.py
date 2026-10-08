@@ -3225,11 +3225,12 @@ def ko_hitung():
 
 # --- STOK GUDANG (input manual lewat modal) --------------------------------------------
 # Modal "Gudang" di kartu JO menampilkan baris BJB_KATEGORI + BJL_KATEGORI yang cocok dengan JO
+# (baris dengan SISA_STOCK_AKHIR = 0 tidak ditampilkan)
 # (nomor JO belakang + tahun, sama dgn Cek Stok di Waste Rewind). Di sheet gudang hanya ada SATU angka
 # stok (SISA_STOCK_AKHIR) yang mencakup BJB dan BJL, jadi user menjumlah/mengetik sendiri lalu Simpan.
 # Simpan menulis LANGSUNG ke JUMLAH_STOK_GBJ / JUMLAH_REW_GBJ / AREA_STOK_GBJ di sheet kartu order
 # (BUKAN lewat tab *_REVISI) dan tidak ikut dihitung ulang oleh tombol Hitung.
-KO_GBJ_VIEW_COLS = ("AREA", "PRODUK", "SISA_STOCK_AKHIR", "BERAT_ROLL", "JO_DAN_STATUS", "KETERANGAN")
+KO_GBJ_VIEW_COLS = ("AREA", "UKURAN_PRODUK", "PRODUK", "SISA_STOCK_AKHIR", "JO_DAN_STATUS", "KETERANGAN")
 KO_GBJ_COLS = ("JUMLAH_STOK_GBJ", "JUMLAH_REW_GBJ", "AREA_STOK_GBJ")
 
 
@@ -3273,6 +3274,8 @@ def ko_gudang_get():
                 if not any(key == k and not (thn and t_row and thn != t_row) for k, thn in targets):
                     continue
                 item = {f: _stok_cell(r, cols[f]) for f in KO_GBJ_VIEW_COLS}
+                if re.fullmatch(r"-?0+([.,]0+)?", item["SISA_STOCK_AKHIR"].replace(" ", "")):
+                    continue                         # SISA_STOCK_AKHIR = 0 -> tidak ditampilkan
                 if not item["AREA"]:                 # sheet tanpa kolom AREA / kosong -> pakai asal sheet
                     item["AREA"] = label
                 item["_sheet"] = label
