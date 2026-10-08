@@ -5457,12 +5457,8 @@
   function openKhiDetail(i){
     const g = khiRendered[i]; if(!g) return;
     const src = khiMeta.sources[g.sumber] || {headers:[], aliases:{}};
-    // hanya JO yang dipanggil (bukan semua JO aktif produk)
-    const norm = x => String(x ?? "").replace(/\s+/g,"").toUpperCase();
-    const called = new Set(g.jo_kirim.map(norm));
-    const rows = g.rows.filter(r => called.has(norm(r[khiMeta.joCol])));
-    const gp = Object.assign({}, g, {rows, jo_count: rows.length});
-    koOpenDetailWith(gp, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol, sumber:g.sumber, khi:true}, `${g.sumber} · ${rows.length} JO kirim`);
+    // tampilkan SEMUA JO aktif produk (sama seperti Kartu Order Reguler), walau yang dipanggil cuma sebagian
+    koOpenDetailWith(g, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol, sumber:g.sumber, khi:true}, `${g.sumber} · ${g.jo_count} JO aktif`);
   }
 
   async function khiPost(path, payload){
