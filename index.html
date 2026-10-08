@@ -3812,7 +3812,7 @@
   function koHdrMap(){ const m = {}; koDataCols().forEach(h => { m[koUp(h)] = h; }); return m; }
   function koSumChosen(){ return koSumCols || KO_SUM_DEFAULT; }
   function koCardMode(){
-    const d = koDetail; if(!d || d.khi) return false;
+    const d = koDetail; if(!d) return false;   // Kiriman Hari Ini ikut mode kartu, konsisten dgn Kartu Order Reguler
     const m = koHdrMap();
     return KO_SUM_DEFAULT.filter(h => m[h]).length >= 3;
   }
@@ -5457,7 +5457,12 @@
   function openKhiDetail(i){
     const g = khiRendered[i]; if(!g) return;
     const src = khiMeta.sources[g.sumber] || {headers:[], aliases:{}};
-    koOpenDetailWith(g, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol, sumber:g.sumber, khi:true}, `${g.sumber} · ${g.jo_count} JO aktif`);
+    // hanya JO yang dipanggil (bukan semua JO aktif produk)
+    const norm = x => String(x ?? "").replace(/\s+/g,"").toUpperCase();
+    const called = new Set(g.jo_kirim.map(norm));
+    const rows = g.rows.filter(r => called.has(norm(r[khiMeta.joCol])));
+    const gp = Object.assign({}, g, {rows, jo_count: rows.length});
+    koOpenDetailWith(gp, {headers:src.headers, aliases:src.aliases, joCol:khiMeta.joCol, produkCol:khiMeta.produkCol, sumber:g.sumber, khi:true}, `${g.sumber} · ${rows.length} JO kirim`);
   }
 
   async function khiPost(path, payload){
