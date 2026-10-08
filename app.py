@@ -2972,11 +2972,146 @@ def _ko_rumus_selisih(row, out, ctx):
     return {KO_SELISIH_COL: "" if parts is None else _num_out(parts["selisih"])}
 
 
+# --- STOK PRODUKSI (JUMLAH_STOK_PROD, JUMLAH_REW_PROD, AREA_STOK_PROD) ----------------
+# Sumber: sheet VAL_2 (spreadsheet STOK_SPREADSHEET_ID_B = Monitor Bahan Baku, gspread "B");
+# cara baca & pencocokan JO sama dengan Cek Stok > Validasi di Waste Rewind (VAL_1), cocok lewat NOMOR JO di belakang (huruf nyangkut diabaikan).
+# Baris dipakai kalau JUMLAH atau JUMLAH_MASUK_REWIND ada isinya (bukan kosong / "-").
+#   JUMLAH_STOK_PROD = JUMLAH seluruh baris cocok, DIJUMLAH TANPA dibulatkan:
+#                        "100" + "100+5@900"  ->  "200 + 5@900"
+#                        "5@900" + "5@900"    ->  "10@900"   (meter sama digabung)
+#                      rol utuh (tanpa @, atau @meter == POTONGAN) dijumlah di depan.
+#   JUMLAH_REW_PROD  = sama, dari kolom JUMLAH_MASUK_REWIND ("5@680M" -> "5@680")
+#   AREA_STOK_PROD   = kolom AREA baris cocok (unik, digabung " ; ")
+# Tambahan dari Cek Stok: kalau tahun di JO kartu order DAN di JO baris VAL_2 sama-sama
+# terbaca tapi beda (JO 481 tahun 2025 vs 2026), baris dilewati. Tahun tidak terbaca (mis. '3324/1256') = dianggap semua tahun, tetap muncul untuk diverifikasi manual.
+# Tidak ada baris cocok -> ketiga kolom dikosongkan. Sel yang formatnya tidak dikenali tidak
+# dijumlahkan (seluruh sel itu), muncul sebagai peringatan.
+VAL2_SHEET_NAME = os.environ.get("VAL2_SHEET_NAME", "VAL_2")
+KO_STOK_PROD_COLS = ("JUMLAH_STOK_PROD", "JUMLAH_REW_PROD", "AREA_STOK_PROD")
+_VAL_CACHE_TTL = 120
+_val_cache = {"ts": 0.0, "idx": None}
+_val_cache_lock = threading.Lock()
+_VAL_TOKEN_RE = re.compile(r"^\s*([\d.,]+)\s*(?:rol+|roll|r|pcs?|pieces?)?\s*(?:@\s*([\d.,]+)\s*m?\s*)?$", re.I)
+
+
+def _val_build_index():
+    """{suffix_JO: [(no_baris, jo_cell, area, jumlah, jumlah_masuk_rewind), ...]}"""
+    ws = _stok_spreadsheet_b().worksheet(VAL2_SHEET_NAME)
+    values = ws.get_all_values()
+    idx = {}
+    if not values:
+        return idx
+    header = [str(h).strip() for h in values[0]]
+    cols = {f: _stok_col(header, f) for f in WRW_STOK_VALIDASI_COLUMNS}
+    if cols["JO"] is None:
+        raise RuntimeError(f"Kolom JO tidak ketemu di {VAL2_SHEET_NAME} (header: {header[:12]}).")
+    if cols["JUMLAH"] is None and cols["JUMLAH_MASUK_REWIND"] is None:
+        raise RuntimeError(f"Kolom JUMLAH / JUMLAH_MASUK_REWIND tidak ketemu di {VAL2_SHEET_NAME} (header: {header[:12]}).")
+    for rn, r in enumerate(values[1:], start=2):
+        jo_cell = _stok_cell(r, cols["JO"])
+        if not jo_cell or jo_cell == "-":
+            continue
+        jumlah, jmr = _stok_cell(r, cols["JUMLAH"]), _stok_cell(r, cols["JUMLAH_MASUK_REWIND"])
+        if not (_stok_has_content(jumlah) or _stok_has_content(jmr)):
+            continue
+        key = _fstl_suffix_key(jo_cell)
+        if key:
+            idx.setdefault(key, []).append((rn, jo_cell, _stok_cell(r, cols["AREA"]), jumlah, jmr))
+    return idx
+
+
+def _val_index(force=False):
+    now = time.time()
+    with _val_cache_lock:
+        if _val_cache["idx"] is not None and not force and (now - _val_cache["ts"]) < _VAL_CACHE_TTL:
+            return _val_cache["idx"]
+    idx = _val_build_index()
+    with _val_cache_lock:
+        _val_cache["idx"], _val_cache["ts"] = idx, now
+    return idx
+
+
+def _val_combine(texts, potongan):
+    """Jumlahkan isi sel format rol: '100', '100+5@900', '5@680M'.
+    Return (hasil, [teks_yang_tidak_dikenali]). hasil: angka murni (hanya rol utuh),
+    string '200 + 5@900', atau '' kalau tidak ada yang bisa dijumlah."""
+    whole, have_whole, partial, bad = 0.0, False, {}, []
+    for text in texts:
+        if not _stok_has_content(text):
+            continue
+        parsed, ok = [], True
+        for part in str(text).split("+"):
+            part = part.strip()
+            if not part:
+                continue
+            m = _VAL_TOKEN_RE.match(part)
+            n = _sj_num(m.group(1)) if m else None
+            mt = _sj_num(m.group(2)) if (m and m.group(2)) else None
+            if n is None or (m and m.group(2) and mt is None):
+                ok = False
+                break
+            parsed.append((n, mt))
+        if not ok or not parsed:
+            bad.append(text)
+            continue
+        for n, mt in parsed:
+            if mt is None or (potongan and abs(mt - potongan) < 1e-6):
+                whole += n
+                have_whole = True
+            else:
+                partial[mt] = partial.get(mt, 0.0) + n
+    parts = []
+    if have_whole:
+        parts.append(str(_num_out(whole)))
+    for mt, n in partial.items():
+        parts.append(f"{_num_out(n)}@{_num_out(mt)}")
+    if not parts:
+        return "", bad
+    if len(parts) == 1 and have_whole:
+        return _num_out(whole), bad
+    return " + ".join(parts), bad
+
+
+def _ko_rumus_stok_prod(row, ctx):
+    jo = str(row.get(REGULER_KO_JO_COL, "")).strip() or "-"
+    pot_raw = str(row.get("POTONGAN", "")).strip()
+    potongan = _sj_num(pot_raw) if pot_raw not in ("", "-") else None
+    tokens = [t.strip() for t in _KHI_CELL_SPLIT_RE.split(str(row.get(REGULER_KO_JO_COL, ""))) if t.strip()]
+    idx = _val_index()
+    seen, matches = set(), []
+    for tk in tokens:
+        key = _fstl_suffix_key(tk)
+        if not key:
+            continue
+        thn = _stok_extract_tahun(tk)
+        for rn, jo_cell, area, jumlah, jmr in idx.get(key, []):
+            t_row = _stok_extract_tahun(jo_cell)
+            if thn and t_row and thn != t_row:
+                continue
+            if rn not in seen:            # per BARIS sheet (dua baris isi sama tetap dua)
+                seen.add(rn)
+                matches.append((rn, jo_cell, area, jumlah, jmr))
+    if not matches:
+        return {c: "" for c in KO_STOK_PROD_COLS}
+    stok, bad1 = _val_combine([m[3] for m in matches], potongan)
+    rew, bad2 = _val_combine([m[4] for m in matches], potongan)
+    for t in bad1:
+        ctx["warn"].append(f"{jo}: isi VAL_2 JUMLAH '{t}' formatnya tidak dikenali, tidak ikut dijumlah")
+    for t in bad2:
+        ctx["warn"].append(f"{jo}: isi VAL_2 JUMLAH_MASUK_REWIND '{t}' formatnya tidak dikenali, tidak ikut dijumlah")
+    areas = []
+    for m in matches:
+        if m[2] and m[2] not in areas:
+            areas.append(m[2])
+    return {"JUMLAH_STOK_PROD": stok, "JUMLAH_REW_PROD": rew, "AREA_STOK_PROD": " ; ".join(areas)}
+
+
 def _ko_hitung_row(sheet_name, row, tahun_list, ctx=None):
     out = {}
     for fn in KO_HITUNG_FORMULAS:
         out.update(fn(sheet_name, row, tahun_list))
-    if ctx is not None:                       # tukar guling + SELISIH (butuh hasil di atas)
+    if ctx is not None:                       # stok produksi, tukar guling + SELISIH (butuh hasil di atas)
+        out.update(_ko_rumus_stok_prod(row, ctx))
         out.update(_ko_rumus_tukar(row, ctx))
         out.update(_ko_rumus_selisih(row, out, ctx))
     return out
@@ -3042,6 +3177,7 @@ def ko_hitung():
             _bag_index(t, force=True)
         _sj_index(force=True)                   # Surat Jalan (tidak tergantung tahun) dibaca ulang
         ctx = _tk_new_ctx(sheet, payload, _ko_tukar_read(force=True))   # tukar guling dibaca ulang
+        _val_index(force=True)                  # VAL_2 (stok produksi) dibaca ulang
         pairs, hilang = [], []
         for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
