@@ -3178,14 +3178,25 @@ def ko_hitung():
         _sj_index(force=True)                   # Surat Jalan (tidak tergantung tahun) dibaca ulang
         ctx = _tk_new_ctx(sheet, payload, _ko_tukar_read(force=True))   # tukar guling dibaca ulang
         _val_index(force=True)                  # VAL_2 (stok produksi) dibaca ulang
-        pairs, hilang = [], []
+        pairs, hilang, bukan_hitung = [], [], []
         for it in items:                        # hanya JO terpilih yang diproses
             row = _ko_find_row(payload, (it or {}).get("src_jo"), (it or {}).get("src_produk"))
             if row is None:
                 hilang.append(str((it or {}).get("src_jo") or "-"))
                 continue
-            pairs.append((row, _ko_hitung_row(sheet, row, tahun_list, ctx)))
+            vals = _ko_hitung_row(sheet, row, tahun_list, ctx)
+            want_cols = (it or {}).get("cols")
+            if want_cols:                       # Hitung per sel: hanya kolom yang diklik yang ditulis
+                nh = lambda h: re.sub(r"[\s_]+", " ", str(h)).strip().upper()
+                want = {nh(c) for c in want_cols if isinstance(c, str)}
+                vals = {c: v for c, v in vals.items() if nh(c) in want}
+                if not vals:
+                    bukan_hitung.append(", ".join(str(c) for c in want_cols))
+                    continue
+            pairs.append((row, vals))
         if not pairs:
+            if bukan_hitung and not hilang:
+                return jsonify({"success": False, "message": f"Kolom yang dipilih bukan hasil hitung: {'; '.join(bukan_hitung)}."}), 400
             return jsonify({"success": False, "message": "JO terpilih tidak ditemukan di sheet sumber. Refresh dulu."}), 404
         _ko_write_hasil(sheet, pairs)
         with _ko_cache_lock:
@@ -3202,12 +3213,110 @@ def ko_hitung():
             msg += f" {tertimpa} sel tetap menampilkan nilai revisi (Hapus Revisi untuk memakai hasil hitung)."
         if hilang:
             msg += f" Tidak ditemukan: {', '.join(hilang)}."
+        if bukan_hitung:
+            msg += f" Kolom bukan hasil hitung (dilewati): {'; '.join(bukan_hitung)}."
         warnings = list(dict.fromkeys(ctx["warn"]))
         if warnings:
             msg += f" {len(warnings)} peringatan (lihat detail)."
         return jsonify({"success": True, "tahun": tahun_list, "message": msg, "results": results, "warnings": warnings})
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal menghitung: {e}"}), 500
+
+
+# --- STOK GUDANG (input manual lewat modal) --------------------------------------------
+# Modal "Gudang" di kartu JO menampilkan baris BJB_KATEGORI + BJL_KATEGORI yang cocok dengan JO
+# (nomor JO belakang + tahun, sama dgn Cek Stok di Waste Rewind). Di sheet gudang hanya ada SATU angka
+# stok (SISA_STOCK_AKHIR) yang mencakup BJB dan BJL, jadi user menjumlah/mengetik sendiri lalu Simpan.
+# Simpan menulis LANGSUNG ke JUMLAH_STOK_GBJ / JUMLAH_REW_GBJ / AREA_STOK_GBJ di sheet kartu order
+# (BUKAN lewat tab *_REVISI) dan tidak ikut dihitung ulang oleh tombol Hitung.
+KO_GBJ_VIEW_COLS = ("AREA", "PRODUK", "SISA_STOCK_AKHIR", "BERAT_ROLL", "JO_DAN_STATUS", "KETERANGAN")
+KO_GBJ_COLS = ("JUMLAH_STOK_GBJ", "JUMLAH_REW_GBJ", "AREA_STOK_GBJ")
+
+
+@app.route("/api/kiriman/reguler/gudang", methods=["GET"])
+def ko_gudang_get():
+    """Query: sumber, src_jo, src_produk. Balikin baris BJB & BJL yang cocok dengan JO kartu order."""
+    sheet = _ko_sheet_for_sumber(request.args.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    src_jo = str(request.args.get("src_jo", "") or "").strip()
+    src_produk = str(request.args.get("src_produk", "") or "").strip()
+    try:
+        row = _ko_find_row(_read_ko_sheet(sheet), src_jo, src_produk)
+        if row is None:
+            return jsonify({"success": False, "message": "Baris JO tidak ditemukan di sheet sumber. Refresh dulu."}), 404
+        tokens = [t.strip() for t in _KHI_CELL_SPLIT_RE.split(str(row.get(REGULER_KO_JO_COL, ""))) if t.strip()]
+        targets = [(k, _stok_extract_tahun(t)) for t in tokens for k in [_fstl_suffix_key(t)] if k]
+        out, warns = [], []
+        for label, sheet_name in (("BJB", BJB_KATEGORI_SHEET_NAME), ("BJL", BJL_KATEGORI_SHEET_NAME)):
+            try:
+                values = _stok_spreadsheet_b().worksheet(sheet_name).get_all_values()
+            except gspread.exceptions.WorksheetNotFound:
+                warns.append(f"Sheet {sheet_name} tidak ditemukan.")
+                continue
+            if not values:
+                continue
+            header = [str(h).strip() for h in values[0]]
+            cols = {f: _stok_col(header, f) for f in KO_GBJ_VIEW_COLS + ("JO",)}
+            if cols["JO"] is None:
+                warns.append(f"Kolom JO tidak ketemu di {sheet_name}.")
+                continue
+            for rn, r in enumerate(values[1:], start=2):
+                jo_cell = _stok_cell(r, cols["JO"])
+                if not jo_cell or jo_cell == "-":
+                    continue
+                key = _fstl_suffix_key(jo_cell)
+                if not key:
+                    continue
+                jds = _stok_cell(r, cols["JO_DAN_STATUS"])
+                t_row = _stok_extract_tahun(jds) or _stok_extract_tahun(jo_cell)
+                if not any(key == k and not (thn and t_row and thn != t_row) for k, thn in targets):
+                    continue
+                item = {f: _stok_cell(r, cols[f]) for f in KO_GBJ_VIEW_COLS}
+                if not item["AREA"]:                 # sheet tanpa kolom AREA / kosong -> pakai asal sheet
+                    item["AREA"] = label
+                item["_sheet"] = label
+                item["_row"] = rn
+                out.append(item)
+        sheet_hdr = {str(h).strip() for h in (_read_ko_sheet(sheet).get("headers") or [])}
+        return jsonify({
+            "success": True,
+            "columns": list(KO_GBJ_VIEW_COLS),
+            "rows": out,
+            "warnings": warns,
+            "current": {c: row.get(c, "") for c in KO_GBJ_COLS},
+            "has_cols": all(c in sheet_hdr for c in KO_GBJ_COLS),
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal memuat stok gudang: {e}"}), 500
+
+
+@app.route("/api/kiriman/reguler/gudang-save", methods=["POST"])
+def ko_gudang_save():
+    """Body: sumber, src_jo, src_produk, stok, rew, area. Tulis LANGSUNG ke 3 kolom GBJ (bukan revisi)."""
+    body = request.get_json(silent=True) or {}
+    sheet = _ko_sheet_for_sumber(body.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    g = lambda k: str(body.get(k, "") or "").strip()
+    try:
+        payload = _read_ko_sheet(sheet, force=True)
+        row = _ko_find_row(payload, g("src_jo"), g("src_produk"))
+        if row is None:
+            return jsonify({"success": False, "message": "Baris JO tidak ditemukan di sheet sumber (mungkin sudah berubah). Refresh dulu."}), 404
+        vals = {"JUMLAH_STOK_GBJ": g("stok"), "JUMLAH_REW_GBJ": g("rew"), "AREA_STOK_GBJ": g("area")}
+        _ko_write_hasil(sheet, [(row, vals)])
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet, None)
+        rev = set(row.get("__rev") or [])
+        tertimpa = [c for c in vals if c in rev]
+        msg = "Stok gudang tersimpan ke kartu order."
+        if tertimpa:
+            msg += f" {len(tertimpa)} kolom punya revisi, tampilan tetap nilai revisi (Hapus Revisi untuk memakai nilai ini)."
+        return jsonify({"success": True, "message": msg,
+                        "values": {c: v for c, v in vals.items() if c not in rev}})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal menyimpan stok gudang: {e}"}), 500
 
 
 @app.route("/api/kiriman/reguler/tukar", methods=["GET"])
@@ -4296,6 +4405,7 @@ _WRW_STOK_COL_KEYWORDS = {
     "JO_DAN_STATUS": ("JO_DAN_STATUS", "JO DAN STATUS"),
     "KETERANGAN": ("KETERANGAN",),
     "KATEGORI": ("KATEGORI",),
+    "BERAT_ROLL": ("BERAT_ROLL", "BERAT ROLL"),
 }
 
 

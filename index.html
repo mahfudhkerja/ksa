@@ -668,6 +668,27 @@
   .kc-fin-btn:hover{background:#e2e8f0;}
   .kc.fin .kc-fin-btn{background:transparent; color:#fff; border-color:#94a3b8;}
   .kc.fin .kc-fin-btn:hover{background:#475569;}
+  .kc-gdg-btn{flex-shrink:0; height:26px; padding:0 10px; font-size:11px; font-weight:700; border-radius:7px; cursor:pointer; border:1.5px solid #b7791f; background:#fff; color:#8a5a0b;}
+  .kc-gdg-btn:hover{background:#fff6e5;}
+  .kc.fin .kc-gdg-btn{background:transparent; color:#fde68a; border-color:#fcd34d;}
+  .kc.fin .kc-gdg-btn:hover{background:#475569;}
+  /* Hitung per sel: kotak pilih di Keterangan lengkap */
+  .kc-pick{accent-color:var(--ok); width:13px; height:13px; margin:0 6px 0 0; vertical-align:-2px; cursor:pointer;}
+  .kc-dt .kc-f.picked{border-color:var(--ok); background:#f1faf4;}
+  /* Modal Stok Gudang (tabel bisa di-drag & dijumlah seperti Excel) */
+  .gdg-tbl-wrap{margin:12px 18px 0; border:1px solid var(--line); border-radius:10px; overflow:auto; max-height:38vh; flex-shrink:0;}
+  .gdg-tbl{border-collapse:collapse; width:100%; font-size:12.5px; user-select:none; -webkit-user-select:none;}
+  .gdg-tbl th{position:sticky; top:0; z-index:1; background:#244f80; color:#fff; font-size:11px; font-weight:700; padding:8px 10px; text-align:left; white-space:nowrap; cursor:pointer;}
+  .gdg-tbl td{border:1px solid var(--line); padding:6px 10px; cursor:cell; vertical-align:top; background:#fff;}
+  .gdg-tbl .rn{background:#f1f5f9; color:var(--ink-soft); text-align:center; width:34px; font-size:11px; cursor:pointer;}
+  .gdg-tbl td.num{text-align:right; font-variant-numeric:tabular-nums;}
+  .gdg-tbl td.sel{background:#cfe3fb; box-shadow:inset 0 0 0 1px #3572b6;}
+  .gdg-sum{margin:10px 18px 0; padding:9px 12px; background:#f4f8fd; border:1px solid var(--blue-100); border-radius:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; font-size:12.5px; flex-shrink:0;}
+  .gdg-sum b{color:var(--blue-dark);}
+  .gdg-form{margin:12px 18px 0; display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; flex-shrink:0;}
+  .gdg-form label{display:block; font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:5px;}
+  .gdg-form input{width:100%; height:40px; box-sizing:border-box; border:1.5px solid var(--line); border-radius:10px; padding:0 12px; font-size:13px; background:#fbfcfe; font-family:inherit;}
+  .gdg-form input:focus{outline:none; border-color:var(--blue-light);}
   .kc-fin-tag{flex-shrink:0; font-size:10.5px; font-weight:700; color:#cbd5e1;}
   .kc-lbl{font-size:10.5px; font-weight:700; color:var(--ink-faint); letter-spacing:.04em; text-transform:uppercase;}
   /* Keterangan lengkap: latar biru muda + garis biru di atas + pita judul + kolom berbentuk kotak (ringkasan = teks polos di latar putih) */
@@ -1138,6 +1159,29 @@
       </div>
       <div id="korTukarBody" style="padding:12px 18px 18px; overflow:auto; flex:1; min-height:120px;"></div>
       <div class="wrw-modal-foot"><button class="wrw-act" onclick="koCloseTukar()">Tutup</button></div>
+    </div>
+  </div>
+
+  <!-- KIRIMAN — MODAL STOK GUDANG (BJB + BJL). Input manual; Simpan menulis LANGSUNG ke JUMLAH_STOK_GBJ / JUMLAH_REW_GBJ / AREA_STOK_GBJ, bukan ke revisi -->
+  <div id="korGudangOverlay" style="display:none; position:fixed; inset:0; z-index:1320; align-items:center; justify-content:center; padding:22px; background:rgba(15,25,45,.48); backdrop-filter:blur(3px);" onclick="if(event.target===this)koCloseGudang()">
+    <div class="wrw-modal" style="width:min(1100px,96vw); display:flex; flex-direction:column; overflow:auto;">
+      <div class="wrw-modal-head">
+        <div><h3>🏭 Stok Gudang (BJB + BJL)</h3><div id="korGdgSub" style="font-size:11px;opacity:.8;margin-top:3px;"></div></div>
+        <button class="wrw-modal-close" onclick="koCloseGudang()">✕</button>
+      </div>
+      <div id="korGdgInfo" style="padding:12px 18px 0; font-size:12px; color:var(--ink-soft); flex-shrink:0;">Drag sel seperti di Excel (klik judul kolom / nomor baris untuk memilih satu kolom / baris, Shift+klik untuk memperluas). Jumlahnya muncul di bawah tabel.</div>
+      <div class="gdg-tbl-wrap" id="korGdgTable"></div>
+      <div class="gdg-sum" id="korGdgSum"></div>
+      <div class="gdg-form">
+        <div><label for="korGdgStok">Jumlah Stok Gudang</label><input id="korGdgStok" type="text" autocomplete="off" placeholder="mis. 120 atau 100 + 5@900"></div>
+        <div><label for="korGdgRew">Jumlah Rewind Gudang</label><input id="korGdgRew" type="text" autocomplete="off" placeholder="mis. 20"></div>
+        <div><label for="korGdgArea">Area Stok Gudang</label><input id="korGdgArea" type="text" autocomplete="off" placeholder="mis. BJB ; BJL"></div>
+      </div>
+      <div class="wrw-modal-foot" id="korGdgFoot" style="margin-top:14px;">
+        <span style="font-size:11.5px; color:var(--ink-soft); margin-right:auto;">Disimpan langsung ke kartu order, tidak lewat revisi.</span>
+        <button class="wrw-act" onclick="koCloseGudang()">Batal</button>
+        <button class="wrw-act calc" id="korGdgSaveBtn" onclick="koGudangSave(this)">💾 Simpan</button>
+      </div>
     </div>
   </div>
 
@@ -3741,7 +3785,7 @@
     koOpenDetailWith(p, {headers:koHeaders, aliases:koAliases, joCol:koJoCol, produkCol:koProdukCol}, `${p.jo_count} JO aktif`);
   }
   function koOpenDetailWith(p, ctx, sub){
-    koSel = new Set();
+    koSel = new Set(); koCellSel = new Set();
     koOpen = new Set(); koEmpty = new Set();
     if(p.rows.length === 1) koOpen.add(0);          // cuma satu JO -> langsung terbuka
     koTahun = new Set([KO_TAHUN_DEFAULT]); koTahunRender();
@@ -3844,8 +3888,10 @@
     const val = (r, h) => String(r[h] ?? "").trim();
     const isRev = (r, h) => (r.__rev || []).includes(h);
     const star = (r, h) => isRev(r, h) ? ' <span class="wrw-rev-star" title="Hasil revisi">*</span>' : "";
-    const fld = (r, h) => { const v = val(r, h);
-      return `<div class="kc-f${v ? "" : " e"}"><div class="kc-k">${escHtml(koAlias(h))}</div><div class="kc-v">${v ? escHtml(v) : "-"}${star(r, h)}</div></div>`; };
+    const fld = (r, h, ri, pick) => { const v = val(r, h);
+      const can = pick && KO_HITUNG_COLS.has(koUp(h)), on = can && koCellSel.has(ri + "|" + h);
+      const box = can ? `<input type="checkbox" class="kc-pick" data-h="${escHtml(h)}" ${on ? "checked" : ""} title="Pilih sel ini saja untuk dihitung" onclick="event.stopPropagation(); koCellPick(${ri}, this)">` : "";
+      return `<div class="kc-f${v ? "" : " e"}${on ? " picked" : ""}"><div class="kc-k">${box}${escHtml(koAlias(h))}</div><div class="kc-v">${v ? escHtml(v) : "-"}${star(r, h)}</div></div>`; };
     const selectable = p.rows.filter(r => !r.__finish).length;
     const allOn = selectable && p.rows.every((r, i) => r.__finish || koSel.has(i));
     const bar = `<div class="kc-bar"><label><input type="checkbox" title="Pilih semua JO" ${allOn ? "checked" : ""} onclick="koSelAll(this.checked)"> Pilih semua JO</label>` +
@@ -3863,7 +3909,7 @@
       const showE = koEmpty.has(ri);
       const det = groups.map(g => {
         const cols = showE ? g.cols : g.cols.filter(h => val(r, h));
-        return cols.length ? `<div class="kc-g-t">${g.t}</div><div class="kc-grid">${cols.map(h => fld(r, h)).join("")}</div>` : "";
+        return cols.length ? `<div class="kc-g-t">${g.t}</div><div class="kc-grid">${cols.map(h => fld(r, h, ri, !r.__finish)).join("")}</div>` : "";
       }).join("");
       const emp = groups.flatMap(g => g.cols).filter(h => !val(r, h));
       const total = groups.reduce((n, g) => n + g.cols.length, 0);
@@ -3878,6 +3924,7 @@
         `<input type="checkbox" ${koSel.has(ri) ? "checked" : ""} title="Pilih JO ini untuk dihitung" onclick="event.stopPropagation(); koSelToggle(${ri}, this.checked)">` +
         `<span class="kc-jo">${escHtml(jo)}${star(r, jc)}</span>` +
         (fin && fin.tgl ? `<span class="kc-fin-tag" title="${escHtml(fin.user || "")}">Finish ${escHtml(fin.tgl)}</span>` : "") +
+        `<button type="button" class="kc-gdg-btn" onclick="event.stopPropagation(); koOpenGudang(${ri})" title="Lihat stok gudang BJB + BJL, jumlahkan, lalu isi stok gudang">🏭 Gudang</button>` +
         `<button type="button" class="kc-fin-btn" onclick="event.stopPropagation(); koFinishToggle(${ri}, ${fin ? "false" : "true"}, this)">${fin ? "↩ Batal Finish" : "✔ Finish"}</button>` +
         `<span class="kc-chev">▶</span></div>` +
         `<div class="kc-sum"><div class="kc-lbl">Ringkasan</div>${secs}</div><div class="kc-none">Belum ada data produksi atau kiriman.</div>` +
@@ -3953,10 +4000,14 @@
 
   // ── Checkbox JO + tombol Hitung ─────────────────────────────────────────
   let koSel = new Set();   // indeks baris (di koDetail.p.rows) yang dicentang
+  let koCellSel = new Set();   // sel hasil-hitung yang dicentang di Keterangan lengkap: "indeksBaris|KOLOM"
+  const KO_HITUNG_COLS = new Set(["PRINTING_1","PRINTING_2","PRINTING_3","PRINTING_4","PRINTING_5","TOTAL_PRINTING","SLITTING_METER","SLITTING_ROL","HASIL_BAG","BAG_METER","TANGGAL_KIRIMAN","JUMLAH_PENGIRIMAN","JUMLAH_PENGIRIMAN_TOTAL","DETAIL_JO_PENGIRIMAN","DETAIL_QTY_JO_PENGIRIMAN","JUMLAH_QTY_DIAMBIL","SELISIH","JUMLAH_STOK_PROD","JUMLAH_REW_PROD","AREA_STOK_PROD"]);
   function koSelUpdateBtn(){
     const b = document.getElementById("korHitungBtn"); if(!b) return;
-    b.disabled = koSel.size === 0;
-    b.innerText = koSel.size ? `🧮 Hitung (${koSel.size} JO)` : "🧮 Hitung";
+    const nc = koCellSel.size;
+    b.disabled = nc === 0 && koSel.size === 0;
+    b.innerText = nc ? `🧮 Hitung (${nc} sel)` : (koSel.size ? `🧮 Hitung (${koSel.size} JO)` : "🧮 Hitung");
+    b.title = nc ? "Hanya sel yang dicentang di Keterangan lengkap yang dihitung" : "Tanpa sel yang dicentang: semua hasil hitung JO terpilih dihitung";
   }
   function koSelToggle(i, on){ if(on) koSel.add(i); else koSel.delete(i); koRenderTable(); }
   function koSelAll(on){
@@ -3964,23 +4015,37 @@
     koRenderTable();
   }
   async function koHitung(btn){
-    const d = koDetail; if(!d || !koSel.size) return;
-    const rows = [...koSel].sort((a,b)=>a-b).map(i => d.p.rows[i]).filter(Boolean);
-    const jos = rows.map(r => String(r[d.joCol] ?? "").trim() || "-");
+    const d = koDetail; if(!d || (!koSel.size && !koCellSel.size)) return;
     const tahun = koTahunSorted();
-    if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\nHasil (Printing 1-5, Total Printing, Slitting Meter, Slitting Rol, Hasil Bag, Bag Meter, Tanggal Kiriman, Jumlah Pengiriman, Stok Produksi (Jumlah Stok, Jumlah Rewind, Area), Detail JO Kirim, Jumlah Qty Diambil & Selisih) akan ditulis ke sheet kartu order.\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
+    const joName = r => String(r[d.joCol] ?? "").trim() || "-";
+    let rows, items;
+    if(koCellSel.size){                       // Hitung per sel: hanya kolom yang dicentang
+      const by = new Map();
+      koCellSel.forEach(k => { const i = k.indexOf("|"), ri = parseInt(k.slice(0, i), 10), h = k.slice(i + 1); if(!by.has(ri)) by.set(ri, []); by.get(ri).push(h); });
+      const ris = [...by.keys()].filter(i => d.p.rows[i]).sort((a,b)=>a-b);
+      rows = ris.map(i => d.p.rows[i]);
+      items = ris.map(i => ({src_jo: d.p.rows[i].__src.jo, src_produk: d.p.rows[i].__src.produk, cols: by.get(i)}));
+      const daftar = ris.map(i => `• ${joName(d.p.rows[i])}: ${by.get(i).map(koAlias).join(", ")}`).join("\n");
+      if(!confirm(`Hitung ${koCellSel.size} sel terpilih memakai data ${tahun.join(", ")}?\nHanya sel ini yang ditulis ke sheet kartu order:\n\n${daftar}`)) return;
+    }else{
+      rows = [...koSel].sort((a,b)=>a-b).map(i => d.p.rows[i]).filter(Boolean);
+      items = rows.map(r => ({src_jo: r.__src.jo, src_produk: r.__src.produk}));
+      const jos = rows.map(joName);
+      if(!confirm(`Hitung ${rows.length} JO terpilih memakai data ${tahun.join(", ")}?\nHasil (Printing 1-5, Total Printing, Slitting Meter, Slitting Rol, Hasil Bag, Bag Meter, Tanggal Kiriman, Jumlah Pengiriman, Stok Produksi (Jumlah Stok, Jumlah Rewind, Area), Detail JO Kirim, Jumlah Qty Diambil & Selisih) akan ditulis ke sheet kartu order.\nStok gudang tidak ikut dihitung (diisi lewat tombol Gudang).\n\n${jos.map(j=>"• "+j).join("\n")}`)) return;
+    }
     const old = btn.innerHTML; btn.disabled = true; btn.innerText = "Menghitung...";
     try{
       const res = await fetch(`${API_BASE}/api/kiriman/reguler/hitung`, {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({
           sumber: d.sumber, tahun,
-          items: rows.map(r => ({src_jo: r.__src.jo, src_produk: r.__src.produk})),
+          items,
           user: currentUser ? currentUser.nama : "Tidak diketahui"
         })
       });
       const data = await res.json();
       if(!res.ok || !data.success) throw new Error(data.message || "Gagal menghitung");
+      koCellSel = new Set();
       toast(data.message, "success");
       if((data.warnings || []).length) alert("Peringatan hitung:\n\n" + data.warnings.map(w => "• " + w).join("\n"));
       // tampilkan hasil langsung di tabel detail, lalu muat ulang daftar kartu di belakang
@@ -3996,6 +4061,158 @@
       btn.innerHTML = old; koSelUpdateBtn();
     }
   }
+  // ── Hitung per sel: kotak di Keterangan lengkap ───────────────────────────
+  function koCellPick(ri, el){
+    const k = ri + "|" + el.dataset.h;
+    if(el.checked) koCellSel.add(k); else koCellSel.delete(k);
+    const f = el.closest(".kc-f"); if(f) f.classList.toggle("picked", el.checked);
+    koSelUpdateBtn();
+  }
+
+  // ── Modal Stok Gudang (BJB + BJL): tabel drag & jumlah ala Excel, simpan LANGSUNG ke kolom GBJ ──
+  let koGdg = null;   // {ri, row, cols, rows, sel:{r1,c1,r2,c2}|null, drag, sum, hasNum}
+  const KO_GDG_LABEL = {AREA:"Area", PRODUK:"Produk", SISA_STOCK_AKHIR:"Sisa Stock Akhir", BERAT_ROLL:"Berat Roll", JO_DAN_STATUS:"JO dan Status", KETERANGAN:"Keterangan"};
+  const KO_GDG_NUM = new Set(["SISA_STOCK_AKHIR","BERAT_ROLL"]);
+  function koGdgNum(t){
+    let s = String(t ?? "").trim().replace(/\s+/g, "");
+    if(!s) return null;
+    if(/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, "").replace(",", ".");   // 1.250,5 -> 1250.5
+    else s = s.replace(",", ".");
+    return /^-?\d+(\.\d+)?$/.test(s) ? parseFloat(s) : null;
+  }
+  const koGdgFmt = n => String(+n.toFixed(2));
+  async function koOpenGudang(ri){
+    const d = koDetail; if(!d) return;
+    const row = d.p.rows[ri]; if(!row) return;
+    const m = koHdrMap(), cur = c => String(row[m[c]] ?? "").trim();
+    koGdg = {ri, row, cols:[], rows:[], sel:null, drag:false, sum:0, hasNum:false};
+    document.getElementById("korGdgSub").innerText = `${String(row[d.joCol] ?? "").trim() || "-"} · ${d.p.produk}`;
+    document.getElementById("korGdgStok").value = cur("JUMLAH_STOK_GBJ");
+    document.getElementById("korGdgRew").value = cur("JUMLAH_REW_GBJ");
+    document.getElementById("korGdgArea").value = cur("AREA_STOK_GBJ");
+    document.getElementById("korGdgTable").innerHTML = `<div class="skeleton" style="height:90px;margin:12px;"></div>`;
+    document.getElementById("korGdgSum").innerHTML = "";
+    document.getElementById("korGudangOverlay").style.display = "flex";
+    try{
+      const q = new URLSearchParams({sumber: d.sumber, src_jo: row.__src.jo, src_produk: row.__src.produk});
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/gudang?${q}`, {cache:"no-store"});
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal memuat stok gudang");
+      if(!koGdg || koGdg.row !== row) return;          // modal sudah ditutup / ganti JO
+      koGdg.cols = data.columns || []; koGdg.rows = data.rows || [];
+      const info = document.getElementById("korGdgInfo");
+      const warn = (data.warnings || []).concat(data.has_cols ? [] : ["Kolom JUMLAH_STOK_GBJ / JUMLAH_REW_GBJ / AREA_STOK_GBJ belum ada di sheet kartu order, Simpan akan gagal."]);
+      info.innerHTML = "Drag sel seperti di Excel (klik judul kolom / nomor baris untuk memilih satu kolom / baris, Shift+klik untuk memperluas). Jumlahnya muncul di bawah tabel." +
+        (warn.length ? `<div style="color:var(--warn); font-weight:600; margin-top:4px;">⚠️ ${warn.map(escHtml).join("<br>")}</div>` : "");
+      koGdgRender();
+    }catch(e){
+      document.getElementById("korGdgTable").innerHTML = `<div class="empty" style="padding:18px;"><span class="ic">⚠️</span>${escHtml(e.message)}</div>`;
+    }
+  }
+  function koCloseGudang(){ document.getElementById("korGudangOverlay").style.display = "none"; koGdg = null; }
+  function koGdgRender(){
+    const g = koGdg; if(!g) return;
+    const wrap = document.getElementById("korGdgTable");
+    if(!g.rows.length){
+      wrap.innerHTML = `<div class="empty" style="padding:18px;"><span class="ic">🗂️</span>Tidak ada baris BJB / BJL yang cocok dengan JO ini. Isi manual di kolom bawah bila perlu.</div>`;
+      koGdgPaint(); return;
+    }
+    wrap.innerHTML = `<table class="gdg-tbl" onmousedown="koGdgDown(event)" onmouseover="koGdgOver(event)"><thead><tr><th class="rn">#</th>` +
+      g.cols.map((c, ci) => `<th data-c="${ci}" title="Klik untuk memilih seluruh kolom">${escHtml(KO_GDG_LABEL[c] || c)}</th>`).join("") + `</tr></thead><tbody>` +
+      g.rows.map((r, ri) => `<tr><td class="rn" data-rn="${ri}" title="Klik untuk memilih seluruh baris">${ri + 1}</td>` +
+        g.cols.map((c, ci) => `<td data-r="${ri}" data-c="${ci}"${KO_GDG_NUM.has(c) ? ' class="num"' : ""}>${escHtml(r[c] ?? "") || "-"}</td>`).join("") + `</tr>`).join("") +
+      `</tbody></table>`;
+    koGdgPaint();
+  }
+  function koGdgDown(e){
+    const g = koGdg; if(!g) return;
+    const th = e.target.closest("th[data-c]"), rn = e.target.closest("td[data-rn]"), td = e.target.closest("td[data-r]");
+    const last = g.rows.length - 1, lastC = g.cols.length - 1;
+    if(th){ const c = +th.dataset.c; g.sel = {r1:0, c1:c, r2:last, c2:c}; g.drag = false; }
+    else if(rn){ const r = +rn.dataset.rn; g.sel = {r1:r, c1:0, r2:r, c2:lastC}; g.drag = false; }
+    else if(td){
+      const r = +td.dataset.r, c = +td.dataset.c;
+      if(e.shiftKey && g.sel){ g.sel.r2 = r; g.sel.c2 = c; g.drag = false; }
+      else{ g.sel = {r1:r, c1:c, r2:r, c2:c}; g.drag = true; }
+    }else return;
+    e.preventDefault(); koGdgPaint();
+  }
+  function koGdgOver(e){
+    const g = koGdg; if(!g || !g.drag || !g.sel) return;
+    const td = e.target.closest("td[data-r]"); if(!td) return;
+    g.sel.r2 = +td.dataset.r; g.sel.c2 = +td.dataset.c; koGdgPaint();
+  }
+  document.addEventListener("mouseup", () => { if(koGdg) koGdg.drag = false; });
+  document.addEventListener("keydown", e => {       // Ctrl+C: salin sel terpilih (tab-separated, bisa ditempel ke Excel)
+    const ov = document.getElementById("korGudangOverlay");
+    if(!koGdg || !koGdg.sel || !ov || ov.style.display !== "flex") return;
+    if(!((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c")) return;
+    if(["INPUT","TEXTAREA"].includes((document.activeElement || {}).tagName)) return;
+    const {r1,c1,r2,c2} = koGdg.sel, rr = [Math.min(r1,r2), Math.max(r1,r2)], cc = [Math.min(c1,c2), Math.max(c1,c2)], out = [];
+    for(let r = rr[0]; r <= rr[1]; r++){ const line = []; for(let c = cc[0]; c <= cc[1]; c++) line.push(koGdg.rows[r][koGdg.cols[c]] ?? ""); out.push(line.join("\t")); }
+    try{ navigator.clipboard.writeText(out.join("\n")); toast("Sel disalin", "success"); }catch(_){}
+    e.preventDefault();
+  });
+  function koGdgAreas(){
+    const g = koGdg; if(!g || !g.sel) return [];
+    const r1 = Math.min(g.sel.r1, g.sel.r2), r2 = Math.max(g.sel.r1, g.sel.r2), out = [];
+    for(let r = r1; r <= r2; r++){ const a = String(g.rows[r].AREA ?? "").trim(); if(a && !out.includes(a)) out.push(a); }
+    return out;
+  }
+  function koGdgPaint(){
+    const g = koGdg; if(!g) return;
+    const sel = g.sel;
+    const r1 = sel ? Math.min(sel.r1, sel.r2) : -1, r2 = sel ? Math.max(sel.r1, sel.r2) : -1;
+    const c1 = sel ? Math.min(sel.c1, sel.c2) : -1, c2 = sel ? Math.max(sel.c1, sel.c2) : -1;
+    let n = 0, nums = 0, sum = 0, text = 0;
+    document.querySelectorAll("#korGdgTable td[data-r]").forEach(td => {
+      const r = +td.dataset.r, c = +td.dataset.c, on = !!sel && r >= r1 && r <= r2 && c >= c1 && c <= c2;
+      td.classList.toggle("sel", on);
+      if(on){
+        n++;
+        const raw = String(g.rows[r][g.cols[c]] ?? "").trim();
+        if(!raw) return;
+        const v = koGdgNum(raw);
+        if(v === null) text++; else { nums++; sum += v; }
+      }
+    });
+    g.sum = sum; g.hasNum = nums > 0;
+    const bar = document.getElementById("korGdgSum");
+    if(!sel){ bar.innerHTML = `<span style="color:var(--ink-soft);">Belum ada sel terpilih. Drag sel angka (mis. kolom Sisa Stock Akhir) untuk menjumlah.</span>`; return; }
+    const hasAreas = koGdgAreas().length > 0;
+    bar.innerHTML = `<span>${n} sel</span><span>·</span><span>Jumlah: <b>${nums ? koGdgFmt(sum) : "-"}</b></span>` +
+      (nums > 1 ? `<span>·</span><span>Rata-rata: <b>${koGdgFmt(sum / nums)}</b></span>` : "") +
+      (text ? `<span style="color:var(--warn);">· ${text} sel bukan angka (tidak dijumlah)</span>` : "") +
+      `<span style="flex:1"></span>` +
+      `<button class="wrw-act" ${nums ? "" : "disabled"} onclick="koGdgFill('korGdgStok')">→ Jumlah Stok</button>` +
+      `<button class="wrw-act" ${nums ? "" : "disabled"} onclick="koGdgFill('korGdgRew')">→ Jumlah Rewind</button>` +
+      `<button class="wrw-act" ${hasAreas ? "" : "disabled"} onclick="koGdgFillArea()" title="Isi Area dari baris yang terpilih">→ Area</button>`;
+  }
+  function koGdgFill(id){ if(!koGdg || !koGdg.hasNum) return; document.getElementById(id).value = koGdgFmt(koGdg.sum); }
+  function koGdgFillArea(){ const a = koGdgAreas(); if(a.length) document.getElementById("korGdgArea").value = a.join(" ; "); }
+  async function koGudangSave(btn){
+    const g = koGdg, d = koDetail; if(!g || !d) return;
+    const stok = document.getElementById("korGdgStok").value.trim(), rew = document.getElementById("korGdgRew").value.trim(), area = document.getElementById("korGdgArea").value.trim();
+    const jo = String(g.row[d.joCol] ?? "").trim() || "-";
+    if(!confirm(`Simpan stok gudang JO ${jo}?\n\nJumlah Stok Gudang: ${stok || "(kosong)"}\nJumlah Rewind Gudang: ${rew || "(kosong)"}\nArea Stok Gudang: ${area || "(kosong)"}\n\nDitulis langsung ke kartu order (bukan lewat revisi).`)) return;
+    const old = btn.innerHTML; btn.disabled = true; btn.innerText = "Menyimpan...";
+    try{
+      const res = await fetch(`${API_BASE}/api/kiriman/reguler/gudang-save`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({sumber:d.sumber, src_jo:g.row.__src.jo, src_produk:g.row.__src.produk, stok, rew, area,
+                              user: currentUser ? currentUser.nama : "Tidak diketahui"})
+      });
+      const data = await res.json();
+      if(!res.ok || !data.success) throw new Error(data.message || "Gagal menyimpan");
+      const m = koHdrMap();
+      Object.entries(data.values || {}).forEach(([c, v]) => { g.row[m[c] || c] = v; });
+      toast(data.message, "success");
+      koCloseGudang(); koRenderTable();
+      if(d.khi) loadKirimanHariIni(true); else loadKoReguler(true);
+    }catch(e){
+      toast("Gagal: " + e.message, "error");
+    }finally{ btn.disabled = false; btn.innerHTML = old; }
+  }
   function koRenderPickerClassic(){
     document.getElementById("korColList").innerHTML = koDataCols().map(h =>
       `<label><input type="checkbox" ${koHiddenCols.has(h)?"":"checked"} onchange="koToggleCol(this.dataset.h, this.checked)" data-h="${escHtml(h)}"> ${escHtml(koAlias(h))}</label>`).join("");
@@ -4009,7 +4226,7 @@
   function koTogglePicker(ev){ ev.stopPropagation(); const tp=document.getElementById("korTahunPicker"); if(tp) tp.classList.remove("open"); document.getElementById("korColPicker").classList.toggle("open"); }
   document.addEventListener("click", ()=>{ const el=document.getElementById("korColPicker"); if(el) el.classList.remove("open"); });
   function closeKoDetail(){ document.getElementById("korDetailOverlay").style.display="none"; }
-  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ const rg=document.getElementById("korRingOverlay"); if(rg && rg.style.display==="flex"){ koCloseRing(); return; } const tk=document.getElementById("korTukarOverlay"); if(tk && tk.style.display==="flex"){ koCloseTukar(); return; } const rv=document.getElementById("korRevisiOverlay"); if(rv && rv.style.display==="flex"){ koCloseRevisi(); return; } closeKoDetail(); koCloseAddJoModal(); }});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"){ const gd=document.getElementById("korGudangOverlay"); if(gd && gd.style.display==="flex"){ koCloseGudang(); return; } const rg=document.getElementById("korRingOverlay"); if(rg && rg.style.display==="flex"){ koCloseRing(); return; } const tk=document.getElementById("korTukarOverlay"); if(tk && tk.style.display==="flex"){ koCloseTukar(); return; } const rv=document.getElementById("korRevisiOverlay"); if(rv && rv.style.display==="flex"){ koCloseRevisi(); return; } closeKoDetail(); koCloseAddJoModal(); }});
 
   // ── Revisi kartu order → dikirim ke sheet <SUMBER>_KO_REVISI ─────────────
   // Mode per kolom (seperti Revisi Waste Rewind): semua kolom baris JO jadi input,
