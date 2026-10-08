@@ -1697,6 +1697,51 @@ def _ko_read_revisions(sheet_name):
     return out
 
 
+# --- Status FINISH per JO (tab KO_FINISH di spreadsheet kartu order) ------------
+# JO finish: ditampilkan gelap & dipisah di bawah daftar JO. Identitas = (sheet, produk
+# asal, JO asal) seperti revisi. Batal finish = baris dihapus. Tab dibuat otomatis.
+KO_FINISH_SHEET = os.environ.get("KO_FINISH_SHEET_NAME", "KO_FINISH")
+KO_FINISH_HEADER = ["SUMBER", "PRODUK_ASAL", "JO_ASAL", "TANGGAL_FINISH", "USER_FINISH"]
+_ko_finish_lock = threading.Lock()
+
+
+def _ko_finish_worksheet(create=False):
+    sh = _ko_spreadsheet()
+    try:
+        return sh.worksheet(KO_FINISH_SHEET)
+    except gspread.exceptions.WorksheetNotFound:
+        if not create:
+            return None
+        try:
+            ws = sh.add_worksheet(title=KO_FINISH_SHEET, rows=1000, cols=len(KO_FINISH_HEADER))
+            ws.append_row(KO_FINISH_HEADER)
+            return ws
+        except gspread.exceptions.APIError as e:
+            raise RuntimeError(f"Tidak bisa membuat tab {KO_FINISH_SHEET} (pastikan service account punya akses Editor): {e}")
+
+
+def _ko_read_finish(sheet_name):
+    """{src_key: {"tgl", "user"}} untuk sheet ini. Tab tidak ada / gagal dibaca -> {}."""
+    try:
+        ws = _ko_finish_worksheet(create=False)
+        vals = ws.get_all_values() if ws is not None else []
+    except Exception as e:
+        print(f"[ko finish] dilewati ({sheet_name}): {e}")
+        return {}
+    if len(vals) < 2:
+        return {}
+    ix = {_ko_norm_h(h): i for i, h in enumerate(vals[0])}
+    if not all(c in ix for c in ("SUMBER", "PRODUK_ASAL", "JO_ASAL")):
+        return {}
+    g = lambda r, c: r[ix[c]].strip() if c in ix and ix[c] < len(r) else ""
+    out = {}
+    for r in vals[1:]:
+        if g(r, "SUMBER") != sheet_name:
+            continue
+        out[_ko_src_key(g(r, "PRODUK_ASAL"), g(r, "JO_ASAL"))] = {"tgl": g(r, "TANGGAL_FINISH"), "user": g(r, "USER_FINISH")}
+    return out
+
+
 def _read_ko_sheet(sheet_name, force=False):
     """Baca satu tab kartu order (REGULER_KO / FORISA_KO / DDCT_KO), terapkan
     revisi dari tab *_REVISI, lalu kelompokkan per NAMA_PRODUK. Cache TTL pendek.
@@ -1729,6 +1774,7 @@ def _read_ko_sheet(sheet_name, force=False):
 
         # --- terapkan revisi (revisi terakhir menang; hasilnya menimpa nilai sumber) ---
         revs = _ko_read_revisions(sheet_name)
+        finish_map = _ko_read_finish(sheet_name)
         hmap = {}
         for _, h in cols:
             hmap.setdefault(_ko_norm_h(h), h)
@@ -1742,6 +1788,7 @@ def _read_ko_sheet(sheet_name, force=False):
                     row[h] = val
                     changed.append(h)
             row["__rev"] = changed
+            row["__finish"] = finish_map.get(_ko_src_key(src_pr, src_jo))
 
         groups = {}   # key produk (normalisasi) -> {"produk": nama asli, "rows": [...]}
         order = []
@@ -1752,6 +1799,8 @@ def _read_ko_sheet(sheet_name, force=False):
                 groups[key] = {"produk": re.sub(r"\s+", " ", produk).strip(), "rows": []}
                 order.append(key)
             groups[key]["rows"].append(row)
+        for k in order:      # JO finish pindah ke bawah (urutan lain tetap, sort stabil)
+            groups[k]["rows"].sort(key=lambda r: 1 if r.get("__finish") else 0)
         products = [
             {"produk": groups[k]["produk"], "jo_count": len(groups[k]["rows"]), "rows": groups[k]["rows"]}
             for k in order
@@ -2894,9 +2943,9 @@ def _ko_rumus_tukar(row, ctx):
     }
 
 
-def _ko_rumus_selisih(row, out, ctx):
-    """SELISIH = TOTAL_STOK - (PRODUKSI - JUMLAH_QTY_DIAMBIL) + QTY_BERKURANG.
-    Sel yang direvisi user memakai nilai revisi, selain itu hasil hitung terbaru."""
+def _tk_selisih_parts(row, out, ctx):
+    """Komponen SELISIH. Sel yang direvisi user memakai nilai revisi, selain itu nilai di `out`
+    (hasil hitung) lalu nilai sheet. Return None kalau SLITTING_ROL tidak bisa dihitung."""
     rev = set(row.get("__rev") or [])
     eff = lambda c: row.get(c, "") if c in rev else out.get(c, row.get(c, ""))
     jo = str(row.get(REGULER_KO_JO_COL, "")).strip() or "-"
@@ -2904,16 +2953,23 @@ def _ko_rumus_selisih(row, out, ctx):
     potongan = _sj_num(pot_raw) if pot_raw not in ("", "-") else None
     hb = _tk_num(eff("HASIL_BAG"))
     if hb is not None and hb > 0:
-        produksi = hb
+        produksi, sumber = hb, "bag"
     else:
-        produksi = _tk_parse_rol(eff("SLITTING_ROL"), potongan)
+        produksi, sumber = _tk_parse_rol(eff("SLITTING_ROL"), potongan), "slitting"
         if produksi is None:
             ctx["warn"].append(f"{jo}: SLITTING_ROL '{eff('SLITTING_ROL')}' tidak bisa dihitung (cek format / POTONGAN), SELISIH dikosongkan")
-            return {KO_SELISIH_COL: ""}
+            return None
     diambil = _tk_num(eff(KO_QTY_DIAMBIL_COL)) or 0.0
     stok = _tk_num(row.get("TOTAL_STOK")) or 0.0
     berkurang = _tk_num(row.get("QTY_BERKURANG")) or 0.0
-    return {KO_SELISIH_COL: _num_out(stok - (produksi - diambil) + berkurang)}
+    return {"produksi": produksi, "sumber": sumber, "diambil": diambil, "stok": stok, "berkurang": berkurang,
+            "selisih": stok - (produksi - diambil) + berkurang}
+
+
+def _ko_rumus_selisih(row, out, ctx):
+    """SELISIH = TOTAL_STOK - (PRODUKSI - JUMLAH_QTY_DIAMBIL) + QTY_BERKURANG."""
+    parts = _tk_selisih_parts(row, out, ctx)
+    return {KO_SELISIH_COL: "" if parts is None else _num_out(parts["selisih"])}
 
 
 def _ko_hitung_row(sheet_name, row, tahun_list, ctx=None):
@@ -3125,6 +3181,92 @@ def ko_tukar_save():
         return jsonify({"success": True, "reset": reset, "message": msg})
     except Exception as e:
         return jsonify({"success": False, "message": f"Gagal menyimpan tukar guling: {e}"}), 500
+
+
+@app.route("/api/kiriman/reguler/finish", methods=["POST"])
+def ko_finish():
+    """Tandai / batalkan finish satu JO. Body: sumber, src_jo, src_produk, finish (true/false), user."""
+    body = request.get_json(silent=True) or {}
+    sheet = _ko_sheet_for_sumber(body.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    g = lambda k: str(body.get(k, "") or "").strip()
+    src_jo, src_produk, finish = g("src_jo"), g("src_produk"), bool(body.get("finish"))
+    try:
+        payload = _read_ko_sheet(sheet, force=True)
+        row = _ko_find_row(payload, src_jo, src_produk)
+        if row is None:
+            return jsonify({"success": False, "message": "Baris JO tidak ditemukan di sheet sumber. Refresh dulu."}), 404
+        key = _ko_src_key(src_produk, src_jo)
+        wib = timezone(timedelta(hours=7))
+        with _ko_finish_lock:
+            ws = _ko_finish_worksheet(create=True)
+            vals = ws.get_all_values()
+            if not vals or not any(str(x).strip() for x in vals[0]):
+                ws.append_row(KO_FINISH_HEADER)
+                vals = [KO_FINISH_HEADER]
+            ix = {_ko_norm_h(h): i for i, h in enumerate(vals[0])}
+            miss = [c for c in KO_FINISH_HEADER if c not in ix]
+            if miss:
+                raise RuntimeError(f"Tab {KO_FINISH_SHEET} kehilangan kolom: {', '.join(miss)}")
+            cell = lambda r, c: r[ix[c]].strip() if ix[c] < len(r) else ""
+            dele = [n for n, r in enumerate(vals[1:], start=2)
+                    if cell(r, "SUMBER") == sheet and _ko_src_key(cell(r, "PRODUK_ASAL"), cell(r, "JO_ASAL")) == key]
+            if dele:   # hapus dulu (batal finish, atau cegah baris ganda saat finish ulang)
+                reqs = [{"deleteDimension": {"range": {"sheetId": ws.id, "dimension": "ROWS",
+                                                       "startIndex": n - 1, "endIndex": n}}} for n in sorted(dele, reverse=True)]
+                _ko_spreadsheet().batch_update({"requests": reqs})
+            if finish:
+                d = {"SUMBER": sheet, "PRODUK_ASAL": row["__src"]["produk"], "JO_ASAL": row["__src"]["jo"],
+                     "TANGGAL_FINISH": datetime.now(wib).strftime("%d-%m-%Y %H:%M"),
+                     "USER_FINISH": g("user") or "Tidak diketahui"}
+                out = [""] * len(vals[0])
+                for c, v in d.items():
+                    out[ix[c]] = v
+                ws.append_row(out, value_input_option="RAW")
+        with _ko_cache_lock:
+            _ko_cache.pop(sheet, None)
+        return jsonify({"success": True, "finish": finish,
+                        "message": f"JO {row.get(REGULER_KO_JO_COL, '')} ditandai finish." if finish else f"Finish JO {row.get(REGULER_KO_JO_COL, '')} dibatalkan."})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal mengubah status finish: {e}"}), 500
+
+
+@app.route("/api/kiriman/reguler/ringkasan", methods=["GET"])
+def ko_ringkasan():
+    """Ringkasan selisih semua JO satu produk (dihitung langsung: Diambil mengikuti tukar guling
+    terbaru; Produksi memakai SLITTING_ROL / HASIL_BAG hasil Hitung terakhir)."""
+    sheet = _ko_sheet_for_sumber(request.args.get("sumber"))
+    if not sheet:
+        return jsonify({"success": False, "message": "Sumber tidak dikenal."}), 400
+    produk = str(request.args.get("produk", "")).strip()
+    force = str(request.args.get("refresh", "")).strip().lower() in ("1", "true", "yes")
+    try:
+        payload = _read_ko_sheet(sheet, force=force)
+        if force:
+            _sj_index(force=True)
+        ctx = _tk_new_ctx(sheet, payload, _ko_tukar_read(force=force))
+        p = _tk_product(ctx, produk)
+        if not p["rows"]:
+            return jsonify({"success": False, "message": "Produk tidak ditemukan. Refresh dulu."}), 404
+        rows = []
+        for r in p["rows"]:
+            jo_raw = str(r.get(REGULER_KO_JO_COL, "")).strip()
+            jo_n = _tk_jo(jo_raw)
+            out = {KO_QTY_DIAMBIL_COL: _num_out(p["diambil"].get(jo_n, 0))}
+            parts = _tk_selisih_parts(r, out, ctx)
+            kirim = sum(k["qty"] for k in p["kiriman"] if k["jo_key"] == jo_n)
+            tukar = any(k["custom"] for k in p["kiriman"] if k["jo_key"] == jo_n) or \
+                any(_tk_jo(u["oleh"]) != jo_n for u in p["dipakai"].get(jo_n, []))
+            item = {"jo": jo_raw, "jo_key": jo_n, "kirim": _num_out(kirim), "tukar": tukar,
+                    "finish": bool(r.get("__finish")), "error": parts is None}
+            if parts:
+                item.update({k: (_num_out(v) if k != "sumber" else v) for k, v in parts.items()})
+            rows.append(item)
+        return jsonify({"success": True, "produk": produk, "rows": rows,
+                        "warnings": list(dict.fromkeys(ctx["warn"]))})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Gagal membuat ringkasan: {e}"}), 500
 
 
 @app.route("/api/kiriman/reguler/hapus-revisi", methods=["POST"])
