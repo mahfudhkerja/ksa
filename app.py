@@ -6729,6 +6729,178 @@ def fstl_list():
         return jsonify({"error": str(exc)}), 500
 
 
+# --------------------------------------------------------------------------
+# FSTL — REKAP (tombol "Rekap" di halaman Lampiran Waste)
+# --------------------------------------------------------------------------
+# Satu klik = bikin sheet "REKAP_{USERNAME}" di spreadsheet KITIR (spreadsheet
+# yang sama dengan "{USERNAME}_Kitir"):
+#
+#   1. Salin PERSIS seluruh sheet "{USERNAME}_Kitir" (isi, posisi sel, warna,
+#      lebar kolom, dst) lewat duplicateSheet bawaan Google Sheets -- bukan
+#      ditulis ulang sel per sel, jadi formatnya pasti sama. Kalau
+#      REKAP_{USERNAME} sudah ada, sheet itu DIHAPUS lalu dibuat ulang dari
+#      Kitir terbaru (isi lama di REKAP tidak dipertahankan).
+#   2. Kolom A (di Kitir kolom A selalu kosong) diisi label kartu:
+#        - kolom B kosong                    -> kolom A kosong
+#        - kolom B berisi "SPK/JO : 111/111" -> kolom A = teks itu juga, lalu
+#          dipakai terus (baris label & baris proses di bawahnya) sampai
+#          kolom B ketemu "SPK/JO : ..." yang baru.
+#   3. Kolom E diisi OTOMATIS (menimpa Status hasil salinan, HANYA di REKAP,
+#      Kitir tidak diubah) untuk baris yang kolom B-nya salah satu dari
+#      Printing / Rewinding / Dry Laminasi / Extrusi / Slitting / Bag Making:
+#        kolom C (Keterangan) atau D (Action Plan) salah satunya kosong -> "X"
+#        keduanya terisi                                                -> "V"
+#   4. Tabel ringkasan di G2:K, SATU BARIS untuk tiap baris ber-X:
+#        G = kolom A baris itu            (mis. "SPK/JO : 1860/2031")
+#        H = nama produk dari sheet JO_1  (kunci = angka paling belakang JO,
+#            huruf nyangkut diabaikan: /2441A -> 2441, 1860/2031 -> 2031,
+#            2035A -> 2035; cara cocokkan sama dengan tombol Periksa JO)
+#        I = kolom B baris itu            (nama proses)
+#        J = kolom C baris itu            (Keterangan, kosong -> "")
+#        K = kolom D baris itu            (Action Plan, kosong -> "")
+#      Kalau satu JO punya 2 proses ber-X, keduanya ikut (2 baris).
+FSTL_REKAP_PREFIX = "REKAP_"
+FSTL_REKAP_LAST_COL = 11  # kolom K -- tabel ringkasan G:K butuh minimal 11 kolom
+_fstl_rekap_lock = threading.Lock()
+_FSTL_SPKJO_LABEL_RE = re.compile(r"^\s*SPK\s*/\s*JO\s*:?\s*", re.IGNORECASE)
+
+
+def _fstl_safe_username(username):
+    """Aturan nama sheet user, sama dengan fstl_save()."""
+    return "".join(ch for ch in str(username) if ch.isalnum() or ch in ("-", "_")).upper() or "USER"
+
+
+def _fstl_rekap_jo_text(label):
+    """'SPK/JO : /2441A' -> '/2441A' ; 'SPK/JO : 2035A' -> '2035A'. Label
+    'SPK/JO :' dibuang dulu karena mengandung '/', kalau tidak segmen
+    belakangnya jadi 'JO : 2035A' dan angkanya tidak terbaca."""
+    return _FSTL_SPKJO_LABEL_RE.sub("", str(label or "")).strip()
+
+
+FSTL_REKAP_PROSES = {"PRINTING", "REWINDING", "DRY LAMINASI", "EXTRUSI", "SLITTING", "BAG MAKING"}
+
+
+def _fstl_rekap_compute(rows):
+    """rows = ws.get_all_values() sheet Kitir. Balikin:
+      col_a   : [[teks]] untuk A2..A{n+1} (satu elemen per baris sheet mulai baris 2)
+      col_e   : [[teks]] untuk E2..E{n+1} (X / V untuk baris proses, selain itu isi E apa adanya)
+      summary : [{spkjo, proses, keterangan, action}] untuk baris ber-X"""
+
+    def cell(row, idx):
+        return str(row[idx]).strip() if len(row) > idx else ""
+
+    col_a, col_e, summary = [], [], []
+    current = ""
+    for row in rows[1:]:  # baris 1 sengaja tidak dipakai (kosong di Kitir)
+        b, c, d = cell(row, 1), cell(row, 2), cell(row, 3)
+        if not b:
+            col_a.append([""])
+            col_e.append([cell(row, 4)])
+            continue
+        if b.upper().startswith("SPK/JO"):
+            current = b
+        col_a.append([current])
+        if current and " ".join(b.upper().split()) in FSTL_REKAP_PROSES:
+            flag = "V" if (c and d) else "X"
+            col_e.append([flag])
+            if flag == "X":
+                summary.append({"spkjo": current, "proses": b, "keterangan": c, "action": d})
+        else:
+            col_e.append([cell(row, 4)])
+    return col_a, col_e, summary
+
+
+@app.route("/api/fstl/rekap", methods=["POST"])
+def fstl_rekap():
+    """Body: {username}. Lihat penjelasan lengkap di blok komentar di atas."""
+    body = request.get_json(force=True) or {}
+    username = str(body.get("username", "")).strip()
+    if not username:
+        return jsonify({"error": "username wajib diisi"}), 400
+
+    safe = _fstl_safe_username(username)
+    kitir_name = f"{safe}_Kitir"
+    rekap_name = f"{FSTL_REKAP_PREFIX}{safe}"
+
+    try:
+        with _fstl_rekap_lock:
+            sh = _fstl_kitir_spreadsheet()
+            all_ws = sh.worksheets()
+            src = next((w for w in all_ws if w.title.lower() == kitir_name.lower()), None)
+            if src is None:
+                return jsonify({"error": f"Sheet {kitir_name} belum ada — catat waste dulu."}), 404
+            old = next((w for w in all_ws if w.title.lower() == rekap_name.lower()), None)
+
+            # --- hitung semuanya DULU, sebelum menyentuh sheet apa pun ---
+            rows = src.get_all_values()
+            col_a, col_e, summary = _fstl_rekap_compute(rows)
+
+            produk_of = {}  # teks JO bersih -> nama produk ("" kalau tidak ketemu)
+
+            def resolve(texts):
+                for t in texts:
+                    if not _fstl_suffix_key(t):
+                        produk_of[t] = ""
+                        continue
+                    produk, _err = fstl_lookup_produk(t)
+                    produk_of[t] = produk or ""
+
+            uniq = []
+            for s in summary:
+                s["jo_text"] = _fstl_rekap_jo_text(s["spkjo"])
+                if s["jo_text"] not in uniq:
+                    uniq.append(s["jo_text"])
+            resolve(uniq)
+            # JO_1 di-cache sampai 1 jam: kalau ada yang belum ketemu, baca
+            # ulang JO_1 SEKALI (siapa tahu JO barunya baru masuk) lalu coba lagi.
+            missing = [t for t in uniq if not produk_of[t] and _fstl_suffix_key(t)]
+            if missing:
+                with _fstl_cache_lock:
+                    _fstl_sheet_values_cache.pop(FSTL_JO1_SHEET, None)
+                resolve(missing)
+
+            summary_rows = [
+                [s["spkjo"], produk_of.get(s["jo_text"], ""), s["proses"], s["keterangan"] or "", s["action"] or ""]
+                for s in summary
+            ]
+            not_found = []
+            for s in summary:
+                if not produk_of.get(s["jo_text"]) and s["spkjo"] not in not_found:
+                    not_found.append(s["spkjo"])
+            has_extra = any(
+                len(r) > 6 and any(str(c).strip() for c in r[6:FSTL_REKAP_LAST_COL]) for r in rows
+            )
+
+            # --- buat ulang REKAP_{USER} dari Kitir (salin persis, termasuk warna) ---
+            if old is not None:
+                sh.batch_update({"requests": [{"deleteSheet": {"sheetId": old.id}}]})
+            n_sheets = len(all_ws) - (1 if old is not None else 0)
+            sh.batch_update({"requests": [{"duplicateSheet": {
+                "sourceSheetId": src.id, "insertSheetIndex": n_sheets, "newSheetName": rekap_name,
+            }}]})
+            ws = sh.worksheet(rekap_name)
+
+            if ws.col_count < FSTL_REKAP_LAST_COL:  # Kitir cuma 6 kolom, G:K belum ada
+                ws.add_cols(FSTL_REKAP_LAST_COL - ws.col_count)
+            if has_extra:  # Kitir ternyata punya isi di G:K -> kosongkan dulu biar tidak tercampur
+                ws.batch_clear([f"G2:K{ws.row_count}"])
+
+            updates = []
+            if col_a:
+                updates.append({"range": f"A2:A{len(col_a) + 1}", "values": col_a})
+            if col_e:
+                updates.append({"range": f"E2:E{len(col_e) + 1}", "values": col_e})
+            if summary_rows:
+                updates.append({"range": f"G2:K{len(summary_rows) + 1}", "values": summary_rows})
+            if updates:
+                ws.batch_update(updates, value_input_option="RAW")
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+    return jsonify({"success": True, "sheet": rekap_name, "source": kitir_name,
+                    "rows": len(summary_rows), "not_found": not_found})
+
+
 @app.route("/api/fstl/revisi", methods=["POST"])
 def fstl_revisi():
     """Body: {sheet, processes:[{row, keterangan}, ...]}.

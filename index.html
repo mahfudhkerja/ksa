@@ -1771,6 +1771,7 @@
                 <p>Tandai proses yang menyumbang waste per JO, kasih keterangan &amp; action plan-nya, biar semua tim bisa lihat progress-nya. Cek JO &amp; keterangan otomatis diambil dari Sheets, dan tersimpan ke sheet <code>{USERNAME}_Kitir</code> masing-masing.</p>
                 <div class="fstl-hero-actions">
                   <button class="fstl-btn fstl-btn-solid" onclick="fstlOpenModal()">✏️ Catat Waste Baru</button>
+                  <button class="fstl-btn fstl-btn-ghost" id="fstlRekapBtn" onclick="fstlRekap()" title="Bikin sheet REKAP_{USERNAME} dari sheet {USERNAME}_Kitir">📊 Rekap</button>
                   <button class="fstl-btn fstl-btn-ghost" onclick="fstlOpenBulanModal()">📅 <span id="fstlBulanLabel">Semua Bulan</span></button>
                 </div>
               </div>
@@ -5630,6 +5631,39 @@
     }
     fstlCloseModal();
     fstlLoadList(); // refresh biar kartu nunjukin keterangan versi terbaru
+  }
+
+  async function fstlRekap(){
+    // Tombol Rekap: backend menyalin sheet {USERNAME}_Kitir jadi REKAP_{USERNAME}
+    // (isi + warna sama), mengisi kolom A, lalu tabel ringkasan G:K untuk baris
+    // yang kolom E-nya "X". Kalau REKAP_{USERNAME} sudah ada, dibuat ulang.
+    const username = currentUser ? (currentUser.username || currentUser.USERNAME || currentUser.nama) : "";
+    if(!username){ toast("Login dulu sebelum bikin rekap", "error"); return; }
+    const safe = String(username).replace(/[^A-Za-z0-9_-]/g, "").toUpperCase() || "USER";
+    if(!confirm(`Sheet REKAP_${safe} akan dibuat dari ${safe}_Kitir.\nKalau REKAP_${safe} sudah ada, isinya diganti (dibuat ulang).\n\nLanjut?`)) return;
+
+    const btn = document.getElementById("fstlRekapBtn");
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = "⏳ Membuat rekap...";
+    try{
+      const res = await fetch(`${API_BASE}/api/fstl/rekap`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ username })
+      });
+      const data = await res.json();
+      if(!res.ok){ toast(data.error || "Gagal membuat rekap", "error"); return; }
+      let msg = `Rekap tersimpan di sheet ${data.sheet} (${data.rows} baris ber-X dirangkum)`;
+      if((data.not_found || []).length){
+        msg += ` — produk tidak ketemu di JO_1 untuk: ${data.not_found.join(", ")}`;
+        toast(msg, "error");
+      } else {
+        toast(msg, "success");
+      }
+    }catch(err){
+      toast("Gagal membuat rekap — cek koneksi ke backend", "error");
+    }finally{
+      btn.disabled = false; btn.innerHTML = originalLabel;
+    }
   }
 
   // ---------------- KIRIMAN HARI INI ----------------
