@@ -100,6 +100,7 @@ import rewind_qty
 import kg_bruto
 import konversi_meter_jumbo
 import chatbot_engine
+import sa_pool
 import run_all as run_all_module  # dipakai buat daftar script (SCRIPTS_ORDER) & jalankan satu-satu
 
 # Baca file .env (SPREADSHEET_ID, GOOGLE_CREDENTIALS_FILE, PORT,
@@ -180,42 +181,9 @@ import os as _os_diag  # noqa: E402  (cuma buat print PID di bawah, nggak ganggu
 print(f"=== SERVER STARTED (PID={_os_diag.getpid()}) — kalau baris ini muncul LAGI di tengah-tengah kamu testing, artinya server abis restart otomatis (cache ke-reset) ===", flush=True)
 
 
-_gspread_client = None
-_gspread_client_lock = threading.Lock()
-
-
 def get_client():
-    """Login ke Google (baca credentials.json + otorisasi) itu operasi yang
-    lumayan berat kalau diulang tiap request. Sebelumnya dipanggil dari nol
-    di SETIAP endpoint yang butuh Sheets -- termasuk /api/fstl/keterangan,
-    jadi tiap klik "Ambil Keterangan" (JO sama ATAUPUN beda) selalu kena
-    biaya login ulang ini duluan, sebelum sempat manfaatin cache sheet di
-    bawah. Client login cuma dibuat SEKALI lalu dipakai ulang terus --
-    aman, karena Credentials dari google-auth otomatis refresh token-nya
-    sendiri kalau kadaluarsa, tanpa perlu login dari awal lagi."""
-    global _gspread_client
-    with _gspread_client_lock:
-        if _gspread_client is None:
-            creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
-            _gspread_client = gspread.authorize(creds)
-            # KETAHUAN DARI LOG PRODUKSI: request ke Google Sheets API bisa
-            # nge-hang di level socket (kelihatan dari traceback WORKER
-            # TIMEOUT -- macet di ssl.py/recv_into) TANPA batas waktu sama
-            # sekali, soalnya gspread defaultnya timeout=None. Itu bikin
-            # request nunggu selama-lamanya, jauh ngelewatin worker timeout
-            # gunicorn (default 30s), dan workernya keburu dipaksa mati di
-            # tengah jalan sebelum sempat balikin error yang jelas. Dikasih
-            # batas di sini biar kalau Google-nya memang lemot/nyangkut,
-            # gspread sendiri yang nyerah duluan (raise requests.Timeout,
-            # ketangkep di get_sheet()/caller-nya) sebelum gunicorn maksa
-            # matiin workernya. Dibungkus try/except -- kalau versi gspread
-            # yang beda kebetulan nggak punya atribut ini, jangan sampai
-            # bikin login gagal total cuma gara-gara ini.
-            try:
-                _gspread_client.http_client.timeout = 20
-            except Exception as e:
-                print(f"   ⚠️ Nggak bisa set timeout HTTP client gspread (dilewatin): {e}")
-        return _gspread_client
+    """Client gspread dari pool service account (lihat sa_pool.py)."""
+    return sa_pool.get_client()
 
 
 _spreadsheet_handle = {"sh": None}
@@ -7332,6 +7300,11 @@ def chatbot_cek_stok():
 # --------------------------------------------------------------------------
 # HEALTH CHECK (untuk memastikan servis & koneksi sheet hidup)
 # --------------------------------------------------------------------------
+@app.route("/api/health/pool", methods=["GET"])
+def health_pool():
+    return jsonify(sa_pool.get_pool().stats())
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     return jsonify({"ok": True, "spreadsheet_configured": bool(SPREADSHEET_ID)})

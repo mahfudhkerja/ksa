@@ -1,0 +1,5 @@
+credentials*.json
+sa_pool_usage.db
+.env
+venv/
+__pycache__/

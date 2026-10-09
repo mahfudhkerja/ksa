@@ -375,8 +375,8 @@ def extract_id_from_link(text):
 # ============================================================
 
 def _build_gspread_client():
-    creds = Credentials.from_service_account_file(str(CREDENTIALS_FILE), scopes=SCOPES)
-    return gspread.authorize(creds)
+    import sa_pool  # pool service account, hitungan pemakaian dibagi dgn app.py
+    return sa_pool.get_client()
 
 
 def get_gspread_client():
